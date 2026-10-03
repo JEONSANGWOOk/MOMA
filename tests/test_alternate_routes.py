@@ -76,5 +76,29 @@ class AlternateTests(unittest.TestCase):
         for _ in range(50):s.tick(.1)
         self.assertIn('Z',s.skipped_goals);self.assertAlmostEqual(s.state.x,0)
 
+    def test_demo_close_stop_returns_to_lm2_then_lm7_lm8(self):
+        from pathlib import Path
+        m=MapModel.load(Path(__file__).resolve().parents[1]/'maps/demo.json')
+        m.obstacles.append(dict(id='AMR1',dynamic=True,kind='amr',x=4.23,y=2,radius=.61))
+        plan=alternate_route(m,(5.48,2),'LM8','LM2','LM1',[(7,2),(2,2)],.6045,include_dynamic=True)
+        self.assertIsNotNone(plan);self.assertEqual(plan['nodes'],['LM2','LM7','LM8'])
+        self.assertEqual(plan['prefix'][-1],(7,2))
+        s=Simulator(m);s.collision_radius=.6045;s.state.x=5.48;s.state.y=2;s.state.last_node='LM2'
+        # Paused actor uses the normal update pipeline; geometry stays occupied.
+        m.obstacles[0].update(paused=True,motion_path=[[4.23,2],[2,2]],speed_mps=.5,dwell_s=0)
+        s.obstacle_policy='reroute';s.reroute_wait_s=.1;s.auto_static_s=.5
+        s.navigate('LM8');s.route=['LM1','CP1','LM8'];s._segment_start='LM2';s._waypoints=[(2,2)];s._reference_waypoints=[(7,2),(2,2)]
+        visited=[]
+        for _ in range(1800):
+            s.tick(.1)
+            self.assertFalse(collision_reason(m,s.state.x,s.state.y,.6045))
+            if not visited or visited[-1]!=s.state.last_node:visited.append(s.state.last_node)
+            if s.state.last_node=='LM8':break
+        self.assertIn('LM7',visited);self.assertEqual(s.state.last_node,'LM8');self.assertFalse(s.skipped_goals)
+
+    def test_prefix_relaxation_never_allows_physical_overlap(self):
+        m=scene([dict(x=.9,y=0,radius=.61)])
+        self.assertIsNone(alternate_route(m,(.5,0),'B','A','B',[(0,0),(3,0)],.61))
+
 
 if __name__=='__main__':unittest.main()

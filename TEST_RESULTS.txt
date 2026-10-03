@@ -1,3 +1,6 @@
+v1.9.1 validation (2026-10-03)
+194 unit tests PASS. Demo screenshot pose (5.48,2), close occupied LM2-LM1 lane, return to LM2 then LM7-LM8, no collision/skip. Actual physical overlap still rejected; one-way protections retained. GUI path display and LM8 arrival verified. SIM only.
+
 v1.9 validation (2026-10-03)
 192 unit tests PASS. Native AMR node-route head-on mutual stop, physical footprint no overlap, local detour and B arrival; graph fallback and no-route skip; explicit wait remains wait. GUI recovery preset persistence and head-on recovery. SIM only; no hardware commands.
 

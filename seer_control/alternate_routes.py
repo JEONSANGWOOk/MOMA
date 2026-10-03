@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from .route_planner import adjacency,shortest_path
 from .smap import path_record_geometry
 from .avoidance import clear_segment
+from .studio_core import collision_reason
 
 
 def lane(model,a,b):
@@ -29,6 +30,12 @@ def alternate_route(model,start,goal,a,b,reference,radius,include_dynamic=False)
         obstacles=[o for o in model.obstacles if include_dynamic or not o.get('dynamic')])
     original=adjacency(model);graph={key:[] for key in original}
     def clear(points):return bool(points) and all(clear_segment(scene,x,y,radius+.04) for x,y in zip(points,points[1:]))
+    def clear_prefix(points):
+        if clear(points):return True
+        # A close standstill can be inside the extra 4cm buffer without
+        # physical overlap. Allow a checked escape along the existing lane.
+        if collision_reason(scene,*start,radius) or not collision_reason(scene,*start,radius+.04):return False
+        return bool(points) and all(clear_segment(scene,x,y,radius) for x,y in zip(points,points[1:]))
     for key,edges in original.items():
         for nxt,distance,seconds in edges:
             if clear(lane(model,key,nxt)):graph[key].append((nxt,distance,seconds))
@@ -36,11 +43,11 @@ def alternate_route(model,start,goal,a,b,reference,radius,include_dynamic=False)
     for key,node in model.nodes.items():
         if math.dist(start,(node['x'],node['y']))<1e-6:anchors.append((key,[start]))
     forward,backward=split_reference(start,reference)
-    if b in graph and clear(forward):anchors.append((b,forward))
+    if b in graph and clear_prefix(forward):anchors.append((b,forward))
     # Backtracking a directed lane requires an explicitly available reverse lane.
-    if a in graph and b in original and any(nxt==a for nxt,_,_ in original[b]) and clear(backward):
+    if a in graph and b in original and any(nxt==a for nxt,_,_ in original[b]) and clear_prefix(backward):
         reverse,_=split_reference(start,lane(model,b,a))
-        if reverse and math.dist(start,reverse[1])<=.05 and clear(reverse):anchors.append((a,reverse))
+        if reverse and math.dist(start,reverse[1])<=.05 and clear_prefix(reverse):anchors.append((a,reverse))
     options=[]
     for anchor,prefix in anchors:
         try:result=shortest_path(graph,anchor,goal)
