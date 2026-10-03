@@ -1,4 +1,6 @@
-# SEER AMR Control Studio v1.2 Workspace
+# SEER AMR Control Studio v1.3 Workspace
+
+**메인 주행 화면의 장애물 정책을 네 가지로 확장**하고 사람·AMR 동적 장애물을 추가했습니다. `지도 / 제어` 오른쪽 상단 **주행 장애물 대응 · SIM**에서 피하기 / 정지하기 / 대기 후 기존 경로로 진행 / 동적 대기·정적 우회를 선택합니다. 사람 추가와 AMR 추가로 시작·끝 좌표, 속도, 끝점 대기를 설정하고, 관리에서 수정/삭제합니다. 2D/3D와 SIM LiDAR에 이동 중 위치를 표시합니다. [사용 방법](docs/SIM_OBSTACLES_KO.md).
 
 **FAIRINO FR5 공식 Python SDK 제어**를 추가했습니다. `확장 도구 → 로봇팔 / 장비 연결`에서 FR5 연결 설정과 연결 시험을 사용하세요. 기본 IP는 `192.168.58.2`입니다. MoveJ/MoveL 등록 작업, 현재 자세 저장, 미션 Arm Action, 상태/관절 수신과 3D 표시를 지원합니다. SDK는 WebAPP 버전에 맞게 별도로 준비해야 합니다. SIM에서는 등록한 MoveJ 관절 보간을 지원하며 MoveL은 차단합니다. [FR5 연결 순서와 ROS/ROS2 안내](docs/FR5_API_KO.md).
 
@@ -32,7 +34,7 @@ RoboShop의 지도 작업 화면을 참고한 데스크톱 디자인으로 변�
 지도 편집·전체 Action 실행·DI/DO·장애물 시험·자동 충전·알람과 기록 재생·로봇 모델·보정·로봇팔 연결을 추가했습니다.
 사용법과 실기 연결 범위: [확장 기능 안내](docs/EXTENDED_FEATURES_KO.md).
 시험용 미션: [Extended SIM Demo](examples/extended_demo_taskchain.json).
-실행 중인 이전 창을 종료하고 `run_windows.bat`으로 다시 실행하면 창 제목에 `v1.1 Workspace`가 표시됩니다. 기존 EXE에는 소스 변경이 자동 반영되지 않습니다.
+실행 중인 이전 창을 종료하고 `run_windows.bat`으로 다시 실행하면 창 제목에 `v1.3 Workspace`가 표시됩니다. 기존 EXE에는 소스 변경이 자동 반영되지 않습니다.
 
 목표: RoboShop 없이 미니PC에서 SEER AMR 상태/주행/맵 편집을 수행하고, 이후 로봇팔 제어를 같은 Taskchain에 통합할 수 있는 기반을 제공합니다.
 

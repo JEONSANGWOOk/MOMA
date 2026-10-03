@@ -189,7 +189,25 @@ class WorldView3D(tk.Canvas):
                     circle=[(n['x']+.16*math.cos(i*math.pi/12),n['y']+.16*math.sin(i*math.pi/12),.04) for i in range(25)]
                     lines.extend((a,b,'#136de2',3,'world_selected_node') for a,b in zip(circle,circle[1:]))
             for obstacle in (getattr(model,'obstacles',[]) if self.app.layers['장애물'].get() else []):
-                add_faces(cylinder(obstacle['radius'],.3),transform((obstacle['x'],obstacle['y'],.15)),'#d96573','world_obstacle')
+                if not obstacle.get('dynamic'):
+                    add_faces(cylinder(obstacle['radius'],.3),transform((obstacle['x'],obstacle['y'],.15)),'#d96573','world_obstacle')
+                    continue
+                base=transform((obstacle['x'],obstacle['y'],0),(0,0,obstacle.get('_heading',0)))
+                color='#df983d' if obstacle['kind']=='person' else '#8270c1'
+                if obstacle['kind']=='person':
+                    add_faces(box((.30,.22,.50)),multiply(base,transform((0,0,1.05))),color,'world_actor')
+                    add_faces(cylinder(.11,.22,8),multiply(base,transform((0,0,1.45))),'#f5d6af','world_actor')
+                    for side in (-1,1):
+                        add_faces(box((.10,.10,.75)),multiply(base,transform((0,side*.09,.425))),'#4c617a','world_actor')
+                        add_faces(box((.08,.08,.48)),multiply(base,transform((0,side*.22,1.0))),color,'world_actor')
+                    label_height=1.7
+                else:
+                    scale=obstacle['radius']/.61
+                    add_faces(box((.9582*scale,.6314*scale,.182)),multiply(base,transform((0,0,.17))),color,'world_actor')
+                    add_faces(cylinder(.05,.04,8),multiply(base,transform((.34*scale,0,.28))),'#5eaadb','world_actor')
+                    label_height=.4
+                texts.append(((obstacle['x'],obstacle['y'],label_height),obstacle.get('id','')+' · '+obstacle.get('_motion','준비'),color))
+                a,b=obstacle['motion_path'];lines.append(((*a,.02),(*b,.02),'#a396bd',1,'world_actor_route'))
             for a,b,c,d in (getattr(model,'virtual_walls',[]) if self.app.layers['벽'].get() else []):lines.append(((a,b,.08),(c,d,.08),'#d1446a',3,'world_virtual_wall'))
             if self.app.layers['영역'].get():
                 for area in getattr(model,'area_records',[]):

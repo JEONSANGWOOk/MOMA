@@ -53,7 +53,7 @@ def _shape_summary(value, depth=0):
 class Console(GamepadMixin, SpatialMixin, StudioMixin, tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title('AMR Control Studio | MoMa Standalone · v1.1 Workspace')
+        self.title('AMR Control Studio | MoMa Standalone · v1.3 Workspace')
         # Responsive startup size: fit the active monitor instead of assuming one fixed resolution.
         sw=max(1024,self.winfo_screenwidth()); sh=max(700,self.winfo_screenheight())
         start_w=min(1600,max(1080,int(sw*0.94)))
@@ -183,7 +183,7 @@ class Console(GamepadMixin, SpatialMixin, StudioMixin, tk.Tk):
         self._startup_pose_recovery_check()
         self.log('INFO', '시뮬레이션 시작 · 표시되는 로봇/센서 정보는 합성 데이터입니다.')
         self._studio_init()
-        self.sim_obstacle_policy.set('우회 주행' if self.studio_config.get('sim_obstacle_policy')=='avoid' else '정지 / 대기')
+        self._obstacles_restore()
         self._spatial_restore()
         self._pad_start()
         self.last_tick = time.monotonic()
@@ -415,6 +415,7 @@ class Console(GamepadMixin, SpatialMixin, StudioMixin, tk.Tk):
         self.location_coordinates.pack(fill='x',pady=(4,2))
         self.location_detail = self.label(b,'위치 수신 대기',8,MUTED,anchor='w',justify='left',wraplength=290)
         self.location_detail.pack(fill='x')
+        self._obstacles_controls(right)
         f,b = self.card(right,'목적지 / Task')
         f.pack(fill='x',pady=(0,8))
         self.target = tk.StringVar(value='LM4')
@@ -457,15 +458,6 @@ class Console(GamepadMixin, SpatialMixin, StudioMixin, tk.Tk):
         self.button(r3,'SIM 재부팅',self.sim_reboot,ORANGE).pack(side='left',expand=True,fill='x',padx=(2,0))
         self.button(b,'저장 위치 초기화',self.clear_last_pose).pack(fill='x',pady=(4,0))
 
-        f,b=self.card(right,'SIM 장애물 대응')
-        f.pack(fill='x',pady=(0,8))
-        self.sim_obstacle_policy=tk.StringVar(value='정지 / 대기')
-        choice=ttk.Combobox(b,textvariable=self.sim_obstacle_policy,values=['정지 / 대기','우회 주행'],state='readonly')
-        choice.pack(fill='x');choice.bind('<<ComboboxSelected>>',lambda event:self._sim_obstacle_change())
-        self.sim_avoidance_label=self.label(b,'벽과 장애물은 통과할 수 없습니다.',8,MUTED,justify='left',wraplength=285)
-        self.sim_avoidance_label.pack(fill='x',pady=4)
-        self.label(b,'우회 불가 시 대기 · 수동 조종은 충돌 시 정지\n실기 장애물 대응 설정은 변경하지 않습니다.',8,MUTED,justify='left',wraplength=285).pack(fill='x')
-        self.button(b,'벽 / 장애물 편집',lambda:(self.tabs.select(self.nodes_page),self.edit_mode.set('벽 만들기'))).pack(fill='x',pady=3)
         f,b = self.card(right,'수동 조작 · 누르는 동안 이동')
         f.pack(fill='x',pady=(0,8))
         tk.Checkbutton(b,text='수동 조작 활성화  (W/A/S/D)',variable=self.manual,bg=PANEL,
@@ -4178,13 +4170,14 @@ class Console(GamepadMixin, SpatialMixin, StudioMixin, tk.Tk):
         if path:self.guarded(save)
 
     def _sim_obstacle_change(self):
-        self.studio_config['sim_obstacle_policy']='avoid' if self.sim_obstacle_policy.get()=='우회 주행' else 'wait'
+        self.studio_config['sim_obstacle_policy']=self._obstacle_policy_key()
         self.sim.obstacle_policy=self.studio_config['sim_obstacle_policy'];self.sim._avoid_next=0.
         self._studio_save_settings()
 
     def tick(self):
         now=time.monotonic();dt=now-self.last_tick;self.last_tick=now
-        self.sim.obstacle_policy='avoid' if self.sim_obstacle_policy.get()=='우회 주행' else 'wait'
+        self.sim.obstacle_policy=self._obstacle_policy_key()
+        self.map.dynamic_paused=self.dynamic_paused.get()
         body=getattr(getattr(self,'world3d',None),'body_asset',None)
         cfg=self.map.robot_model
         visual_radius=math.hypot(.9582,.6314)/2+.03 if body and body.name.startswith('SEER AMB-CSW04-CE') else math.hypot(cfg['length'],cfg['width'])/2

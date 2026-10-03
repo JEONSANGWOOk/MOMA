@@ -58,9 +58,16 @@ class MapModel:
         for wall in self.virtual_walls:
             if not isinstance(wall,(list,tuple)) or len(wall)!=4:raise ValueError('가상벽은 [x1,y1,x2,y2]입니다.')
             for v in wall:number(v)
-        for obs in self.obstacles:
-            for key in ('x','y','radius'):number(obs[key])
+        ids=set()
+        for index,obs in enumerate(self.obstacles,1):
+            for key in ('x','y','radius'):obs[key]=number(obs[key])
             if obs['radius']<=0:raise ValueError('장애물 반경은 0보다 커야 합니다.')
+            from .dynamic_obstacles import validate_actor
+            validate_actor(obs)
+            if obs.get('dynamic'):
+                obs.setdefault('id',('PERSON' if obs['kind']=='person' else 'AMR')+str(index))
+                if not isinstance(obs['id'],str) or not obs['id'] or obs['id'] in ids:raise ValueError('동적 장애물 ID는 중복되지 않는 문자열이어야 합니다.')
+                ids.add(obs['id'])
         for area in self.area_records:
             if len(area.get('points',[]))<3:raise ValueError('영역 꼭짓점은 3개 이상 필요합니다.')
             for pt in area['points']:
@@ -84,6 +91,8 @@ class MapModel:
         if hasattr(self,'path_records'):data['path_records']=self.path_records
         for key in ('area_records','virtual_walls','obstacles','cloud','robot_model'):
             if hasattr(self,key):data[key]=getattr(self,key)
+        from .dynamic_obstacles import actor_data
+        data['obstacles']=[actor_data(o) for o in self.obstacles]
         return data
 
     def distance(self, a, b):
@@ -156,6 +165,7 @@ class Simulator:
         self.block_reason = ''
         self.detected_obstacle=''
         self.obstacle_policy='wait'
+        self._obstacle_latched=False
         self.collision_radius=0.
         self.avoidance_status=''
         self._avoid_time=0.;self._avoid_next=0.
@@ -215,6 +225,8 @@ class Simulator:
         self.state.mode = 'MANUAL'
 
     def stop(self, latch=False):
+        if self._obstacle_latched:self.state.blocked=False
+        self._obstacle_latched=False
         self.route.clear()
         self._waypoints.clear()
         self._segment_start = None
@@ -324,10 +336,15 @@ class Simulator:
 
     def tick(self, dt):
         dt = max(0, min(dt, .1))
+        from .dynamic_obstacles import update_actors
+        update_actors(self.map,dt,self.state,max(self.collision_radius,self.map.robot_model['radius']))
         self._avoid_time+=dt
         s = self.state
         s.speed = 0
         self.detected_obstacle=''
+        if self._obstacle_latched:
+            s.blocked=True;self._velocity=0.;self.v=self.w=self.lease=0.
+            self.avoidance_status='장애물 정지 유지 · 수동 재개 필요';return
         if self._collision_blocked:
             s.blocked=False;self._collision_blocked=False;self.block_reason=''
         self._charge_tick()
@@ -380,7 +397,12 @@ class Simulator:
             clearance,reason=path_clearance(self.map,(s.x,s.y),self._waypoints,limits['radius'],max(dec_dist,self._velocity**2/(2*max(.01,limits['maxdec']))+stop_dist))
             self.detected_obstacle=reason
             if reason:
-                if self.obstacle_policy=='avoid' and self._avoid_time>=self._avoid_next:
+                dynamic=reason.startswith('동적 장애물')
+                if self.obstacle_policy=='stop':
+                    self._obstacle_latched=True;s.blocked=True;self.block_reason=reason
+                    self._velocity=0.;self.avoidance_status='장애물 정지 유지 · 수동 재개 필요';return
+                avoid=self.obstacle_policy=='avoid' or self.obstacle_policy=='adaptive' and not dynamic
+                if avoid and self._avoid_time>=self._avoid_next:
                     from .avoidance import detour
                     self._avoid_next=self._avoid_time+1.
                     points=detour(self.map,(s.x,s.y),(n['x'],n['y']),limits['radius'])
@@ -393,7 +415,7 @@ class Simulator:
                         self._waypoints=points[1:];self._segment_reverse=False
                         self.avoidance_status='우회 주행';self._velocity=0.;return
                     self.avoidance_status='우회 경로 없음 · 대기'
-                elif self.obstacle_policy=='wait':self.avoidance_status='장애물 해제 대기'
+                elif not avoid:self.avoidance_status='동적 장애물 통과 대기' if dynamic else '장애물 해제 대기'
                 desired=min(desired,math.sqrt(2*limits['maxdec']*max(0,clearance-stop_dist)))
                 if clearance<=stop_dist+.025:
                     self._collision_blocked=True;s.blocked=True;self.block_reason=reason;self._velocity=0

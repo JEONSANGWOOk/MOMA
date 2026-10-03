@@ -57,7 +57,9 @@ def collision_reason(model,x,y,radius):
     for wall in list(model.walls)+list(getattr(model,'virtual_walls',[])):
         if point_segment_distance(x,y,wall[:2],wall[2:])<=radius:return '벽/가상벽'
     for obs in getattr(model,'obstacles',[]):
-        if math.hypot(x-obs['x'],y-obs['y'])<=radius+obs.get('radius',.25):return '배치 장애물'
+        if math.hypot(x-obs['x'],y-obs['y'])<=radius+obs.get('radius',.25):
+            if obs.get('dynamic'):return '동적 장애물 · '+('사람' if obs.get('kind')=='person' else 'AMR')+' '+str(obs.get('id',''))
+            return '배치 장애물'
     for area in getattr(model,'area_records',[]):
         pts=area.get('points',[])
         if len(pts)<3 or not enabled((area.get('properties') or {}).get('forbidden')):continue

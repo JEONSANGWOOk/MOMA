@@ -1,4 +1,15 @@
-v1.2 FR5 API — 2026-10-03
+v1.3 Dynamic obstacles — 2026-10-03
+Unit tests 150/150 PASS. Ten new tests cover people and AMR movement/return,
+pause, actor sweep against wall/ego, clean save/load restart, invalid motion,
+LiDAR moving hits, adaptive dynamic wait/original-path resume, adaptive static
+detour, manual-stop latch and explicit release, and avoid-policy dynamic detour.
+Dynamic GUI smoke PASS: main policy save, people/AMR creation via settings,
+adaptive wait/resume, no overlap, 2D/3D actors with visible geometry,
+global pause and management. Screenshots reviewed: dynamic_obstacles_2d.png,
+dynamic_obstacles_3d.png. Existing SIM wall/avoidance GUI regression PASS.
+SIM only; no real controller obstacle-policy commands or recognition tests.
+
+Prior v1.2 FR5 API — 2026-10-03
 Unit tests 140/140 PASS, including 16 FR5 tests: manufacturer MoveJ/MoveL
 nonblocking call signatures, measured target completion, degrees/radians,
 emergency/safety/error rejection, SDK compatibility opt-in, malformed targets,

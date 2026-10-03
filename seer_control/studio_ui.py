@@ -16,6 +16,7 @@ from .studio_core import (EditHistory, Recorder, MissionRunner, ACTION_DEFAULTS,
 from .studio_devices import DeviceBridge, tcp_operation, arm_call, validate_operation, get_field
 from .fairino_ui import FairinoUIMixin
 from .fairino_api import validate as validate_fr5
+from .obstacle_ui import ObstacleUIMixin
 from .route_planner import plan_stops, plan_actions, adjacency, upgrade_loop_chain
 
 from .theme import PANEL, INK, MUTED, GREEN, ORANGE, RED
@@ -199,7 +200,7 @@ class ConsoleAdapter:
             c.sim.stop();c.sim.arm['status']='CANCELED'
 
 
-class StudioMixin(FairinoUIMixin):
+class StudioMixin(FairinoUIMixin,ObstacleUIMixin):
     def _studio_init(self):
         self.studio_config=dict(robot_model=validate_model({}),
             peripherals=dict(operations={}),arm=dict(verified=False,endpoint='',execute_method='',
@@ -453,7 +454,7 @@ class StudioMixin(FairinoUIMixin):
             from .smap import _point
             keep=set(map(tuple,self.map.cloud))
             self.map.smap_source['normalPosList']=[p for p in self.map.smap_source.get('normalPosList',[]) if _point(p,None) in keep]
-    def _studio_cancel_draw(self):self.studio_polygon=[];self.studio_wall_start=None;self.draw_map()
+    def _studio_cancel_draw(self):self.studio_polygon=[];self.studio_wall_start=None;self.actor_draft=None;self.draw_map()
     def _studio_finish_polygon(self):
         def create():
             if len(self.studio_polygon)<3:raise ValueError('꼭짓점 3개 이상을 선택하세요.')
@@ -470,12 +471,13 @@ class StudioMixin(FairinoUIMixin):
         return x,y
     def _studio_map_click(self,e):
         mode=self.edit_mode.get()
-        if mode not in ('Point 이동','벽 만들기','가상벽','다각형 영역','점군 지우개','SIM 장애물'):return False
+        if mode not in ('Point 이동','벽 만들기','가상벽','다각형 영역','점군 지우개','SIM 장애물','동적 장애물 배치'):return False
         def handle():
-            if mode=='SIM 장애물':self.sim_required()
+            if mode in ('SIM 장애물','동적 장애물 배치'):self.sim_required()
             else:self.editable()
             x,y=self._studio_snap_xy(*self.world(e.x,e.y))
-            if mode=='Point 이동':
+            if mode=='동적 장애물 배치':self._actor_map_click(x,y)
+            elif mode=='Point 이동':
                 key=self.map.nearest(x,y);n=self.map.nodes[key]
                 if math.dist(self.xy(n['x'],n['y']),(e.x,e.y))<22:self.studio_point_drag=key
             elif mode in ('벽 만들기','가상벽'):
@@ -835,7 +837,24 @@ class StudioMixin(FairinoUIMixin):
         for x1,y1,x2,y2 in (getattr(self.map,'virtual_walls',[]) if self.layers['벽'].get() else []):c.create_line(*self.xy(x1,y1),*self.xy(x2,y2),fill='#ee4c70',width=4,dash=(6,3),tags='studio_virtual_wall')
         for obs in (getattr(self.map,'obstacles',[]) if self.layers['장애물'].get() else []):
             x,y=self.xy(obs['x'],obs['y']);scale=self._transform()[0];r=obs['radius']*scale
-            c.create_oval(x-r,y-r,x+r,y+r,fill='#ce4053',outline='#ffffff',width=2,tags='studio_obstacle')
+            if obs.get('dynamic'):
+                path=obs['motion_path'];c.create_line(*[v for p in path for v in self.xy(*p)],fill='#9e96bb',dash=(4,4),tags='studio_actor_route')
+                color='#de9535' if obs['kind']=='person' else '#8069bd'
+                if obs['kind']=='person':
+                    c.create_oval(x-r,y-r,x+r,y+r,fill=color,outline='#ffffff',width=2,tags='studio_obstacle')
+                    c.create_oval(x-4,y-8,x+4,y,fill='#fff1d0',outline='',tags='studio_obstacle')
+                    c.create_line(x,y,x,y+8,x-5,y+12,x,y+8,x+5,y+12,fill='#fff1d0',width=2,tags='studio_obstacle')
+                else:
+                    angle=obs.get('_heading',0);points=[]
+                    for dx,dy in ((r*.8,r*.55),(r*.8,-r*.55),(-r*.8,-r*.55),(-r*.8,r*.55)):
+                        points.extend((x+dx*math.cos(angle)-dy*math.sin(angle),y-dx*math.sin(angle)-dy*math.cos(angle)))
+                    c.create_polygon(*points,fill=color,outline='#ffffff',width=2,tags='studio_obstacle')
+                c.create_text(x,y-r-9,text=obs.get('id','')+' · '+obs.get('_motion','준비'),fill=color,font=('Malgun Gothic',8),tags='studio_obstacle')
+            else:c.create_oval(x-r,y-r,x+r,y+r,fill='#ce4053',outline='#ffffff',width=2,tags='studio_obstacle')
+        draft=getattr(self,'actor_draft',None)
+        if draft and draft.get('start'):
+            x,y=self.xy(*draft['start']);c.create_oval(x-6,y-6,x+6,y+6,outline='#de9535',width=3)
+            c.create_text(x,y-16,text='동적 장애물 시작 · 끝점을 클릭',fill='#99691e',anchor='s')
         if len(self.studio_polygon)>1:c.create_line(*[v for p in self.studio_polygon for v in self.xy(*p)],fill='#ffb347',width=3)
         for p in self.studio_polygon:
             x,y=self.xy(*p);c.create_rectangle(x-4,y-4,x+4,y+4,fill='#ffb347')
