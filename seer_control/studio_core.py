@@ -186,6 +186,7 @@ class MissionRunner:
         self.adapter=adapter;self.actions=[];self.status='IDLE';self.index=0
         self.cycle=0;self.repeat=1;self.started=0.;self.dwell_until=None;self.entered=False
         self.error='';self.elapsed=0.;self.paused_at=None
+        self.skipped=[]
     @property
     def active(self):return self.status in ('RUNNING','PAUSED')
     def start(self,actions,repeat=1,index=0):
@@ -195,6 +196,7 @@ class MissionRunner:
         if type(repeat) is not int or repeat<0:raise ValueError('반복 횟수: 0 이상 정수')
         self.actions=actions;self.repeat=repeat;self.index=index;self.cycle=0
         self.status='RUNNING';self.entered=False;self.dwell_until=None;self.error='';self.elapsed=0
+        self.skipped=[]
         for a in self.actions:a['status']='대기'
     def tick(self,now,dt):
         if self.status!='RUNNING':return
@@ -210,11 +212,19 @@ class MissionRunner:
                 done=True
             else:
                 done=self.adapter.poll(a,dt,self.elapsed)
-                if done and a.get('delay_ms',0):self.dwell_until=now+a['delay_ms']/1000.;return
+                skipped=isinstance(done,dict) and done.get('skip') is True
+                if done and not skipped and a.get('delay_ms',0):self.dwell_until=now+a['delay_ms']/1000.;return
             if not done:return
-            a['status']='완료'
+            skipped=isinstance(done,dict) and done.get('skip') is True
+            a['status']='패스' if skipped else '완료'
+            if skipped:
+                self.skipped.append(dict(goal=done['goal'],reason=done['reason'],cycle=self.cycle+1,step=self.index+1))
+                self.skipped=self.skipped[-300:]
             target=self.adapter.branch_target(a) if a['type']=='Branch DI' else None
             self.index=target-1 if target is not None else self.index+1
+            if skipped:
+                while self.index<len(self.actions) and self.actions[self.index]['type']!='Path Nav':
+                    self.actions[self.index]['status']='목적지 미도착으로 생략';self.index+=1
             self.entered=False;self.dwell_until=None
             if self.index>=len(self.actions):
                 self.cycle+=1

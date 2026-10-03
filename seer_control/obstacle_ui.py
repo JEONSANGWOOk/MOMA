@@ -14,8 +14,18 @@ class ObstacleUIMixin:
         self.sim_obstacle_policy=tk.StringVar(value=POLICIES['wait'])
         choice=ttk.Combobox(body,textvariable=self.sim_obstacle_policy,values=list(POLICIES.values()),state='readonly')
         choice.pack(fill='x');choice.bind('<<ComboboxSelected>>',lambda event:self._sim_obstacle_change())
+        row=tk.Frame(body,bg=PANEL);row.pack(fill='x',pady=2)
+        self.reroute_wait=tk.StringVar(value='5');self.reroute_attempts=tk.StringVar(value='3')
+        self.label(row,'다른 길 대기(초)',8,bg=PANEL).pack(side='left')
+        ttk.Spinbox(row,from_=0,to=60,textvariable=self.reroute_wait,width=4).pack(side='left',padx=2)
+        self.label(row,'재탐색',8,bg=PANEL).pack(side='left')
+        ttk.Spinbox(row,from_=1,to=10,textvariable=self.reroute_attempts,width=3).pack(side='left',padx=2)
+        self.button(row,'적용',lambda:self.guarded(self._reroute_settings)).pack(side='left')
         self.sim_avoidance_label=self.label(body,'벽과 장애물은 통과할 수 없습니다.',8,MUTED,anchor='w',justify='left',wraplength=285)
         self.sim_avoidance_label.pack(fill='x',pady=3)
+        self.skipped_label=self.label(body,'패스 목적지: 없음',8,'#c93043',anchor='w',justify='left',wraplength=270)
+        self.skipped_label.pack(fill='x')
+        self.button(body,'패스 이력 보기 / 마킹 초기화',self._skipped_history).pack(fill='x',pady=2)
         self.button(body,'장애물 정지 해제 / 주행 재개',lambda:self.guarded(self._obstacles_resume)).pack(fill='x')
         row=tk.Frame(body,bg=PANEL);row.pack(fill='x',pady=3)
         for title,kind in [('사람 추가','person'),('AMR 추가','amr')]:
@@ -32,6 +42,24 @@ class ObstacleUIMixin:
         self.sim_obstacle_policy.set(POLICIES.get(self.studio_config.get('sim_obstacle_policy'),POLICIES['wait']))
         self.dynamic_paused.set(bool(self.studio_config.get('dynamic_paused',False)))
         self.actor_draft=None
+        self.reroute_wait.set(str(self.studio_config.get('reroute_wait_s',5)))
+        self.reroute_attempts.set(str(self.studio_config.get('reroute_attempts',3)))
+
+    def _reroute_settings(self):
+        wait=float(self.reroute_wait.get());attempts=int(self.reroute_attempts.get())
+        if not math.isfinite(wait) or not 0<=wait<=60 or not 1<=attempts<=10:raise ValueError('대기 0~60초, 재탐색 1~10회')
+        self.studio_config.update(reroute_wait_s=wait,reroute_attempts=attempts)
+        self.sim.reroute_wait_s=wait;self.sim.reroute_attempt_limit=attempts;self._studio_save_settings()
+
+    def _skipped_history(self):
+        win=tk.Toplevel(self);win.title('도달 불가 목적지 · 패스 이력');win.geometry('740x360')
+        tree=ttk.Treeview(win,columns=('goal','reason'),show='headings',height=10)
+        tree.heading('goal',text='패스 목적지');tree.heading('reason',text='이유');tree.column('goal',width=100);tree.column('reason',width=580)
+        tree.pack(fill='both',expand=True,padx=8,pady=8)
+        for record in self.sim.skipped_goals.values():tree.insert('','end',values=(record['goal'],record['reason']))
+        def clear():
+            self.sim.skipped_goals.clear();self.studio_runner.skipped.clear();self.draw_map();win.destroy()
+        self.button(win,'이력 / 지도 마킹 초기화',clear).pack(pady=6)
 
     def _obstacle_policy_key(self):
         return next((key for key,value in POLICIES.items() if value==self.sim_obstacle_policy.get()),

@@ -217,6 +217,12 @@ class WorldView3D(tk.Canvas):
             cloud=getattr(model,'cloud',[])
             for x,y in cloud[::max(1,len(cloud)//1200)]:texts.append(((x,y,.008),'·','#687a8b'))
         if self.layers['경로'].get() and self.app.layers['경로'].get():
+            for goal in (self.app.sim.skipped_goals if not self.app.real else []):
+                if goal not in model.nodes:continue
+                n=model.nodes[goal];x,y=n['x'],n['y']
+                lines.append(((x-.15,y-.15,.08),(x+.15,y+.15,.08),'#c93043',4,'world_skipped_goal'))
+                lines.append(((x-.15,y+.15,.08),(x+.15,y-.15,.08),'#c93043',4,'world_skipped_goal'))
+                texts.append(((x,y,.3),goal+' · 도달 불가 / 패스','#c93043'))
             records=getattr(model,'path_records',[]);represented=set()
             for record in records:
                 pair=frozenset((record.get('a'),record.get('b')))

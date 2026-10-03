@@ -165,6 +165,9 @@ class Simulator:
         self.block_reason = ''
         self.detected_obstacle=''
         self.obstacle_policy='wait'
+        self.reroute_wait_s=5.;self.reroute_attempt_limit=3
+        self._reroute_block_at=None;self._reroute_failures=0;self._reroute_forced=False
+        self.skipped_goals={};self.skip_result=None;self._skipped_context=None
         self._obstacle_latched=False
         self.collision_radius=0.
         self.avoidance_status=''
@@ -186,11 +189,20 @@ class Simulator:
     def navigate(self, goal, route_nodes=None):
         self._ready()
         s = self.state
+        next_plan=None
+        if self.obstacle_policy=='reroute' and self._skipped_context:
+            from .alternate_routes import alternate_route
+            a,b,ref=self._skipped_context
+            next_plan=alternate_route(self.map,(s.x,s.y),goal,a,b,ref,max(self.collision_radius,self.map.robot_model['radius']))
         if self.mapping:
             raise ValueError('맵 생성 중에는 수동 탐색만 가능합니다.')
         start = self.map.nearest(s.x, s.y)
+        no_nominal=False
         if route_nodes is None:
-            planned=self.map.route(start,goal)
+            try:planned=self.map.route(start,goal)
+            except ValueError:
+                if self.obstacle_policy!='reroute':raise
+                planned=[start,goal];no_nominal=True
         else:
             from .route_planner import adjacency
             graph=adjacency(self.map);planned=list(route_nodes)
@@ -205,8 +217,36 @@ class Simulator:
         self._arrival_align = False
         self._velocity = 0.
         self._avoid_next=0.;self.avoidance_status=''
+        self._reroute_block_at=None;self._reroute_failures=0;self._reroute_forced=False;self.skip_result=None
         self.v = self.w = self.lease = 0
         s.target, s.task, s.mode, s.charging = goal, f'이동 → {goal}', 'RUNNING', False
+        if self.obstacle_policy=='reroute' and self._skipped_context:
+            if next_plan:self._apply_alternate(next_plan)
+            else:
+                self.route=[goal];self._waypoints=[(s.x,s.y)];self._reroute_forced=True
+        elif no_nominal:
+            self.route=[goal];self._waypoints=[(s.x,s.y)];self._reroute_forced=True
+            self._skipped_context=(None,start,[(s.x,s.y),(self.map.nodes[start]['x'],self.map.nodes[start]['y'])])
+
+    def _apply_alternate(self,plan):
+        self.route=list(plan['nodes']);self._waypoints=list(plan['prefix'])
+        self._reference_waypoints=list(plan['prefix']);self._segment_start=None
+        self._segment_reverse=False;self._velocity=0.;self._arrival_align=False
+        self._reroute_forced=False;self._skipped_context=None
+        self._reroute_block_at=None;self._reroute_failures=0
+        self.avoidance_status='다른 연결 경로 탐색 완료 · '+ ' → '.join(plan['nodes'])
+
+    def skip_destination(self,reason):
+        goal=self.state.target
+        if not goal:return
+        self.skip_result=dict(goal=goal,reason=reason,time_s=round(self._avoid_time,1))
+        self.skipped_goals[goal]=dict(self.skip_result)
+        self._skipped_context=self._skipped_context or (self._segment_start,self.route[0] if self.route else goal,
+            list(getattr(self,'_reference_waypoints',[])))
+        self.route=[];self._waypoints=[];self._velocity=0.;self.v=self.w=self.lease=0.
+        self.state.speed=0.;self.state.blocked=False;self._collision_blocked=False
+        self.state.mode='IDLE';self.state.task='도달 불가 · 패스 '+goal
+        self.avoidance_status='목적지 패스 · '+goal+' · '+reason
 
     def _ready(self):
         if self.arm['status']=='RUNNING' or self.arm.get('pose')!='SAFE':
@@ -225,6 +265,7 @@ class Simulator:
         self.state.mode = 'MANUAL'
 
     def stop(self, latch=False):
+        self._skipped_context=None
         if self._obstacle_latched:self.state.blocked=False
         self._obstacle_latched=False
         self.route.clear()
@@ -340,6 +381,10 @@ class Simulator:
         update_actors(self.map,dt,self.state,max(self.collision_radius,self.map.robot_model['radius']))
         self._avoid_time+=dt
         s = self.state
+        if self._reroute_forced and self.obstacle_policy!='reroute' and self.route:
+            self.stop()
+            self._reroute_forced=False
+            self.avoidance_status='정책 변경 · 연결 경로 없는 이동 취소'
         s.speed = 0
         self.detected_obstacle=''
         if self._obstacle_latched:
@@ -397,8 +442,25 @@ class Simulator:
             dec_dist=max(stop_dist,float(props.get('obsDecDist',.5) or .5))
             clearance,reason=path_clearance(self.map,(s.x,s.y),self._waypoints,limits['radius'],max(dec_dist,self._velocity**2/(2*max(.01,limits['maxdec']))+stop_dist))
             self.detected_obstacle=reason
+            if self._reroute_forced:reason=self.detected_obstacle='기존 연결 경로에 복귀 불가'
+            if not reason:self._reroute_block_at=None;self._reroute_failures=0
             if reason:
                 dynamic=reason.startswith('동적 장애물')
+                if self.obstacle_policy=='reroute' and not dynamic:
+                    if self._reroute_block_at is None:self._reroute_block_at=self._avoid_time
+                    elapsed=self._avoid_time-self._reroute_block_at
+                    self._velocity=0.;s.blocked=True;self._collision_blocked=True;self.block_reason=reason
+                    self.avoidance_status=f'정적 장애물 대기 {elapsed:.1f}/{self.reroute_wait_s:.1f}s · 다른 경로 탐색 {self._reroute_failures}/{self.reroute_attempt_limit}'
+                    if elapsed>=self.reroute_wait_s:
+                        from .alternate_routes import alternate_route
+                        context=self._skipped_context or (self._segment_start,self.route[0],getattr(self,'_reference_waypoints',[]))
+                        plan=alternate_route(self.map,(s.x,s.y),s.target,*context,limits['radius'])
+                        if plan:
+                            s.blocked=False;self._collision_blocked=False;self._apply_alternate(plan)
+                        else:
+                            self._reroute_failures+=1;self._reroute_block_at=self._avoid_time
+                            if self._reroute_failures>=self.reroute_attempt_limit:self.skip_destination(reason+' · 연결된 대체 경로 없음')
+                    return
                 if self.obstacle_policy=='stop':
                     self._obstacle_latched=True;s.blocked=True;self.block_reason=reason
                     self._velocity=0.;self.avoidance_status='장애물 정지 유지 · 수동 재개 필요';return

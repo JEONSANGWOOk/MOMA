@@ -4,7 +4,8 @@ from types import SimpleNamespace
 from .studio_core import path_clearance
 
 POLICIES={'wait':'대기 후 기존 경로로 진행','avoid':'장애물 피해서 가기',
-          'stop':'정지하기 (수동 재개)','adaptive':'동적 대기 / 정적 우회'}
+          'stop':'정지하기 (수동 재개)','adaptive':'동적 대기 / 정적 우회',
+          'reroute':'정적 대기 → 다른 경로 / 불가 목적지 패스'}
 
 
 def validate_actor(obs):

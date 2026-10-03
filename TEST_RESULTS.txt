@@ -1,3 +1,9 @@
+v1.5 validation (2026-10-03)
+Unit tests: 161 PASS.
+Graph alternate routes, repeated new blockage, unreachable/disconnected goal skip, no teleport, mission next goal, dependent arm/DO omission, directional lanes, dynamic wait, policy-switch cancellation.
+GUI smoke: main settings persist, 2D/3D skip markers, history window, no Tk callback errors.
+No physical robot commands were sent.
+
 v1.4 Early rejoin / responsive density — 2026-10-03
 Unit tests 153/153 PASS. New tests verify early original-line rejoin before
 a distant goal, preservation of bent reference suffix, and SIM lane tracking.

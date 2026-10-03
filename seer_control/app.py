@@ -54,7 +54,7 @@ def _shape_summary(value, depth=0):
 class Console(UIScaleMixin, GamepadMixin, SpatialMixin, StudioMixin, tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title('AMR Control Studio | MoMa Standalone · v1.4 Workspace')
+        self.title('AMR Control Studio | MoMa Standalone · v1.5 Workspace')
         # Responsive startup size: fit the active monitor instead of assuming one fixed resolution.
         sw=self.winfo_screenwidth(); sh=self.winfo_screenheight()
         start_w=min(1600,int(sw*.94))
@@ -4178,12 +4178,16 @@ class Console(UIScaleMixin, GamepadMixin, SpatialMixin, StudioMixin, tk.Tk):
     def tick(self):
         now=time.monotonic();dt=now-self.last_tick;self.last_tick=now
         self.sim.obstacle_policy=self._obstacle_policy_key()
+        self.sim.reroute_wait_s=float(self.studio_config.get('reroute_wait_s',5))
+        self.sim.reroute_attempt_limit=int(self.studio_config.get('reroute_attempts',3))
         self.map.dynamic_paused=self.dynamic_paused.get()
         body=getattr(getattr(self,'world3d',None),'body_asset',None)
         cfg=self.map.robot_model
         visual_radius=math.hypot(.9582,.6314)/2+.03 if body and body.name.startswith('SEER AMB-CSW04-CE') else math.hypot(cfg['length'],cfg['width'])/2
         self.sim.collision_radius=max(cfg['radius'],visual_radius)
         self.sim_avoidance_label.configure(text=(self.sim.avoidance_status or '주행 준비')+f' · 충돌 반경 {self.sim.collision_radius:.2f} m')
+        goals=list(self.sim.skipped_goals)
+        self.skipped_label.configure(text='패스 목적지: '+(', '.join(goals[:6])+(' …' if len(goals)>6 else '') if goals else '없음'))
         while True:
             try:kind,generation,payload=self.events.get_nowait()
             except queue.Empty:break

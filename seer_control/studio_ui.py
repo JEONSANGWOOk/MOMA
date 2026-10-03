@@ -38,7 +38,10 @@ class ConsoleAdapter:
             if c.real:
                 if a['goal'] not in c.robot_stations:raise ValueError('로봇 Station에 없는 목적지입니다.')
                 c.send_command('navigate',c._station_nav_payload(c.map.nodes[a['goal']]))
-            else:c.sim.navigate(a['goal'],route_nodes=a.get('route_nodes'))
+            else:
+                if c.sim.obstacle_policy=='reroute':
+                    a['timeout_s']=max(a['timeout_s'],c.sim.reroute_wait_s*(c.sim.reroute_attempt_limit+1)+120)
+                c.sim.navigate(a['goal'],route_nodes=None if c.sim.obstacle_policy=='reroute' else a.get('route_nodes'))
         elif typ in ('Translation','Rotation'):
             c.studio_motion_error=None
             if not c.studio_arm_safe:raise ValueError('로봇팔 safe_pose 완료 후 AMR를 이동하세요.')
@@ -97,6 +100,10 @@ class ConsoleAdapter:
             if c.real and getattr(c,'studio_command_error',None):raise ValueError(c.studio_command_error)
             if not c.real:
                 if c.sim.auto_charge['phase']!='IDLE':return False
+                if c.sim.skip_result and c.sim.skip_result['goal']==a['goal']:
+                    result=dict(skip=True,**c.sim.skip_result);c.sim.skip_result=None
+                    c.log('MISSION','목적지 패스 · '+result['goal']+' · '+result['reason'])
+                    return result
                 return not c.sim.route and c.sim.state.task=='완료'
             task=state.get('task');status=state.get('task_status')
             if task in ('FAILED','CANCELED') or status in (5,6):raise ValueError(f'주행 실패: {task}')
@@ -799,6 +806,7 @@ class StudioMixin(FairinoUIMixin,ObstacleUIMixin):
         self._studio_draw_at=now
         total='∞' if runner.repeat==0 else str(runner.repeat)
         text=f'{runner.status} · {runner.cycle+1}/{total}회 · {runner.index+1}단계 · {runner.elapsed:.1f}s'+(' · '+runner.error if runner.error else '')
+        if runner.skipped:text+=f' · 목적지 패스 {len(runner.skipped)}건'
         self.studio_mission_label.config(text=text)
         if runner.active or runner.status in ('FAILED','COMPLETED'):self.mission_status.config(text=text[:110])
         self.studio_action_tree.delete(*self.studio_action_tree.get_children())
@@ -826,6 +834,13 @@ class StudioMixin(FairinoUIMixin,ObstacleUIMixin):
 
     def _studio_draw(self,c):
         if not hasattr(self,'studio_runner'):return
+        for goal in (self.sim.skipped_goals if not self.real else []):
+            if goal not in self.map.nodes:continue
+            node=self.map.nodes[goal];x,y=self.xy(node['x'],node['y'])
+            c.create_oval(x-13,y-13,x+13,y+13,outline='#c93043',width=3,tags='skipped_goal')
+            c.create_line(x-8,y-8,x+8,y+8,fill='#c93043',width=3,tags='skipped_goal')
+            c.create_line(x-8,y+8,x+8,y-8,fill='#c93043',width=3,tags='skipped_goal')
+            c.create_text(x,y+23,text=goal+' · 도달 불가 / 패스',fill='#c93043',font=(self.font,8,'bold'),tags='skipped_goal')
         if not self.real:
             s=self.sim.state;cfg=self.map.robot_model;scale=self._view_transform[0]
             points=[]
