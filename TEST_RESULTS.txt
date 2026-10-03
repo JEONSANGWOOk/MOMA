@@ -1,3 +1,6 @@
+v1.8 validation (2026-10-03)
+188 unit tests PASS. Known fixed-map exclusion, new stationary/dynamic IDs, class transitions, association, unique concurrent IDs, range/occlusion, loss/reobservation/expiry, runtime persistence exclusion. GUI: 2D/3D markers/trails and live tracking list. SIM only; no hardware commands.
+
 v1.7 validation (2026-10-03)
 179 unit tests PASS. Position-based classification, brief-stop hysteresis, paused actor static reclassification, per-object override, unknown waiting, graph/local avoidance and unreachable goal skip with next goal. GUI: global/per-obstacle settings save and automatic status display, no Tk callback errors. SIM only; no hardware commands.
 

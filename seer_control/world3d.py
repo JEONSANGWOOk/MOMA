@@ -216,6 +216,15 @@ class WorldView3D(tk.Canvas):
                 for area in getattr(model,'area_records',[]):
                     vertices=tuple((p[0],p[1],.012) for p in area.get('points',[]))
                     if len(vertices)>=3:faces.append((vertices,'#dfb1ba' if (area.get('properties') or {}).get('forbidden') else '#c2dbce','world_area'))
+        if not self.app.real and self.app.layers['장애물'].get() and self.app.show_tracks.get():
+            from .obstacle_tracking import CLASSES
+            for record in self.app.sim.obstacle_tracker.records():
+                color='#84919c' if record['state']=='미관측' else {'dynamic':'#2196c7','static':'#d14b54','unknown':'#e9a237'}[record['kind']]
+                x,y=record['x'],record['y'];r=record['radius']+.1
+                corners=[(x-r,y-r,.10),(x+r,y-r,.10),(x+r,y+r,.10),(x-r,y+r,.10),(x-r,y-r,.10)]
+                lines.extend((a,b,color,2,'world_tracked_obstacle') for a,b in zip(corners,corners[1:]))
+                trail=list(record['trail']);lines.extend(((*a,.06),(*b,.06),color,2,'world_tracked_trail') for a,b in zip(trail,trail[1:]))
+                texts.append(((x,y,.8),record['id']+' · '+CLASSES[record['kind']]+' · '+record['state'],color))
         if self.layers['점군'].get():
             cloud=getattr(model,'cloud',[])
             for x,y in cloud[::max(1,len(cloud)//1200)]:texts.append(((x,y,.008),'·','#687a8b'))

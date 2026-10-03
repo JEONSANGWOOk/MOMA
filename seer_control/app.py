@@ -54,7 +54,7 @@ def _shape_summary(value, depth=0):
 class Console(UIScaleMixin, GamepadMixin, SpatialMixin, StudioMixin, tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title('AMR Control Studio | MoMa Standalone · v1.7 Workspace')
+        self.title('AMR Control Studio | MoMa Standalone · v1.8 Workspace')
         # Responsive startup size: fit the active monitor instead of assuming one fixed resolution.
         sw=self.winfo_screenwidth(); sh=self.winfo_screenheight()
         start_w=min(1600,int(sw*.94))
@@ -4188,6 +4188,8 @@ class Console(UIScaleMixin, GamepadMixin, SpatialMixin, StudioMixin, tk.Tk):
         visual_radius=math.hypot(.9582,.6314)/2+.03 if body and body.name.startswith('SEER AMB-CSW04-CE') else math.hypot(cfg['length'],cfg['width'])/2
         self.sim.collision_radius=max(cfg['radius'],visual_radius)
         self.sim_avoidance_label.configure(text=(self.sim.avoidance_status or '주행 준비')+f' · 충돌 반경 {self.sim.collision_radius:.2f} m')
+        records=self.sim.obstacle_tracker.records()
+        self.tracking_label.configure(text='신규 추적: '+str(sum(r['state']=='추적 중' for r in records))+' / 미관측: '+str(sum(r['state']=='미관측' for r in records)))
         goals=list(self.sim.skipped_goals)
         self.skipped_label.configure(text='패스 목적지: '+(', '.join(goals[:6])+(' …' if len(goals)>6 else '') if goals else '없음'))
         while True:

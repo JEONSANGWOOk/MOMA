@@ -26,6 +26,12 @@ class ObstacleUIMixin:
         self.button(row,'적용',lambda:self.guarded(self._reroute_settings)).pack(side='left')
         self.sim_avoidance_label=self.label(body,'벽과 장애물은 통과할 수 없습니다.',8,MUTED,anchor='w',justify='left',wraplength=285)
         self.sim_avoidance_label.pack(fill='x',pady=3)
+        self.show_tracks=tk.BooleanVar(value=True)
+        tk.Checkbutton(body,text='신규 장애물 마킹 / 궤적 표시',variable=self.show_tracks,bg=PANEL,command=self.draw_map).pack(anchor='w')
+        self.button(body,'신규 장애물 추적 목록',self._tracking_history).pack(fill='x',pady=2)
+        self.tracking_label=self.label(body,'신규 추적: 없음',8,MUTED,anchor='w',justify='left',wraplength=270)
+        self.tracking_label.pack(fill='x')
+        self.button(body,'신규 감지 장애물 배치 · SIM',lambda:(self.tabs.select(self.nodes_page),self.edit_mode.set('신규 감지 장애물'))).pack(fill='x',pady=2)
         self.skipped_label=self.label(body,'패스 목적지: 없음',8,'#c93043',anchor='w',justify='left',wraplength=270)
         self.skipped_label.pack(fill='x')
         self.button(body,'패스 이력 보기 / 마킹 초기화',self._skipped_history).pack(fill='x',pady=2)
@@ -47,6 +53,24 @@ class ObstacleUIMixin:
         self.actor_draft=None
         self.reroute_wait.set(str(self.studio_config.get('reroute_wait_s',5)))
         self.reroute_attempts.set(str(self.studio_config.get('reroute_attempts',3)))
+
+    def _tracking_history(self):
+        from .obstacle_tracking import CLASSES
+        self.sim_required();win=tk.Toplevel(self);win.title('신규 장애물 추적 목록');win.geometry('840x380')
+        tree=ttk.Treeview(win,columns=('kind','state','xy','speed','age'),show='tree headings',height=11)
+        tree.heading('#0',text='추적 ID');tree.column('#0',width=90)
+        for key,label,width in [('kind','판단',75),('state','관측 상태',90),('xy','현재 / 마지막 위치 (m)',190),('speed','관측 속도 (m/s)',115),('age','미관측 시간 (초)',115)]:tree.heading(key,text=label);tree.column(key,width=width)
+        tree.pack(fill='both',expand=True,padx=8,pady=8)
+        self.label(win,'미관측 1초 후 마지막 위치 마킹 유지 · 30초 후 제거 · 고정 지도 장애물은 제외',8,MUTED).pack()
+        def refresh():
+            if not win.winfo_exists():return
+            selection=tree.selection();tree.delete(*tree.get_children());tracker=self.sim.obstacle_tracker
+            for record in tracker.records():
+                tree.insert('','end',iid=record['id'],text=record['id'],values=(CLASSES[record['kind']],record['state'],f"{record['x']:.2f}, {record['y']:.2f}",f"{record['speed']:.2f}",f"{max(0,tracker.time-record['last_seen']):.1f}"))
+            for key in selection:
+                if tree.exists(key):tree.selection_add(key)
+            win.after(300,refresh)
+        refresh()
 
     def _auto_scenario_dialog(self):
         from .obstacle_tracking import CLASSES,SCENARIOS,DEFAULTS
@@ -174,7 +198,7 @@ class ObstacleUIMixin:
             points=[[self.map.nodes[n]['x'],self.map.nodes[n]['y']] for n in entries] if kind=='amr' else [list(p) for p in entries]
             prefix='PERSON' if kind=='person' else 'AMR';ids={o.get('id') for o in self.map.obstacles};index=1
             while f'{prefix}{index}' in ids:index+=1
-            obs=dict(id=existing['id'] if existing else f'{prefix}{index}',dynamic=True,kind=kind,x=points[0][0],y=points[0][1],motion_path=points,motion_mode='loop' if mode.get()=='순환' else 'pingpong',**v)
+            obs=dict(id=existing['id'] if existing else f'{prefix}{index}',dynamic=True,map_fixed=False,kind=kind,x=points[0][0],y=points[0][1],motion_path=points,motion_mode='loop' if mode.get()=='순환' else 'pingpong',**v)
             if kind=='amr':obs['motion_nodes']=list(entries)
             validate_actor(obs);compile_actor_path(self.map,obs)
             from types import SimpleNamespace

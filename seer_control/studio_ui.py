@@ -478,9 +478,9 @@ class StudioMixin(FairinoUIMixin,ObstacleUIMixin):
         return x,y
     def _studio_map_click(self,e):
         mode=self.edit_mode.get()
-        if mode not in ('Point 이동','벽 만들기','가상벽','다각형 영역','점군 지우개','SIM 장애물','동적 장애물 배치'):return False
+        if mode not in ('Point 이동','벽 만들기','가상벽','다각형 영역','점군 지우개','SIM 장애물','신규 감지 장애물','동적 장애물 배치'):return False
         def handle():
-            if mode in ('SIM 장애물','동적 장애물 배치'):self.sim_required()
+            if mode in ('SIM 장애물','신규 감지 장애물','동적 장애물 배치'):self.sim_required()
             else:self.editable()
             x,y=self._studio_snap_xy(*self.world(e.x,e.y))
             if mode=='동적 장애물 배치':self._actor_map_click(x,y)
@@ -496,12 +496,12 @@ class StudioMixin(FairinoUIMixin,ObstacleUIMixin):
                     self._studio_edit(lambda:target.append([*a,x,y]),'벽 추가' if mode=='벽 만들기' else '가상벽 추가')
             elif mode=='다각형 영역':self.studio_polygon.append((x,y))
             elif mode=='점군 지우개':self._studio_erasing=True;self._studio_erase(x,y)
-            elif mode=='SIM 장애물':
+            elif mode in ('SIM 장애물','신규 감지 장애물'):
                 self.sim_required()
                 def change():
                     near=next((o for o in self.map.obstacles if math.hypot(o['x']-x,o['y']-y)<o['radius']+.1),None)
                     if near:self.map.obstacles.remove(near)
-                    else:self.map.obstacles.append(dict(x=x,y=y,radius=.25))
+                    else:self.map.obstacles.append(dict(x=x,y=y,radius=.25,map_fixed=mode=='SIM 장애물'))
                 self._studio_obstacle_edit(change,'장애물 배치')
             self.draw_map()
         self.guarded(handle);return True
@@ -869,6 +869,15 @@ class StudioMixin(FairinoUIMixin,ObstacleUIMixin):
                     c.create_polygon(*points,fill=color,outline='#ffffff',width=2,tags='studio_obstacle')
                 c.create_text(x,y-r-9,text=obs.get('id','')+' · '+obs.get('_motion','준비'),fill=color,font=('Malgun Gothic',8),tags='studio_obstacle')
             else:c.create_oval(x-r,y-r,x+r,y+r,fill='#ce4053',outline='#ffffff',width=2,tags='studio_obstacle')
+        if not self.real and self.layers['장애물'].get() and self.show_tracks.get():
+            from .obstacle_tracking import CLASSES
+            for record in self.sim.obstacle_tracker.records():
+                color='#84919c' if record['state']=='미관측' else {'dynamic':'#2196c7','static':'#d14b54','unknown':'#e9a237'}[record['kind']]
+                trail=list(record['trail'])
+                if len(trail)>1:c.create_line(*[v for point in trail for v in self.xy(*point)],fill=color,width=2,dash=(3,3),tags='tracked_obstacle_trail')
+                x,y=self.xy(record['x'],record['y']);r=(record['radius']+.10)*self._transform()[0]
+                c.create_rectangle(x-r,y-r,x+r,y+r,outline=color,width=2,dash=(5,3),tags='tracked_obstacle')
+                c.create_text(x,y-r-24,text=record['id']+' · '+CLASSES[record['kind']]+' · '+record['state'],fill=color,font=(self.font,8,'bold'),tags='tracked_obstacle')
         draft=getattr(self,'actor_draft',None)
         if draft and draft.get('start'):
             x,y=self.xy(*draft['start']);c.create_oval(x-6,y-6,x+6,y+6,outline='#de9535',width=3)

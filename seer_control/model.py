@@ -166,7 +166,7 @@ class Simulator:
         self.detected_obstacle=''
         self.obstacle_policy='wait'
         from .obstacle_tracking import ObstacleTracker,DEFAULTS
-        self.obstacle_tracker=ObstacleTracker();self.auto_scenarios=dict(DEFAULTS)
+        self.obstacle_tracker=ObstacleTracker();self.obstacle_tracker.register_map(self.map.obstacles);self.auto_scenarios=dict(DEFAULTS)
         self.auto_wait_s=5.;self.auto_moving_speed=.08;self.auto_static_s=2.
         self.auto_obstacle_status='관측 대기';self._auto_block=None;self._auto_block_at=0.
         self.reroute_wait_s=5.;self.reroute_attempt_limit=3
@@ -383,6 +383,7 @@ class Simulator:
         dt = max(0, min(dt, .1))
         from .dynamic_obstacles import update_actors
         update_actors(self.map,dt,self.state,max(self.collision_radius,self.map.robot_model['radius']))
+        self.obstacle_tracker.observe(self.map,self.state,dt)
         self.obstacle_tracker.update(self.map.obstacles,dt,self.auto_moving_speed,self.auto_static_s)
         self._avoid_time+=dt
         s = self.state
