@@ -36,7 +36,7 @@ def rejoin_detour(model,start,reference,radius,safety_margin=.04):
     return None
 
 
-def detour(model,start,goal,radius,max_cells=24000,safety_margin=.04):
+def detour(model,start,goal,radius,max_cells=24000,safety_margin=.04,grid_step=None):
     """Return collision-checked world points; None means wait, never teleport."""
     radius+=max(0,safety_margin)
     if collision_reason(model,*start,radius) or collision_reason(model,*goal,radius):return None
@@ -46,7 +46,7 @@ def detour(model,start,goal,radius,max_cells=24000,safety_margin=.04):
     points.extend((o['x'],o['y']) for o in getattr(model,'obstacles',[]))
     margin=max(1.,radius*3);xs,ys=zip(*points)
     x0,y0=min(xs)-margin,min(ys)-margin;x1,y1=max(xs)+margin,max(ys)+margin
-    step=max(.12,max(x1-x0,y1-y0)/150)
+    step=max(.12,max(x1-x0,y1-y0)/150) if grid_step is None else max(.04,float(grid_step),max(x1-x0,y1-y0)/400)
     nx,ny=math.ceil((x1-x0)/step),math.ceil((y1-y0)/step)
     def world(cell):return x0+cell[0]*step,y0+cell[1]*step
     def cell(p):return round((p[0]-x0)/step),round((p[1]-y0)/step)

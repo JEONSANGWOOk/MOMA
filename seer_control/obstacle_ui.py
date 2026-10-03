@@ -27,7 +27,7 @@ class ObstacleUIMixin:
         self.label(row,'재탐색',8,bg=PANEL).pack(side='left')
         ttk.Spinbox(row,from_=1,to=10,textvariable=self.reroute_attempts,width=3).pack(side='left',padx=2)
         self.button(row,'적용',lambda:self.guarded(self._reroute_settings)).pack(side='left')
-        self.sim_avoidance_label=self.label(body,'벽과 장애물은 통과할 수 없습니다.',8,MUTED,anchor='w',justify='left',wraplength=285)
+        self.sim_avoidance_label=self.label(body,'연결 경로 실패 → 패스 전 자율 우회 탐색. 벽과 장애물은 통과하지 않습니다.',8,MUTED,anchor='w',justify='left',wraplength=285)
         self.sim_avoidance_label.pack(fill='x',pady=3)
         self.show_tracks=tk.BooleanVar(value=True)
         tk.Checkbutton(body,text='신규 장애물 마킹 / 궤적 표시',variable=self.show_tracks,bg=PANEL,command=self.draw_map).pack(anchor='w')

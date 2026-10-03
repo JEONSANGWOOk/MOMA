@@ -1,3 +1,4 @@
+v1.13: 223 unit tests PASS; pass-before-detour static/dynamic, full AMR footprint, timeout recovery, sealed room and SIM GUI validation.
 v1.12: 215 unit tests PASS; mission report GUI and automatic TXT/JSON persistence PASS.
 v1.11 validation (2026-10-04)
 213 unit tests PASS. Missing previous context return anchors, distant backtracking route, physical corridor buffer fallback, off-lane connector endpoint safety, future dynamic blocker replan, new mission mark reset, successful pass-through unmark, marks retained across cycle then cleared on next successful visit with history preserved. GUI: compact summary, larger focus map/restore, stop visibility. SIM only.

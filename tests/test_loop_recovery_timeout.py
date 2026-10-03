@@ -18,7 +18,7 @@ class LoopRecoveryTests(unittest.TestCase):
    if r.status in ('COMPLETED','FAILED'):break
   self.assertTrue(long_seen);self.assertEqual(r.status,'COMPLETED',r.error);self.assertEqual(r.cycle,2);self.assertFalse(r.skipped)
  def test_inactive_destination_skips_and_infinite_loop_continues(self):
-  m=MapModel(dict(format='amr-console-map-v1',nodes=[dict(id='A',x=0,y=0),dict(id='B',x=3,y=0),dict(id='C',x=0,y=2)],edges=[['A','B'],['A','C']],walls=[],obstacles=[dict(x=1.5,y=0,radius=.3,map_fixed=False)]));c=self.console(m);c.sim.auto_static_s=30;r=c.studio_runner;r.start([dict(type='Path Nav',goal='B'),dict(type='Set DO',channel=0,value=True),dict(type='Path Nav',goal='C')],repeat=0);now=time.monotonic();r.tick(now,.1);r.actions[0]['timeout_s']=2
+  m=MapModel(dict(format='amr-console-map-v1',nodes=[dict(id='A',x=0,y=0),dict(id='B',x=3,y=0),dict(id='C',x=0,y=2)],edges=[['A','B'],['A','C']],walls=[],obstacles=[dict(x=3,y=0,radius=.3,map_fixed=False)]));c=self.console(m);c.sim.auto_static_s=30;r=c.studio_runner;r.start([dict(type='Path Nav',goal='B'),dict(type='Set DO',channel=0,value=True),dict(type='Path Nav',goal='C')],repeat=0);now=time.monotonic();r.tick(now,.1);r.actions[0]['timeout_s']=2
   for i in range(1,500):
    c.sim.tick(.1);r.tick(now+i*.1,.1)
    if r.cycle>=1:break

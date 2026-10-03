@@ -102,6 +102,7 @@ class ConsoleAdapter:
     def navigation_timeout_elapsed(self,a,elapsed):
         if not self._recoverable_sim_nav(a):return None
         c=self.c;position=(c.sim.state.x,c.sim.state.y)
+        self.context['nav_elapsed']=elapsed
         previous=self.context.setdefault('nav_progress_pose',self.context['start'])
         if math.dist(position,previous)>=.1:
             self.context['nav_progress_pose']=position;self.context['nav_progress_elapsed']=elapsed
@@ -115,7 +116,12 @@ class ConsoleAdapter:
             return self.poll(a,0,0)
         if not c.sim.route and s.task=='완료':return True
         if s.target!=a['goal']:return None
-        c.sim.skip_destination('장애물 대응 중 실제 이동 진전 없이 주행 시간 제한 초과')
+        if c.sim.try_recovery_detour():
+            self.context['nav_progress_elapsed']=self.context.get('nav_elapsed',0.)
+            self.context['nav_progress_pose']=(s.x,s.y)
+            c.log('MISSION','무진행 시간 초과 · 목적지 패스 전 자율 우회 재개')
+            return {'pending':True}
+        c.sim.skip_destination('장애물 대응 중 실제 이동 진전 없이 주행 시간 제한 초과 · 자율 우회 통로 없음')
         return self.poll(a,0,0)
 
     def poll(self,a,dt,elapsed):

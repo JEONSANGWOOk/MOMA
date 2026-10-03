@@ -224,6 +224,7 @@ class MissionRunner:
                 handler=getattr(type(self.adapter),'navigation_timeout_result',None)
                 if handler:timed_result=handler(self.adapter,a)
                 if not timed_result:raise TimeoutError(f"{self.index+1}단계 {a['type']} 시간 초과")
+            if isinstance(timed_result,dict) and timed_result.get('pending') is True:return
             if timed_result is not None:done=timed_result
             elif self.dwell_until is not None:
                 if now<self.dwell_until:return

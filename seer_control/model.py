@@ -263,6 +263,50 @@ class Simulator:
         s.blocked=False;self._collision_blocked=False;self._reroute_block_at=None;self._reroute_failures=0
         return True
 
+    def try_recovery_detour(self):
+        """Last SIM recovery: search free space before abandoning a graph goal."""
+        from .avoidance import detour,rejoin_detour
+        s=self.state
+        if not self.route or not s.target or s.stopped or not s.motor or self._obstacle_latched:return False
+        if self.obstacle_policy=='auto' and self._auto_block and self._auto_block[-1] in ('wait','stop'):return False
+        # A fallback is obstacle recovery, not a connection between unrelated maps.
+        if self._reroute_forced:
+            try:self.map.route(self.map.nearest(s.x,s.y),s.target)
+            except ValueError:return False
+        radius=max(self.collision_radius,self.map.robot_model['radius'])
+        radius=max(radius,getattr(self,'applied_limits',{}).get('radius',radius))
+        if collision_reason(self.map,s.x,s.y,radius):return False
+        next_id=self.route[0];node=self.map.nodes[next_id]
+        next_pos=(node['x'],node['y']);start=(s.x,s.y)
+        reference=getattr(self,'_reference_waypoints',[])
+        margins=[.04,0.]
+        for margin in margins:
+            if collision_reason(self.map,*start,radius+margin):continue
+            # Restore the closest reachable point of the original segment first.
+            points=None
+            if reference and math.dist(reference[-1],next_pos)<1e-5:
+                points=rejoin_detour(self.map,start,reference,radius,safety_margin=margin)
+            if points:
+                destination=next_id;rejoined=True
+            else:
+                destination=next_id;rejoined=False
+                points=detour(self.map,start,next_pos,radius,max_cells=80000,safety_margin=margin,grid_step=.08)
+            if not points and next_id!=s.target:
+                goal=self.map.nodes[s.target];destination=s.target
+                points=detour(self.map,start,(goal['x'],goal['y']),radius,max_cells=80000,safety_margin=margin,grid_step=.08)
+            if not points:continue
+            if destination!=next_id:self.route=[destination];self._segment_start=None
+            self._waypoints=points[1:];self._reference_waypoints=list(points)
+            self._segment_reverse=False;self._velocity=0.;self._arrival_align=False
+            self._reroute_forced=False;self._skipped_context=None
+            self._reroute_block_at=None;self._reroute_failures=0
+            s.blocked=False;self._collision_blocked=False;self.block_reason=''
+            self.avoidance_status='패스 전 자율 우회 · '+('기존 경로 복귀' if rejoined else '자유 공간 탐색 → '+destination)
+            self._avoid_next=self._avoid_time+1.
+            return True
+        self.avoidance_status='패스 전 자율 우회 탐색 실패 · 충돌 없는 통로 없음'
+        return False
+
     def skip_destination(self,reason):
         goal=self.state.target
         if not goal:return
@@ -539,7 +583,8 @@ class Simulator:
                             s.blocked=False;self._collision_blocked=False;self._apply_alternate(plan)
                         else:
                             self._reroute_failures+=1;self._reroute_block_at=self._avoid_time
-                            if self._reroute_failures>=self.reroute_attempt_limit:self.skip_destination(reason+' · 연결된 대체 경로 없음')
+                            if self._reroute_failures>=self.reroute_attempt_limit:
+                                if not self.try_recovery_detour():self.skip_destination(reason+' · 연결 경로 및 자율 우회 통로 없음')
                     return
                 if policy=='stop':
                     self._obstacle_latched=True;s.blocked=True;self.block_reason=reason
