@@ -1,4 +1,5 @@
 """UI-independent editing, geometry, calibration, recording and action execution."""
+from .mission_report import MissionReport
 import copy
 import json
 import math
@@ -186,7 +187,7 @@ class MissionRunner:
         self.adapter=adapter;self.actions=[];self.status='IDLE';self.index=0
         self.cycle=0;self.repeat=1;self.started=0.;self.dwell_until=None;self.entered=False
         self.error='';self.elapsed=0.;self.paused_at=None
-        self.skipped=[];self.inactive_elapsed=None
+        self.skipped=[];self.inactive_elapsed=None;self.report=None
     @property
     def active(self):return self.status in ('RUNNING','PAUSED')
     def start(self,actions,repeat=1,index=0):
@@ -196,16 +197,19 @@ class MissionRunner:
         if type(repeat) is not int or repeat<0:raise ValueError('반복 횟수: 0 이상 정수')
         self.actions=actions;self.repeat=repeat;self.index=index;self.cycle=0
         self.status='RUNNING';self.entered=False;self.dwell_until=None;self.error='';self.elapsed=0
-        self.skipped=[];self.inactive_elapsed=None
+        self.skipped=[];self.inactive_elapsed=None;self.report=MissionReport(repeat)
+        self.report.add(self.cycle,self.index,'미션 시작',detail='반복 '+str(repeat))
         for a in self.actions:a['status']='대기'
         hook=getattr(type(self.adapter),'mission_started',None)
         if hook:hook(self.adapter,index)
     def tick(self,now,dt):
         if self.status!='RUNNING':return
         a=self.actions[self.index]
+        if self.report:self.report.seconds+=max(0.,dt)
         try:
             if not self.entered:
                 self.started=now;self.entered=True;a['status']='실행 중'
+                self.report.add(self.cycle,self.index,'시작',a.get('goal',a.get('operation',a['type'])),a['type'])
                 self.adapter.begin(a)
             self.elapsed=now-self.started
             timeout_elapsed=self.elapsed;timed_result=None
@@ -234,29 +238,39 @@ class MissionRunner:
             if skipped:
                 self.skipped.append(dict(goal=done['goal'],reason=done['reason'],cycle=self.cycle+1,step=self.index+1))
                 self.skipped=self.skipped[-300:]
+            self.report.add(self.cycle,self.index,'패스' if skipped else '성공',a.get('goal',a.get('operation',a['type'])),done.get('reason','') if skipped else a['type'],self.elapsed)
             target=self.adapter.branch_target(a) if a['type']=='Branch DI' else None
             self.index=target-1 if target is not None else self.index+1
             if skipped:
                 while self.index<len(self.actions) and self.actions[self.index]['type']!='Path Nav':
-                    self.actions[self.index]['status']='목적지 미도착으로 생략';self.index+=1
+                    self.actions[self.index]['status']='목적지 미도착으로 생략'
+                    self.report.add(self.cycle,self.index,'생략',self.actions[self.index].get('operation',self.actions[self.index]['type']),'목적지 미도착')
+                    self.index+=1
             self.entered=False;self.dwell_until=None
             if self.index>=len(self.actions):
-                self.cycle+=1
-                if self.repeat and self.cycle>=self.repeat:self.status='COMPLETED';return
+                self.report.add(self.cycle,self.index-1,'루프 완료')
+                self.cycle+=1;self.report.completed_loops=self.cycle
+                if self.repeat and self.cycle>=self.repeat:self.status='COMPLETED';self.report.finish(self.status);return
                 self.index=0
                 for item in self.actions:item['status']='대기'
         except Exception as e:
             self.error=str(e);a['status']='실패';self.status='FAILED'
+            self.report.add(self.cycle,self.index,'실패',a.get('goal',a.get('operation',a['type'])),self.error,self.elapsed)
+            self.report.finish(self.status)
             try:self.adapter.cancel()
             except Exception as stop_error:self.error+=' · 정지 요청 실패: '+str(stop_error)
     def pause(self,now):
-        if self.status=='RUNNING':self.status='PAUSED';self.paused_at=now;self.adapter.pause()
+        if self.status=='RUNNING':
+            self.report.add(self.cycle,self.index,'일시정지');self.status='PAUSED';self.paused_at=now;self.adapter.pause()
     def resume(self,now):
         if self.status=='PAUSED':
             delta=now-self.paused_at;self.started+=delta
             if self.dwell_until is not None:self.dwell_until+=delta
-            self.status='RUNNING';self.adapter.resume()
+            self.status='RUNNING';self.report.add(self.cycle,self.index,'재개');self.adapter.resume()
     def cancel(self):
-        if self.active:self.actions[self.index]['status']='취소됨'
+        if self.active:
+            self.actions[self.index]['status']='취소됨'
+            self.report.add(self.cycle,self.index,'취소',self.actions[self.index].get('goal',''))
+            self.report.finish('CANCELED')
         try:self.adapter.cancel()
         finally:self.status='CANCELED';self.entered=False

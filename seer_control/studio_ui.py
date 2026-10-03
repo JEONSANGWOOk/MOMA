@@ -326,13 +326,70 @@ class StudioMixin(FairinoUIMixin,ObstacleUIMixin):
         row=self._studio_row(page)
         for title,fn in [('선택 Taskchain 실행',self.run_tasks),('일시정지',lambda:self.studio_runner.pause(time.monotonic())),
                          ('재개',lambda:self.studio_runner.resume(time.monotonic())),('취소',self.cancel_tasks),
-                         ('실패 단계부터 재개',self._studio_retry)]:self.button(row,title,fn).pack(side='left',padx=3)
+                         ('실패 단계부터 재개',self._studio_retry),('수행 보고서',self._studio_report)]:self.button(row,title,fn).pack(side='left',padx=3)
         self.studio_mission_label=self.label(page,'미션 대기',12,INK,bg=PANEL);self.studio_mission_label.pack(anchor='w',padx=12,pady=8)
         self.studio_action_tree=ttk.Treeview(page,columns=('step','type','target','status','timeout'),show='headings',height=10)
         for key,title in [('step','단계'),('type','Action'),('target','목적지 / 작업'),('status','상태'),('timeout','시간 제한(s)')]:
             self.studio_action_tree.heading(key,text=title);self.studio_action_tree.column(key,width=140,stretch=True)
         self.studio_action_tree.pack(fill='both',expand=True,padx=12,pady=8)
         self._studio_note(page,'Taskchain의 모든 체크된 Task/Group을 순서대로 실행합니다. Branch DI의 target은 1부터 시작하는 단계 번호입니다. 실패한 장비 명령은 자동 재전송하지 않습니다. 실패 단계 재개 버튼은 사용자가 재실행을 선택하는 기능입니다.')
+
+    def _studio_report(self,report=None):
+        report=report or self.studio_runner.report
+        if report is None:
+            messagebox.showinfo('수행 보고서','아직 실행한 미션이 없습니다.');return
+        win=tk.Toplevel(self);win.title('미션 수행 보고서');self._fit_dialog(win,1000,650)
+        d=report.data()
+        ttk.Label(win,text=f"{d['status']} · 완료 루프 {d['completed_loops']} · 성공 {d['success']} / 실패 {d['failure']} / 패스 {d['skipped']} / 생략 {d['omitted']} / 취소 {d['canceled']}").pack(anchor='w',padx=10,pady=8)
+        ttk.Label(win,text=f"시작 {report.started} · 종료 {report.ended or '수행 중'} · 수행 {report.seconds:.1f}초").pack(anchor='w',padx=10)
+        ttk.Label(win,text='횟수는 작업 단계 기준 · 루프 행을 펼치면 시간순 이벤트와 결과를 볼 수 있습니다.').pack(anchor='w',padx=10)
+        frame=ttk.Frame(win);frame.pack(fill='both',expand=True,padx=10,pady=8)
+        tree=ttk.Treeview(frame,columns=('time','step','kind','target','detail'),show='tree headings')
+        tree.heading('#0',text='루프');tree.column('#0',width=110,stretch=False)
+        for key,title,width in [('time','경과(초)',80),('step','단계',50),('kind','결과 / 이벤트',110),('target','대상',100),('detail','내용 / 소요 시간',400)]:
+            tree.heading(key,text=title);tree.column(key,width=width,minwidth=50)
+        bar=ttk.Scrollbar(frame,orient='vertical',command=tree.yview);tree.configure(yscrollcommand=bar.set)
+        bar.pack(side='right',fill='y')
+        horizontal=ttk.Scrollbar(frame,orient='horizontal',command=tree.xview);tree.configure(xscrollcommand=horizontal.set)
+        horizontal.pack(side='bottom',fill='x');tree.pack(fill='both',expand=True)
+        for cycle in sorted(set(r['loop'] for r in report.records)):
+            rows=[r for r in report.records if r['loop']==cycle]
+            counts={k:sum(r['kind']==k for r in rows) for k in ('성공','실패','패스','생략')}
+            parent=tree.insert('','end',text=f'{cycle}번째 루프',open=True,values=('','','요약','', ' / '.join(k+' '+str(v) for k,v in counts.items())))
+            for r in rows:
+                detail=r['detail']+(f" · {r['duration']:.1f}초" if r['duration'] is not None else '')
+                tree.insert(parent,'end',values=(f"{r['elapsed']:.1f}",r['step'],r['kind'],r['target'],detail))
+        def export():
+            name=filedialog.asksaveasfilename(parent=win,defaultextension='.txt',filetypes=[('텍스트 보고서','*.txt'),('JSON 보고서','*.json')],initialfile='mission_report.txt')
+            if name:
+                def save():
+                    Path(name).write_text(report.text() if Path(name).suffix.lower()!='.json' else json.dumps(report.data(),ensure_ascii=False,indent=2),encoding='utf-8')
+                self.guarded(save)
+        self.button(win,'보고서 저장 (TXT / JSON)',export).pack(pady=8)
+
+    def _studio_report_update(self):
+        runner=self.studio_runner;report=runner.report
+        if report is None:return
+        if getattr(self,'_mission_audit_report',None) is not report:
+            self._mission_audit_report=report;self._mission_audit_state=None
+        if runner.active and not self.real:
+            import re
+            raw=(self.sim.block_reason,self.sim.auto_obstacle_status,self.sim.avoidance_status)
+            key=tuple(re.sub(r'\d+(?:\.\d+)?(?:/\d+(?:\.\d+)?)?s','<대기시간>',x) for x in raw)
+            if key!=self._mission_audit_state:
+                if any(raw):report.add(runner.cycle,runner.index,'장애물 / 경로',runner.actions[runner.index].get('goal',''),' | '.join(x for x in raw if x))
+                self._mission_audit_state=key
+        if runner.status in ('COMPLETED','FAILED','CANCELED') and getattr(self,'_mission_saved_report',None) is not report:
+            if report.ended is None:
+                if runner.error:report.add(runner.cycle,runner.index,'실패',detail=runner.error)
+                report.finish(runner.status)
+            self._mission_saved_report=report
+            try:
+                folder=SETTINGS.parent/'mission_reports'
+                stamp=report.started.replace(':','').replace('+','_')
+                report.save(folder/('mission_'+stamp+'_'+str(time.time_ns())+'.json'))
+            except Exception as e:self.log('ERROR','미션 보고서 저장 실패: '+str(e))
+            self.after_idle(lambda report=report:self._studio_report(report))
 
     def _studio_io_page(self,page):
         row=self._studio_row(page)
@@ -804,6 +861,7 @@ class StudioMixin(FairinoUIMixin,ObstacleUIMixin):
         if runner.status!=self._studio_runner_status:
             self._studio_runner_status=runner.status;self.log('MISSION','미션 '+runner.status+(' · '+runner.error if runner.error else ''))
             if runner.status in ('FAILED','COMPLETED','CANCELED'):self.task_running=False
+        self._studio_report_update()
         self._studio_alarm('MISSION',runner.status=='FAILED',runner.error)
         state=self.current_state()
         self._studio_alarm('BLOCKED',bool(state.get('blocked')),getattr(self.sim,'block_reason','') or '장애물 정지')
