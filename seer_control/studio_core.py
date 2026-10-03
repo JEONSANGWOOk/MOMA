@@ -186,7 +186,7 @@ class MissionRunner:
         self.adapter=adapter;self.actions=[];self.status='IDLE';self.index=0
         self.cycle=0;self.repeat=1;self.started=0.;self.dwell_until=None;self.entered=False
         self.error='';self.elapsed=0.;self.paused_at=None
-        self.skipped=[]
+        self.skipped=[];self.inactive_elapsed=None
     @property
     def active(self):return self.status in ('RUNNING','PAUSED')
     def start(self,actions,repeat=1,index=0):
@@ -196,7 +196,7 @@ class MissionRunner:
         if type(repeat) is not int or repeat<0:raise ValueError('반복 횟수: 0 이상 정수')
         self.actions=actions;self.repeat=repeat;self.index=index;self.cycle=0
         self.status='RUNNING';self.entered=False;self.dwell_until=None;self.error='';self.elapsed=0
-        self.skipped=[]
+        self.skipped=[];self.inactive_elapsed=None
         for a in self.actions:a['status']='대기'
     def tick(self,now,dt):
         if self.status!='RUNNING':return
@@ -206,14 +206,26 @@ class MissionRunner:
                 self.started=now;self.entered=True;a['status']='실행 중'
                 self.adapter.begin(a)
             self.elapsed=now-self.started
-            if self.elapsed>a['timeout_s']:raise TimeoutError(f"{self.index+1}단계 {a['type']} 시간 초과")
-            if self.dwell_until is not None:
+            timeout_elapsed=self.elapsed;timed_result=None
+            hook=getattr(type(self.adapter),'navigation_timeout_elapsed',None)
+            self.inactive_elapsed=None
+            if hook:
+                measured=hook(self.adapter,a,self.elapsed)
+                if measured is not None:
+                    timeout_elapsed=0. if self.dwell_until is not None else measured
+                    self.inactive_elapsed=timeout_elapsed
+            if timeout_elapsed>a['timeout_s']:
+                handler=getattr(type(self.adapter),'navigation_timeout_result',None)
+                if handler:timed_result=handler(self.adapter,a)
+                if not timed_result:raise TimeoutError(f"{self.index+1}단계 {a['type']} 시간 초과")
+            if timed_result is not None:done=timed_result
+            elif self.dwell_until is not None:
                 if now<self.dwell_until:return
                 done=True
             else:
                 done=self.adapter.poll(a,dt,self.elapsed)
-                skipped=isinstance(done,dict) and done.get('skip') is True
-                if done and not skipped and a.get('delay_ms',0):self.dwell_until=now+a['delay_ms']/1000.;return
+            skipped=isinstance(done,dict) and done.get('skip') is True
+            if done and not skipped and self.dwell_until is None and a.get('delay_ms',0):self.dwell_until=now+a['delay_ms']/1000.;return
             if not done:return
             skipped=isinstance(done,dict) and done.get('skip') is True
             a['status']='패스' if skipped else '완료'

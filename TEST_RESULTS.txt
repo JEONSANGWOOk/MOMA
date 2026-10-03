@@ -1,3 +1,6 @@
+v1.10.1 validation (2026-10-04)
+205 unit tests PASS. Navigation longer than wall-clock limit completes repeated loop, repeated new graph blockers replan and finish, inactive goal skips with dependent I/O omission and next infinite cycle, arrival dwell preserved, stop errors remain failures. GUI repeated reroutes and two infinite cycles complete while third cycle stays RUNNING. SIM only; no physical robot commands.
+
 v1.10 validation (2026-10-04)
 200 unit tests PASS. People/AMR actor encounters reverse and separate without overlap, directional path protection, explicit wait/manual pause preserved, settings validation. GUI fixed obstacle/wall deletion during navigation preserves route and reaches B; actor reversal confirmed. SIM only; no hardware commands.
 

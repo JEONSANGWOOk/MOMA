@@ -91,6 +91,29 @@ class ConsoleAdapter:
             if c._jog_wakeup:c._jog_wakeup.set()
         elif active:c.sim.drive(*self.motion)
         else:c.sim.v=c.sim.w=c.sim.lease=0
+    def _recoverable_sim_nav(self,a):
+        c=self.c
+        return a['type']=='Path Nav' and not c.real and c.sim.obstacle_policy in ('auto','reroute')
+
+    def navigation_timeout_elapsed(self,a,elapsed):
+        if not self._recoverable_sim_nav(a):return None
+        c=self.c;position=(c.sim.state.x,c.sim.state.y)
+        previous=self.context.setdefault('nav_progress_pose',self.context['start'])
+        if math.dist(position,previous)>=.1:
+            self.context['nav_progress_pose']=position;self.context['nav_progress_elapsed']=elapsed
+        return max(0.,elapsed-self.context.get('nav_progress_elapsed',0.))
+
+    def navigation_timeout_result(self,a):
+        if not self._recoverable_sim_nav(a):return None
+        c=self.c;s=c.sim.state
+        if not c.connected or not c.sim_powered or s.stopped or not s.motor or c.sim.auto_charge['phase']!='IDLE':return None
+        if c.sim.skip_result and c.sim.skip_result['goal']==a['goal']:
+            return self.poll(a,0,0)
+        if not c.sim.route and s.task=='완료':return True
+        if s.target!=a['goal']:return None
+        c.sim.skip_destination('장애물 대응 중 실제 이동 진전 없이 주행 시간 제한 초과')
+        return self.poll(a,0,0)
+
     def poll(self,a,dt,elapsed):
         c=self.c;typ=a['type'];state=c.current_state()
         if not c.connected or (not c.real and not c.sim_powered):raise ValueError('미션 중 연결/전원이 끊겼습니다.')
@@ -806,6 +829,7 @@ class StudioMixin(FairinoUIMixin,ObstacleUIMixin):
         self._studio_draw_at=now
         total='∞' if runner.repeat==0 else str(runner.repeat)
         text=f'{runner.status} · {runner.cycle+1}/{total}회 · {runner.index+1}단계 · {runner.elapsed:.1f}s'+(' · '+runner.error if runner.error else '')
+        if runner.inactive_elapsed is not None:text+=f' · 무진행 {runner.inactive_elapsed:.1f}s'
         if runner.skipped:text+=f' · 목적지 패스 {len(runner.skipped)}건'
         self.studio_mission_label.config(text=text)
         if runner.active or runner.status in ('FAILED','COMPLETED'):self.mission_status.config(text=text[:110])
