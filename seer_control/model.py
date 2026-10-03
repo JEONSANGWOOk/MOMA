@@ -169,6 +169,7 @@ class Simulator:
         self.obstacle_tracker=ObstacleTracker();self.obstacle_tracker.register_map(self.map.obstacles);self.auto_scenarios=dict(DEFAULTS)
         self.auto_wait_s=5.;self.auto_moving_speed=.08;self.auto_static_s=2.
         self.auto_obstacle_status='관측 대기';self._auto_block=None;self._auto_block_at=0.
+        self.prefer_graph_routes=True;self._route_scan_next=0.
         self.reroute_wait_s=5.;self.reroute_attempt_limit=3
         self._reroute_block_at=None;self._reroute_failures=0;self._reroute_forced=False
         self.skipped_goals={};self.skip_result=None;self._skipped_context=None
@@ -376,6 +377,7 @@ class Simulator:
             s.theta=heading
         self._arrival_align=False
         s.x,s.y,s.last_node=n['x'],n['y'],n['id']
+        self.skipped_goals.pop(n['id'],None)
         self._segment_start=n['id'];self.route.pop(0)
         if not self.route:
             s.mode,s.task,s.target='IDLE','완료','';s.speed=0;self._velocity=0
@@ -458,6 +460,23 @@ class Simulator:
                 angle1=math.atan2(b[1]-a[1],b[0]-a[0]);angle2=math.atan2(c[1]-b[1],c[0]-b[0])
                 curvature=abs(math.atan2(math.sin(angle2-angle1),math.cos(angle2-angle1)))/max(.001,(ab+bc)/2)
                 if curvature>1e-6:desired=min(desired,limits['maxrot']/curvature)
+            if self.prefer_graph_routes and self.obstacle_policy in ('auto','reroute') and self._avoid_time>=self._route_scan_next:
+                self._route_scan_next=self._avoid_time+1.
+                remaining=self.navigation_points()[1:];previous=(s.x,s.y);horizon=0.
+                for point in remaining:horizon+=math.dist(previous,point);previous=point
+                _,ahead_reason=path_clearance(self.map,(s.x,s.y),remaining,limits['radius'],horizon)
+                permit=True
+                if ahead_reason and self.obstacle_policy=='auto':
+                    _,kind,_,obs=self.obstacle_tracker.blocker(self.map,(s.x,s.y),remaining,limits['radius'],horizon,ahead_reason)
+                    scenario=(obs or {}).get('auto_scenarios',{}).get(kind,self.auto_scenarios[kind])
+                    permit=scenario not in ('wait','stop')
+                if ahead_reason and permit:
+                    from .alternate_routes import alternate_route
+                    plan=alternate_route(self.map,(s.x,s.y),s.target,self._segment_start,self.route[0],getattr(self,'_reference_waypoints',[]),limits['radius'],include_dynamic=True)
+                    if plan:
+                        self._apply_alternate(plan)
+                        self.avoidance_status='다른 연결 경로 · 전체 구간 검사 · '+ ' → '.join(plan['nodes'])
+                        return
             if len(preview)>1:
                 p=preview[1];heading=math.atan2(p[1]-s.y,p[0]-s.x)+(math.pi if self._segment_reverse else 0)
                 delta_heading=math.atan2(math.sin(heading-s.theta),math.cos(heading-s.theta))

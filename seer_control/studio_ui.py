@@ -25,6 +25,10 @@ SETTINGS=Path.home()/'.seer_amr_console'/'studio_settings.json'
 
 class ConsoleAdapter:
     def __init__(self,console):self.c=console;self.context={};self.motion=(0.,0.)
+    def mission_started(self,index):
+        if not self.c.real and index==0:
+            self.c.sim.skipped_goals.clear();self.c.sim.skip_result=None
+
     def begin(self,a):
         c=self.c;state=c.current_state();typ=a['type']
         if not c.connected or (not c.real and not c.sim_powered):raise ValueError('로봇 연결/전원이 꺼져 있습니다.')
@@ -830,7 +834,7 @@ class StudioMixin(FairinoUIMixin,ObstacleUIMixin):
         total='∞' if runner.repeat==0 else str(runner.repeat)
         text=f'{runner.status} · {runner.cycle+1}/{total}회 · {runner.index+1}단계 · {runner.elapsed:.1f}s'+(' · '+runner.error if runner.error else '')
         if runner.inactive_elapsed is not None:text+=f' · 무진행 {runner.inactive_elapsed:.1f}s'
-        if runner.skipped:text+=f' · 목적지 패스 {len(runner.skipped)}건'
+        if runner.skipped:text+=f' · 패스 이력 {len(runner.skipped)}건'
         self.studio_mission_label.config(text=text)
         if runner.active or runner.status in ('FAILED','COMPLETED'):self.mission_status.config(text=text[:110])
         self.studio_action_tree.delete(*self.studio_action_tree.get_children())

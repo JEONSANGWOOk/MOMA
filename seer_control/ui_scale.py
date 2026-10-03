@@ -92,7 +92,7 @@ class UIScaleMixin:
         for name,padding in [('TEntry',4),('TCombobox',3),('TButton',4)]:style.configure(name,padding=round(padding*ratio))
         self.navigation.configure(width=round(150*ratio))
         self.operation_page.columnconfigure(0,minsize=round(450*ratio))
-        self.operation_page.columnconfigure(1,minsize=max(220,round(310*ratio)))
+        self.operation_page.columnconfigure(1,minsize=0 if getattr(self,'map_focus',False) else max(220,round(310*ratio)))
         # Widgets in the editor use a horizontal paned layout.
         try:
             panes=self.editor_canvas.master.master

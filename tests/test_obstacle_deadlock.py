@@ -23,7 +23,7 @@ class DeadlockTests(unittest.TestCase):
  def test_local_failure_falls_back_to_connected_route(self):
   from unittest.mock import Mock
   m=MapModel(dict(format='amr-console-map-v1',nodes=[dict(id=k,x=x,y=y) for k,x,y in [('A',0,0),('B',3,0),('C',0,2),('D',3,2)]],edges=[['A','B'],['A','C'],['C','D'],['D','B']],walls=[],obstacles=[dict(x=1.5,y=0,radius=.3,map_fixed=False)]))
-  s=Simulator(m);s.obstacle_policy='auto';s.auto_static_s=.5;s.auto_wait_s=.5;s._try_local_detour=Mock(return_value=False);s.navigate('B');upper=False
+  s=Simulator(m);s.obstacle_policy='auto';s.auto_static_s=.5;s.auto_wait_s=.5;s.prefer_graph_routes=False;s._try_local_detour=Mock(return_value=False);s.navigate('B');upper=False
   for _ in range(1000):s.tick(.1);upper|=s.state.y>1.5
   self.assertTrue(s._try_local_detour.called);self.assertTrue(upper);self.assertEqual(s.state.last_node,'B')
  def test_all_recovery_routes_fail_marks_goal(self):

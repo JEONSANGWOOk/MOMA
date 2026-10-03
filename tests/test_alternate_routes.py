@@ -15,7 +15,7 @@ def scene(obstacles=None):
 
 
 def robot(model):
-    s=Simulator(model);s.obstacle_policy='reroute';s.reroute_wait_s=.5;s.reroute_attempt_limit=2
+    s=Simulator(model);s.obstacle_policy='reroute';s.prefer_graph_routes=False;s.reroute_wait_s=.5;s.reroute_attempt_limit=2
     return s
 
 

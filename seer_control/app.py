@@ -54,7 +54,7 @@ def _shape_summary(value, depth=0):
 class Console(UIScaleMixin, GamepadMixin, SpatialMixin, StudioMixin, tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title('AMR Control Studio | MoMa Standalone · v1.10.1 Workspace')
+        self.title('AMR Control Studio | MoMa Standalone · v1.11 Workspace')
         # Responsive startup size: fit the active monitor instead of assuming one fixed resolution.
         sw=self.winfo_screenwidth(); sh=self.winfo_screenheight()
         start_w=min(1600,int(sw*.94))
@@ -314,7 +314,7 @@ class Console(UIScaleMixin, GamepadMixin, SpatialMixin, StudioMixin, tk.Tk):
         footer = tk.Frame(self,bg=CHROME)
         footer.pack(fill='x',side='bottom')
         self.footer = self.label(footer,'',9,'#c4d0df',bg=CHROME,anchor='w')
-        self.footer.pack(side='left',padx=12,pady=5)
+        self.footer.pack(side='left',padx=8,pady=1)
         self.label(footer,'소프트웨어 정지 ≠ 하드웨어 비상정지',9,'#ffb6b9',bg=CHROME).pack(side='right',padx=12)
         shell = tk.Frame(self, bg=BG)
         shell.pack(fill='both',expand=True)
@@ -364,12 +364,16 @@ class Console(UIScaleMixin, GamepadMixin, SpatialMixin, StudioMixin, tk.Tk):
         page.rowconfigure(1,weight=1)
         ribbon = tk.Frame(page,bg=PANEL)
         ribbon.grid(row=0,column=0,columnspan=2,sticky='ew',pady=(3,0))
-        self.label(ribbon,'로봇 운행 · 목적지 선택 / 주행 / 재배치',10,INK,True).pack(side='left',padx=10,pady=7)
+        self.label(ribbon,'로봇 운행 · 목적지 선택 / 주행 / 재배치',10,INK,True).pack(side='left',padx=10,pady=2)
+        self.map_focus=False
+        self.map_focus_button=self.button(ribbon,'지도 크게',self._map_focus_toggle)
+        self.map_focus_button.pack(side='right',padx=3)
+        self.map_focus_stop=self.button(ribbon,'■ 정지',lambda:self.action('stop'),RED)
         self.button(ribbon,'노드 / 경로 편집 열기',lambda:self.tabs.select(self.nodes_page)).pack(side='right',padx=6,pady=3)
         left = tk.Frame(page,bg=PANEL)
-        left.grid(row=1,column=0,sticky='nsew',pady=5,padx=(0,6))
+        left.grid(row=1,column=0,sticky='nsew',pady=2,padx=(0,3))
         toolbar = tk.Frame(left,bg=PANEL)
-        toolbar.pack(fill='x',padx=6,pady=5)
+        toolbar.pack(fill='x',padx=6,pady=2)
         self.label(toolbar,'MAP',9,bold=True).pack(side='left',padx=(0,6))
         for title, command in [('맞춤',self.fit_map),('LiDAR 정합',self.align_lidar_to_map),
                               ('＋',lambda:self.change_zoom(1.2)),('−',lambda:self.change_zoom(1/1.2))]:
@@ -380,7 +384,7 @@ class Console(UIScaleMixin, GamepadMixin, SpatialMixin, StudioMixin, tk.Tk):
             button=tk.Checkbutton(layers,text=name,variable=var,bg=PANEL,command=self.draw_map)
             button.pack(side='left');self.operation_layer_buttons[name]=button
         self.operation_sensor_label=self.label(left,'LiDAR 대기 · 장애물 상태 확인 중',9,MUTED,anchor='w')
-        self.operation_sensor_label.pack(fill='x',padx=12,pady=(0,4))
+        self.operation_sensor_label.pack(fill='x',padx=8,pady=(0,1))
         viewport=tk.Frame(left,bg=PANEL)
         viewport.pack(fill="both",expand=True,padx=10)
         self.canvas = tk.Canvas(viewport,bg=DARK,highlightthickness=0)
@@ -397,10 +401,14 @@ class Console(UIScaleMixin, GamepadMixin, SpatialMixin, StudioMixin, tk.Tk):
         self.canvas.bind('<Button-4>',lambda e:self.change_zoom(1.12))
         self.canvas.bind('<Button-5>',lambda e:self.change_zoom(1/1.12))
         self._spatial_build(toolbar,viewport)
-        self.map_info = self.label(left,'',9,MUTED,anchor='w')
-        self.map_info.pack(fill='x',padx=12,pady=8)
+        info_bar=tk.Frame(left,bg=PANEL);info_bar.pack(fill='x',padx=6,pady=1)
+        self.button(info_bar,'상세',self._map_info_dialog).pack(side='right')
+        self.map_info = self.label(info_bar,'',8,MUTED,anchor='w')
+        self.map_info.pack(side='left',fill='x',expand=True)
+        self._map_info_details='지도 상태 요약'
         right_outer,right,_right_canvas = self._scrollable_frame(page,bg=BG)
         right_outer.grid(row=1,column=1,sticky='nsew',pady=5)
+        self.operation_right_outer=right_outer
         self.operation_right_canvas=_right_canvas
         f,b = self.card(right,'즉시 제어')
         f.pack(fill='x',pady=(0,8))
@@ -483,6 +491,19 @@ class Console(UIScaleMixin, GamepadMixin, SpatialMixin, StudioMixin, tk.Tk):
         self.command_status = self.label(b,'아직 전송된 명령 없음',9,MUTED,anchor='w',justify='left',wraplength=285)
         self.command_status.pack(fill='x')
         self.button(b,'상세 명령 로그 보기',lambda:self.tabs.select(self.logs_page)).pack(fill='x',pady=(6,0))
+
+    def _map_info_dialog(self):
+        messagebox.showinfo('지도 상태 / 조작 안내',self._map_info_details,parent=self)
+
+    def _map_focus_toggle(self):
+        self.map_focus=not self.map_focus
+        if self.map_focus:
+            self.operation_right_outer.grid_remove();self.operation_page.columnconfigure(1,minsize=0,weight=0)
+            self.map_focus_button.configure(text='제어 패널 보기');self.map_focus_stop.pack(side='left',padx=3)
+        else:
+            self.operation_right_outer.grid();self.operation_page.columnconfigure(1,minsize=max(220,round(310*getattr(self,'ui_scale_ratio',1))),weight=1)
+            self.map_focus_button.configure(text='지도 크게');self.map_focus_stop.pack_forget()
+        self.after_idle(self.draw_map)
 
     def _nodes(self):
         top = tk.Frame(self.nodes_page,bg=BG); top.pack(fill='x',pady=8)
@@ -2761,8 +2782,9 @@ class Console(UIScaleMixin, GamepadMixin, SpatialMixin, StudioMixin, tk.Tk):
         obs_txt=''
         if self.real and self.live.get('blocked'):
             obs_txt=f' · BLOCK ({self.live.get("block_x","?")},{self.live.get("block_y","?")})'
-        self.map_info.config(text=f'{self.map.name}  |  {len(self.map.nodes)} nodes · {len(self.map.edges)} paths  |  '
+        self._map_info_details=(f'{self.map.name}  |  {len(self.map.nodes)} nodes · {len(self.map.edges)} paths  |  '
                             f'{len(getattr(self.map,"area_records",[]))} areas · {self.zoom*100:.0f}% · LiDAR {lidar_n} pts{lidar_diag}{obs_txt} · Align {self.lidar_alignment_score:.2f} · Hit Point only  |  휠: 확대 · 우클릭 드래그: 이동 · 클릭: 노드 선택 · 더블클릭: 목적지 이동')
+        self.map_info.config(text=f'{self.map.name[:28]} · 노드 {len(self.map.nodes)} / 경로 {len(self.map.edges)} · {self.zoom*100:.0f}% · LiDAR {lidar_n}점')
 
     def editable(self):
         if self.map_push_in_progress:
@@ -4177,6 +4199,7 @@ class Console(UIScaleMixin, GamepadMixin, SpatialMixin, StudioMixin, tk.Tk):
 
     def tick(self):
         now=time.monotonic();dt=now-self.last_tick;self.last_tick=now
+        self.sim.prefer_graph_routes=self.prefer_graph_routes.get()
         self._auto_apply_settings()
         self.auto_class_label.configure(text='자동 판단: '+self.sim.auto_obstacle_status)
         self.sim.obstacle_policy=self._obstacle_policy_key()

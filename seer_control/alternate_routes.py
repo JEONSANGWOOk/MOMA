@@ -24,12 +24,12 @@ def split_reference(start,reference):
     return [start,p]+list(reference[i+1:]),[start,p]+list(reversed(reference[:i+1]))
 
 
-def alternate_route(model,start,goal,a,b,reference,radius,include_dynamic=False):
+def alternate_route(model,start,goal,a,b,reference,radius,include_dynamic=False,safety_margin=.04):
     # Dynamic actors are waited for at execution, rather than closing map lanes.
     scene=SimpleNamespace(walls=model.walls,virtual_walls=model.virtual_walls,area_records=model.area_records,
         obstacles=[o for o in model.obstacles if include_dynamic or not o.get('dynamic')])
     original=adjacency(model);graph={key:[] for key in original}
-    def clear(points):return bool(points) and all(clear_segment(scene,x,y,radius+.04) for x,y in zip(points,points[1:]))
+    def clear(points):return bool(points) and all(clear_segment(scene,x,y,radius+safety_margin) for x,y in zip(points,points[1:]))
     def clear_prefix(points):
         if clear(points):return True
         # A close standstill can be inside the extra 4cm buffer without
@@ -41,19 +41,53 @@ def alternate_route(model,start,goal,a,b,reference,radius,include_dynamic=False)
             if clear(lane(model,key,nxt)):graph[key].append((nxt,distance,seconds))
     anchors=[]
     for key,node in model.nodes.items():
-        if math.dist(start,(node['x'],node['y']))<1e-6:anchors.append((key,[start]))
+        if math.dist(start,(node['x'],node['y']))<1e-6 and not collision_reason(scene,*start,radius):anchors.append((key,[start]))
     forward,backward=split_reference(start,reference)
-    if b in graph and clear_prefix(forward):anchors.append((b,forward))
+    if b in graph and forward and math.dist(forward[-1],(model.nodes[b]['x'],model.nodes[b]['y']))<=1e-5 and clear_prefix(forward):anchors.append((b,forward))
     # Backtracking a directed lane requires an explicitly available reverse lane.
     if a in graph and b in original and any(nxt==a for nxt,_,_ in original[b]) and clear_prefix(backward):
         reverse,_=split_reference(start,lane(model,b,a))
         if reverse and math.dist(start,reverse[1])<=.05 and clear_prefix(reverse):anchors.append((a,reverse))
+    # Recover from any directed lane containing the current pose, including
+    # an interrupted return-to-anchor segment after earlier replanning.
+    for key,edges in original.items():
+        for nxt,_,_ in edges:
+            suffix,_=split_reference(start,lane(model,key,nxt))
+            if suffix and math.dist(start,suffix[1])<=.08 and clear_prefix(suffix):anchors.append((nxt,suffix))
     options=[]
-    for anchor,prefix in anchors:
+    reachable=[]
+    for anchor in graph:
         try:result=shortest_path(graph,anchor,goal)
         except ValueError:continue
+        reachable.append((anchor,result))
+    routes=dict(reachable)
+    for anchor,prefix in anchors:
+        result=routes.get(anchor)
+        if result is None:continue
         length=sum(math.dist(x,y) for x,y in zip(prefix,prefix[1:]))
         options.append((length+result['distance'],anchor,prefix,result['nodes']))
+    if not options and safety_margin>0:
+        # Try all lanes again without the extra buffer, never reducing the
+        # actual robot footprint. This recovers physically passable corridors.
+        result=alternate_route(model,start,goal,a,b,reference,radius,include_dynamic,safety_margin=0)
+        if result:result['reduced_margin']=True
+        return result
+    if not options and reference:
+        # A robot already in a free-space detour may be off every map lane.
+        # Find a checked connector to a node that can actually reach the goal.
+        from .studio_core import point_segment_distance
+        on_lane=any(min((point_segment_distance(*start,x,y) for x,y in zip(lane(model,key,nxt),lane(model,key,nxt)[1:])),default=float('inf'))<=.08 for key,edges in original.items() for nxt,_,_ in edges)
+        if not on_lane:
+            from .avoidance import detour
+            scene.nodes=model.nodes
+            ranked=sorted(reachable,key=lambda pair:math.dist(start,(model.nodes[pair[0]]['x'],model.nodes[pair[0]]['y']))+pair[1]['distance'])
+            for budget in (8000,24000):
+                for anchor,result in ranked:
+                    node=model.nodes[anchor];prefix=detour(scene,start,(node['x'],node['y']),radius,max_cells=budget,safety_margin=safety_margin)
+                    if prefix:
+                        length=sum(math.dist(x,y) for x,y in zip(prefix,prefix[1:]))
+                        options.append((length+result['distance'],anchor,prefix,result['nodes']))
+                if options:break
     if not options:return None
     _,anchor,prefix,nodes=min(options)
-    return dict(anchor=anchor,prefix=prefix,nodes=nodes)
+    return dict(anchor=anchor,prefix=prefix,nodes=nodes,reduced_margin=not clear(prefix),checked_edges=sum(len(edges) for edges in original.values()),anchor_candidates=len(anchors))

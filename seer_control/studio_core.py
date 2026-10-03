@@ -198,6 +198,8 @@ class MissionRunner:
         self.status='RUNNING';self.entered=False;self.dwell_until=None;self.error='';self.elapsed=0
         self.skipped=[];self.inactive_elapsed=None
         for a in self.actions:a['status']='대기'
+        hook=getattr(type(self.adapter),'mission_started',None)
+        if hook:hook(self.adapter,index)
     def tick(self,now,dt):
         if self.status!='RUNNING':return
         a=self.actions[self.index]

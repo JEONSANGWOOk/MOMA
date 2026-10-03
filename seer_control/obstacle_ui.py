@@ -14,6 +14,8 @@ class ObstacleUIMixin:
         self.sim_obstacle_policy=tk.StringVar(value=POLICIES['auto'])
         choice=ttk.Combobox(body,textvariable=self.sim_obstacle_policy,values=list(POLICIES.values()),state='readonly')
         choice.pack(fill='x');choice.bind('<<ComboboxSelected>>',lambda event:self._sim_obstacle_change())
+        self.prefer_graph_routes=tk.BooleanVar(value=True)
+        tk.Checkbutton(body,text='전체 경로 확인 / 연결 경로 우선 탐색',variable=self.prefer_graph_routes,bg=PANEL,command=self._route_preference_save).pack(anchor='w')
         self.button(body,'상호 정지 자동 해소 적용',lambda:self.guarded(self._deadlock_preset)).pack(fill='x',pady=2)
         self.button(body,'자동 판단 / 장애물별 시나리오 설정',self._auto_scenario_dialog).pack(fill='x',pady=2)
         self.auto_class_label=self.label(body,'자동 판단: 관측 대기',8,MUTED,anchor='w',justify='left',wraplength=270)
@@ -52,9 +54,14 @@ class ObstacleUIMixin:
     def _obstacles_restore(self):
         self.sim_obstacle_policy.set(POLICIES.get(self.studio_config.get('sim_obstacle_policy'),POLICIES['auto']))
         self.dynamic_paused.set(bool(self.studio_config.get('dynamic_paused',False)))
+        self.prefer_graph_routes.set(bool(self.studio_config.get('prefer_graph_routes',True)))
         self.actor_draft=None
         self.reroute_wait.set(str(self.studio_config.get('reroute_wait_s',5)))
         self.reroute_attempts.set(str(self.studio_config.get('reroute_attempts',3)))
+
+    def _route_preference_save(self):
+        self.studio_config['prefer_graph_routes']=self.prefer_graph_routes.get()
+        self.sim.prefer_graph_routes=self.prefer_graph_routes.get();self._studio_save_settings()
 
     def _fixed_obstacles_manage(self):
         self.sim_required();win=tk.Toplevel(self);win.title('고정 장애물 / 벽 관리 · 주행 중 삭제 가능');win.geometry('760x390')
