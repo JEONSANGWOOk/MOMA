@@ -14,6 +14,8 @@ from .studio_core import (EditHistory, Recorder, MissionRunner, ACTION_DEFAULTS,
                           flatten_actions, validate_actions, validate_model,
                           rigid_calibration, finite, point_segment_distance)
 from .studio_devices import DeviceBridge, tcp_operation, arm_call, validate_operation, get_field
+from .fairino_ui import FairinoUIMixin
+from .fairino_api import validate as validate_fr5
 from .route_planner import plan_stops, plan_actions, adjacency, upgrade_loop_chain
 
 from .theme import PANEL, INK, MUTED, GREEN, ORANGE, RED
@@ -58,10 +60,23 @@ class ConsoleAdapter:
             if abs(float(state.get('speed',0)))>.02 or state.get('emergency') or state.get('stopped') or (not c.real and c.sim.route):
                 raise ValueError('로봇팔 작업 전 AMR 정지 확인이 필요합니다.')
             if c.real:
-                if not self.c.studio_config['arm'].get('stop_method'):raise ValueError('로봇팔 stop_method 설정이 필요합니다.')
+                if c.studio_config['arm'].get('driver')!='fairino' and not c.studio_config['arm'].get('stop_method'):raise ValueError('로봇팔 stop_method 설정이 필요합니다.')
                 config=copy.deepcopy(c.studio_config['arm'])
-                self.context['token']=c._studio_submit(lambda:arm_call(config,'execute',a['operation']))
-            else:c.sim.arm.update(status='RUNNING',operation=a['operation'],progress=0.)
+                self.context['token']=c._studio_submit(lambda:c._arm_call(config,'execute',a['operation']))
+            else:
+                c.sim.arm.update(status='RUNNING',operation=a['operation'],progress=0.)
+                cfg=c.studio_config['arm']
+                if cfg.get('driver')!='fairino':c.sim.arm.pop('joint_positions',None)
+                if cfg.get('driver')=='fairino':
+                    spec=cfg.get('operations',{}).get(a['operation'])
+                    if not spec:raise ValueError('등록되지 않은 FR5 작업: '+a['operation'])
+                    if spec['method']=='MoveL':raise ValueError('SIM MoveL 역기구학은 지원하지 않습니다. MoveJ 작업으로 관절 자세를 지정하세요.')
+                    validate_fr5(cfg)
+                    names=[j['name'] for j in c.world3d.arm_asset.movable()]
+                    if len(names)!=6:raise ValueError('SIM FR5는 6축 URDF 모델이 필요합니다.')
+                    current=c.sim.arm.get('joint_positions') or c.world3d.positions['arm']
+                    self.context['joint_start']={n:current.get(n,0.) for n in names}
+                    self.context['joint_target']=dict(zip(names,[math.radians(v) for v in spec['target']]))
             c.studio_arm_safe=False
         c.log('MISSION',f"{c.studio_runner.index+1}단계 시작 · {typ}")
     def _motion(self,active):
@@ -110,6 +125,8 @@ class ConsoleAdapter:
         if typ=='Arm Action':
             if not c.real:
                 progress=min(1.,elapsed/max(.001,a['duration_s']));c.sim.arm['progress']=progress
+                if 'joint_target' in self.context:
+                    c.sim.arm['joint_positions']={n:self.context['joint_start'][n]+(v-self.context['joint_start'][n])*progress for n,v in self.context['joint_target'].items()}
                 if progress>=1:
                     c.sim.arm['status']='COMPLETED';c.sim.arm['pose']='SAFE' if a['operation']=='safe_pose' else 'WORK'
                     c.studio_arm_safe=a['operation']=='safe_pose';return True
@@ -122,13 +139,17 @@ class ConsoleAdapter:
             if not self.context.get('accepted'):return False
             if not self.context.get('status_token') and elapsed-self.context.get('last_poll',-1)>.5:
                 config=copy.deepcopy(c.studio_config['arm'])
-                self.context['status_token']=c._studio_submit(lambda:arm_call(config,'status'))
+                self.context['status_token']=c._studio_submit(lambda:c._arm_call(config,'status'))
                 self.context['last_poll']=elapsed
             result=c.studio_results.pop(self.context.get('status_token'),None)
             if result:
                 self.context['status_token']=None;ok,value=result
                 if not ok:raise ValueError(value)
                 cfg=c.studio_config['arm']
+                if cfg.get('driver')=='fairino':
+                    c._fr5_receive(value)
+                    if value.get('status') in ('ERROR','CANCELED'):raise ValueError('FR5 작업 실패: '+str(value))
+                    return value.get('status')=='COMPLETED'
                 if value in cfg.get('failure_values',['FAILED','ERROR']):raise ValueError(f'로봇팔 작업 실패: {value}')
                 done=value in cfg.get('done_values',['COMPLETED'])
                 if done:c.studio_arm_safe=a['operation']=='safe_pose'
@@ -149,9 +170,15 @@ class ConsoleAdapter:
         return a['target'] if value==a['value'] else None
     def pause(self):
         self._motion(False)
+        if self.c.real and self.context.get('type')=='Arm Action' and self.c.studio_config['arm'].get('driver')=='fairino':
+            cfg=copy.deepcopy(self.c.studio_config['arm'])
+            self.c._studio_submit(lambda:self.c._arm_call(cfg,'pause'),lambda r:None)
         if self.c.real:self.c.send_command('pause',{})
         else:self.c.sim.command('pause')
     def resume(self):
+        if self.c.real and self.context.get('type')=='Arm Action' and self.c.studio_config['arm'].get('driver')=='fairino':
+            cfg=copy.deepcopy(self.c.studio_config['arm'])
+            self.c._studio_submit(lambda:self.c._arm_call(cfg,'resume'),lambda r:None)
         if self.c.real:self.c.send_command('resume',{})
         else:self.c.sim.command('resume')
         if self.motion!=(0.,0.):self._motion(True)
@@ -166,12 +193,13 @@ class ConsoleAdapter:
             if c.connected and c.control_enabled:c.send_command('cancel',{})
             if self.context.get('type')=='Arm Action':
                 config=copy.deepcopy(c.studio_config['arm'])
-                if config.get('stop_method'):c._studio_submit(lambda:arm_call(config,'stop'),c._studio_show_device)
+                if config.get('driver')=='fairino':c._fr5_priority_stop()
+                elif config.get('stop_method'):c._studio_submit(lambda:arm_call(config,'stop'),c._studio_show_device)
         else:
             c.sim.stop();c.sim.arm['status']='CANCELED'
 
 
-class StudioMixin:
+class StudioMixin(FairinoUIMixin):
     def _studio_init(self):
         self.studio_config=dict(robot_model=validate_model({}),
             peripherals=dict(operations={}),arm=dict(verified=False,endpoint='',execute_method='',
@@ -187,6 +215,7 @@ class StudioMixin:
         self.studio_token_generation={}
         self.studio_io=dict(di={},do={});self.studio_recorder=Recorder();self.studio_alarms=[];self._studio_alarm_active={}
         self.studio_arm_safe=True
+        self._fr5_init()
         self.studio_charge_inhibit=False
         self.studio_runner=MissionRunner(ConsoleAdapter(self));self._studio_runner_status='IDLE'
         self.studio_snap=tk.BooleanVar(value=True);self.studio_grid=tk.StringVar(value='0.10')
@@ -224,7 +253,9 @@ class StudioMixin:
     def _studio_row(self,parent):
         row=tk.Frame(parent,bg=PANEL);row.pack(fill='x',padx=12,pady=5);return row
     def _studio_note(self,parent,text):
-        self.label(parent,text,9,MUTED,bg=PANEL,wraplength=1000,justify='left').pack(fill='x',padx=12,pady=7)
+        note=self.label(parent,text,9,MUTED,bg=PANEL,wraplength=730,justify='left',anchor='w')
+        note.pack(fill='x',padx=12,pady=7)
+        note.bind('<Configure>',lambda event:note.configure(wraplength=max(200,event.width-8)))
     def _studio_json_box(self,parent,value,height=12):
         frame=self._studio_row(parent)
         box=tk.Text(frame,height=height,bg='#ffffff',fg=INK,insertbackground=INK,font=('Consolas',10),wrap='none')
@@ -341,7 +372,8 @@ class StudioMixin:
         self.button(row,'거리 보정 배율 적용',lambda:self.guarded(self._studio_wheel_calibration)).pack(side='left',padx=6)
 
     def _studio_devices_page(self,page):
-        self._studio_note(page,'실기 장비 연결 설정입니다. API 번호와 XML-RPC 메서드는 장비 문서를 확인하여 등록하세요. verified=false인 설정은 전송되지 않습니다. 로봇팔 Action은 AMR 정지를 확인하고 실행한 뒤 status_method의 완료값을 기다립니다.')
+        self._studio_note(page,'FR5는 공식 FAIRINO Python SDK로 연결합니다. FR5 연결 설정에서 IP, SDK 폴더, 작업 자세를 등록하세요. Arm Action은 AMR 정지 후 실행하며 실제 목표 도착을 확인합니다. 기타 장비는 아래 JSON으로 설정합니다.')
+        self._fr5_controls(page)
         self.studio_device_box=self._studio_json_box(page,dict(peripherals=self.studio_config['peripherals'],arm=self.studio_config['arm']),height=17)
         row=self._studio_row(page);self.button(row,'연결 설정 적용 / 저장',lambda:self.guarded(self._studio_save_devices)).pack(side='left')
         self.button(row,'설정 예제 보기',self._studio_device_example).pack(side='left',padx=5)
@@ -569,6 +601,8 @@ class StudioMixin:
         if not isinstance(value.get('peripherals',{}),dict) or not isinstance(value.get('arm',{}),dict):raise ValueError('peripherals/arm 설정 오류')
         for name,spec in value.get('peripherals',{}).get('operations',{}).items():
             if spec.get('verified'):validate_operation(value['peripherals'],name)
+        if value.get('arm',{}).get('driver')=='fairino':validate_fr5(value['arm'],motion=value['arm'].get('verified',False))
+        if value.get('arm')!=self.studio_config.get('arm') and self.fr5_client.connected:self._fr5_priority_stop()
         self.studio_config.update(value);self._studio_save_settings()
     def _studio_device_example(self):
         example=dict(peripherals=dict(operations={'read_io':dict(verified=False,role='read',api=0,port=0,response_type=0,payload={},di_path='di',do_path='do'),
@@ -586,7 +620,8 @@ class StudioMixin:
         self.task_running=True
     def _studio_arm_status(self):
         if not self.real:self._studio_show_device(self.sim.arm);return
-        cfg=copy.deepcopy(self.studio_config['arm']);self._studio_submit(lambda:arm_call(cfg,'status'),self._studio_show_device)
+        cfg=copy.deepcopy(self.studio_config['arm'])
+        self._studio_submit(lambda:self._arm_call(cfg,'status'),self._studio_show_device)
 
     def _studio_run_tasks(self):
         def run():
@@ -695,6 +730,7 @@ class StudioMixin:
 
     def _studio_tick(self,now,dt):
         if not hasattr(self,'studio_runner'):return
+        self._fr5_tick(now)
         while True:
             try:token,ok,result=self.studio_bridge.results.get_nowait()
             except queue.Empty:break
@@ -770,7 +806,13 @@ class StudioMixin:
             self.studio_io_tree.item(str(i),values=(i,'—' if di is None else 'ON' if di else 'OFF','—' if do is None else 'ON' if do else 'OFF'))
         phase=self.sim.auto_charge['phase'] if not self.real else getattr(self,'_studio_real_charge_phase','IDLE')
         self.studio_charge_label.config(text=f"{'REAL' if self.real else 'SIM'} · {phase} · 배터리 {state.get('battery','—')}")
-        self.studio_arm_label.config(text=json.dumps(self.sim.arm,ensure_ascii=False) if not self.real else 'REAL · 설정된 XML-RPC 완료 상태를 확인합니다.')
+        if not self.real:arm_text=json.dumps(self.sim.arm,ensure_ascii=False)
+        elif self.studio_config['arm'].get('driver')=='fairino':
+            fb=self.fr5_feedback;fresh=self.fr5_client.connected and now-self.fr5_rx<=2
+            arm_text='FR5 · '+('수신 중' if fresh else '연결 / 수신 대기')+' · '+fb.get('status','UNKNOWN')+' · '+self.fr5_error
+            if fresh:arm_text+='\nJ1~J6 [도]: '+', '.join(f'{v:.2f}' for v in fb.get('joints_deg',[]))+'\nTCP [mm/도]: '+', '.join(f'{v:.2f}' for v in fb.get('tcp_mm_deg',[]))
+        else:arm_text='REAL · 설정된 XML-RPC 완료 상태를 확인합니다.'
+        self.studio_arm_label.config(text=arm_text)
         self.studio_record_label.config(text=f'기록 {len(self.studio_recorder.frames)} 프레임 · 재생 {"ON" if self.studio_playing else "OFF"}')
         self.studio_timeline.config(to=max(0,len(self.studio_recorder.frames)-1))
         self.studio_alarm_tree.delete(*self.studio_alarm_tree.get_children())

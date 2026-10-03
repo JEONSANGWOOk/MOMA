@@ -1,4 +1,6 @@
-# SEER AMR Control Studio v1.1 Workspace
+# SEER AMR Control Studio v1.2 Workspace
+
+**FAIRINO FR5 공식 Python SDK 제어**를 추가했습니다. `확장 도구 → 로봇팔 / 장비 연결`에서 FR5 연결 설정과 연결 시험을 사용하세요. 기본 IP는 `192.168.58.2`입니다. MoveJ/MoveL 등록 작업, 현재 자세 저장, 미션 Arm Action, 상태/관절 수신과 3D 표시를 지원합니다. SDK는 WebAPP 버전에 맞게 별도로 준비해야 합니다. SIM에서는 등록한 MoveJ 관절 보간을 지원하며 MoveL은 차단합니다. [FR5 연결 순서와 ROS/ROS2 안내](docs/FR5_API_KO.md).
 
 `지도 / 제어`에도 그리드·벽·영역·노드·경로·장애물·LiDAR 레이어 스위치를 표시합니다. 편집 지도와 같은 설정을 공유하며 3D 지도에도 적용됩니다. 지도 위의 상태줄에서 LiDAR 점 수/수신 지연과 장애물 감지·정지 상태를 확인합니다. 3D 시점의 **뒤따라 보기**는 AMR 위치와 방향을 따라 뒤쪽에서 추적하며, 기존 `로봇 추적`은 고정된 방향으로 위치만 따라갑니다. 3D에서도 LiDAR 점을 표시하고 실제 수신이 2초 이상 지연되면 오래된 점을 숨깁니다.
 

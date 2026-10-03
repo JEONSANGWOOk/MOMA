@@ -57,6 +57,12 @@ class SpatialMixin:
             route=self.sim.navigation_points()
         else:
             arm=dict(status='REAL',pose='UNKNOWN');route=[]
+            feedback=getattr(self,'fr5_feedback',{})
+            if self.studio_config['arm'].get('driver')=='fairino' and time.monotonic()-getattr(self,'fr5_rx',0)<=2 and self.fr5_client.connected:
+                arm=feedback
+                names=[j['name'] for j in self.world3d.arm_asset.movable()]
+                values=feedback.get('joints_rad',[])
+                if len(names)==len(values)==6:joints=dict(zip(names,values))
         if self.real:
             lidar=self.real_laser_points if 'laser_beams(WORLD)' in self.lidar_source else [self._lidar_map_xy(x,y) for x,y in self.real_laser_points]
             if not self.connected or time.monotonic()-self.last_laser_rx>2:lidar=[]

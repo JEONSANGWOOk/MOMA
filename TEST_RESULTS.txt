@@ -1,4 +1,16 @@
-v1.1 Workspace — 2026-10-03
+v1.2 FR5 API — 2026-10-03
+Unit tests 140/140 PASS, including 16 FR5 tests: manufacturer MoveJ/MoveL
+nonblocking call signatures, measured target completion, degrees/radians,
+emergency/safety/error rejection, SDK compatibility opt-in, malformed targets,
+SDK command rejection, independent stop channel, isolated fake SDK pipe,
+bounded timeout, safe-pose gate and REAL mission transitions with mock SDK.
+FR5 GUI smoke PASS: connection settings, registered MoveJ SIM mission,
+safe-pose state and REAL synthetic joint feedback in 3D. No hardware/network.
+Screenshot reviewed: artifacts/fr5_api_settings.png.
+Official SDK compatibility and physical FR5 execution remain untested.
+ROS/ROS2 driver availability documented; no ROS bridge implementation.
+
+Prior v1.1 Workspace verification — 2026-10-03
 Python compile PASS
 Unit tests 124/124 PASS
 Studio GUI smoke PASS

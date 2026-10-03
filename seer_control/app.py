@@ -4612,6 +4612,7 @@ class Console(GamepadMixin, SpatialMixin, StudioMixin, tk.Tk):
         try:self.save_last_pose(force=True)
         except Exception:pass
         self.disconnect()
+        if hasattr(self,'fr5_client') and self.fr5_client.connected:self._fr5_priority_stop()
         if hasattr(self,'studio_bridge'):self.studio_bridge.close()
         self.destroy()
 

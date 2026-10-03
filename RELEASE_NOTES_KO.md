@@ -1,6 +1,8 @@
 # 최종 배포 · 2026-10-03
 
-AMR Control Studio v1.1 Workspace 소스 배포입니다. `run_windows.bat`으로 실행합니다. Python 3.10 이상과 Tcl/Tk가 필요하며 기본 실행은 추가 Python 패키지를 요구하지 않습니다. 이 배포에는 새로 빌드한 EXE를 포함하지 않습니다.
+AMR Control Studio v1.2 Workspace 소스 배포입니다. `run_windows.bat`으로 실행합니다. Python 3.10 이상과 Tcl/Tk가 필요하며 기본 실행은 추가 Python 패키지를 요구하지 않습니다. FR5 실기 제어에는 WebAPP 버전과 호환되는 공식 FAIRINO SDK 및 그 SDK의 의존성이 별도로 필요합니다. 이 배포에는 새로 빌드한 EXE를 포함하지 않습니다.
+
+v1.2 추가: 공식 FR5 Python SDK 연결(IP 기본값 192.168.58.2), MoveJ/MoveL 등록 작업, 현재 자세 작업 등록, 미션 Arm Action 연동, 실제 목표 도착 확인, 관절/TCP 상태 수신 및 3D 관절 표시. SIM은 등록된 MoveJ 보간을 지원합니다. SDK 작업을 별도 프로세스로 격리하고 FR5 정지는 별도 StopMotion 채널로 요청합니다. [FR5 사용 방법 / ROS 가능 여부](docs/FR5_API_KO.md).
 
 반영 기능:
 
@@ -11,8 +13,8 @@ AMR Control Studio v1.1 Workspace 소스 배포입니다. `run_windows.bat`으�
 - DualSense CFI-ZCT1G로 SIM 및 실기 수동 AMR 조종. Windows에서 장치 인식과 입력 읽기를 확인했습니다.
 - SIM 벽 충돌, 차체 크기 충돌 여유, 장애물 정지/대기 또는 자유 공간 우회.
 
-검증: 124개 단위 테스트 통과. 전체 Studio GUI 검증 및 벽/우회·레이어/LiDAR·뒤따라 보기 GUI 검증 통과. 실기 전송 시험은 모의 응답을 사용했으며 실제 AMR/팔 하드웨어 주행 호환성은 검증하지 않았습니다. [검증 기록](TEST_RESULTS.txt)과 [사용 설명](README_KO.md)을 참고하세요.
+검증: 현재 140개 단위 테스트 통과, FR5 설정 UI/등록 MoveJ SIM 미션/실기 모의 관절 3D 표시 검증 통과. v1.1에서 전체 Studio GUI 및 벽/우회·레이어/LiDAR·뒤따라 보기 GUI 검증을 수행했습니다. 실기 전송 시험은 모의 응답을 사용했으며 실제 AMR/팔 하드웨어 주행 호환성은 검증하지 않았습니다. [검증 기록](TEST_RESULTS.txt)과 [사용 설명](README_KO.md)을 참고하세요.
 
-기본 3D 모델은 제조사 정밀 CAD가 아닌 도형 기반 시각화 모델입니다. 외부 URDF의 실제 관절 동작에는 관절 상태 수신 연결이 필요합니다. ROS/TF/MoveIt은 연결하지 않았습니다. 장애물 우회 옵션은 SIM 전용이며, 실기 컨트롤러의 장애물 정책을 변경하지 않습니다.
+기본 3D 모델은 제조사 정밀 CAD가 아닌 도형 기반 시각화 모델입니다. FR5 관절 상태는 공식 SDK에서 받습니다. 외부 6축 URDF는 J1~J6 관절 순서를 맞춰야 합니다. ROS/TF/MoveIt 브리지는 연결하지 않았으며 제조사 ROS/ROS2 패키지 사용 안내를 제공합니다. 장애물 우회 옵션은 SIM 전용이며, 실기 컨트롤러의 장애물 정책을 변경하지 않습니다.
 
 사용자 설정은 사용자 홈의 `.seer_amr_console`에 별도로 저장되며 배포 파일에 포함하지 않습니다. 실행 로그, 캐시, 인증 정보와 개인 설정도 제외했습니다.
