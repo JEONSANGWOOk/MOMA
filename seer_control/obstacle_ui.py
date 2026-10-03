@@ -32,6 +32,7 @@ class ObstacleUIMixin:
         self.button(body,'신규 장애물 추적 목록',self._tracking_history).pack(fill='x',pady=2)
         self.tracking_label=self.label(body,'신규 추적: 없음',8,MUTED,anchor='w',justify='left',wraplength=270)
         self.tracking_label.pack(fill='x')
+        self.button(body,'고정 장애물 / 벽 관리·삭제',self._fixed_obstacles_manage).pack(fill='x',pady=2)
         self.button(body,'신규 감지 장애물 배치 · SIM',lambda:(self.tabs.select(self.nodes_page),self.edit_mode.set('신규 감지 장애물'))).pack(fill='x',pady=2)
         self.skipped_label=self.label(body,'패스 목적지: 없음',8,'#c93043',anchor='w',justify='left',wraplength=270)
         self.skipped_label.pack(fill='x')
@@ -54,6 +55,40 @@ class ObstacleUIMixin:
         self.actor_draft=None
         self.reroute_wait.set(str(self.studio_config.get('reroute_wait_s',5)))
         self.reroute_attempts.set(str(self.studio_config.get('reroute_attempts',3)))
+
+    def _fixed_obstacles_manage(self):
+        self.sim_required();win=tk.Toplevel(self);win.title('고정 장애물 / 벽 관리 · 주행 중 삭제 가능');win.geometry('760x390')
+        tree=ttk.Treeview(win,columns=('kind','position'),show='tree headings',height=12)
+        tree.heading('#0',text='항목');tree.column('#0',width=120);tree.heading('kind',text='종류');tree.column('kind',width=110)
+        tree.heading('position',text='위치 / 반경 (m)');tree.column('position',width=480);tree.pack(fill='both',expand=True,padx=8,pady=8)
+        items={}
+        def refresh():
+            if not win.winfo_exists():return
+            selection=tree.selection();tree.delete(*tree.get_children());items.clear()
+            for i,o in enumerate(self.map.obstacles):
+                if o.get('dynamic'):continue
+                key='obs'+str(id(o));items[key]=('obstacles',o)
+                tree.insert('','end',iid=key,text=o.get('id',f'장애물 {i+1}'),values=('신규 정지 장애물' if o.get('map_fixed') is False else '지도 고정 장애물',f"X {o['x']:.2f}, Y {o['y']:.2f}, R {o['radius']:.2f}"))
+            for name,title in [('walls','벽'),('virtual_walls','가상벽')]:
+                for i,wall in enumerate(getattr(self.map,name,[])):
+                    key=name+str(id(wall));items[key]=(name,wall);tree.insert('','end',iid=key,text=f'{title} {i+1}',values=(title,' → '.join(f'({wall[j]:.2f}, {wall[j+1]:.2f})' for j in (0,2))))
+            for key in selection:
+                if tree.exists(key):tree.selection_add(key)
+            win.after(500,refresh)
+        def remove():
+            selection=tree.selection()
+            if not selection:raise ValueError('삭제할 고정 장애물 또는 벽을 선택하세요.')
+            selected=[items[key] for key in selection if key in items]
+            def change():
+                for name,item in selected:
+                    values=getattr(self.map,name)
+                    if any(v is item for v in values):values.remove(item)
+            self._studio_obstacle_edit(change,'주행 중 고정 장애물 / 벽 삭제');self.draw_map()
+            for key in selection:
+                if tree.exists(key):tree.delete(key)
+        self.button(win,'선택 삭제 · 주행 유지',lambda:self.guarded(remove),ORANGE).pack(pady=5)
+        self.label(win,'SIM 전용 · 선택 항목만 삭제 · 설치/삭제를 지도 파일에 남기려면 지도 저장',8,MUTED).pack()
+        refresh()
 
     def _deadlock_preset(self):
         from .obstacle_tracking import DEFAULTS
@@ -195,8 +230,11 @@ class ObstacleUIMixin:
         mode=tk.StringVar(value='순환' if existing and existing.get('motion_mode')=='loop' else '왕복')
         row=self._studio_row(win);self.label(row,'이동 방식',bg=PANEL,width=18,anchor='w').pack(side='left')
         ttk.Combobox(row,textvariable=mode,values=['왕복','순환'],state='readonly',width=16).pack(side='left')
-        variables={k:tk.StringVar(value=str(existing.get(k,default) if existing else default)) for k,default in [('speed_mps',.6 if kind=='person' else .35),('radius',.3 if kind=='person' else .61),('dwell_s',.5)]}
-        for key,title in [('speed_mps','속도 (m/s)'),('radius','충돌 반경 (m)'),('dwell_s','등록 포인트 대기 (초)')]:
+        encounter=tk.StringVar(value='계속 대기' if existing and existing.get('encounter_policy')=='wait' else '대기 후 반대 방향')
+        row=self._studio_row(win);self.label(row,'다른 사람·AMR와 막힘',bg=PANEL,width=22).pack(side='left')
+        ttk.Combobox(row,textvariable=encounter,values=['대기 후 반대 방향','계속 대기'],state='readonly',width=18).pack(side='left')
+        variables={k:tk.StringVar(value=str(existing.get(k,default) if existing else default)) for k,default in [('speed_mps',.6 if kind=='person' else .35),('radius',.3 if kind=='person' else .61),('dwell_s',.5),('encounter_wait_s',2)]}
+        for key,title in [('speed_mps','속도 (m/s)'),('radius','충돌 반경 (m)'),('dwell_s','등록 포인트 대기 (초)'),('encounter_wait_s','막힘 후 방향 전환 (초)')]:
             row=self._studio_row(win);self.label(row,title,bg=PANEL,width=22,anchor='w').pack(side='left')
             ttk.Entry(row,textvariable=variables[key],width=16).pack(side='left')
         def save():
@@ -207,7 +245,8 @@ class ObstacleUIMixin:
             points=[[self.map.nodes[n]['x'],self.map.nodes[n]['y']] for n in entries] if kind=='amr' else [list(p) for p in entries]
             prefix='PERSON' if kind=='person' else 'AMR';ids={o.get('id') for o in self.map.obstacles};index=1
             while f'{prefix}{index}' in ids:index+=1
-            obs=dict(id=existing['id'] if existing else f'{prefix}{index}',dynamic=True,map_fixed=False,kind=kind,x=points[0][0],y=points[0][1],motion_path=points,motion_mode='loop' if mode.get()=='순환' else 'pingpong',**v)
+            obs=dict(id=existing['id'] if existing else f'{prefix}{index}',dynamic=True,map_fixed=False,kind=kind,x=points[0][0],y=points[0][1],motion_path=points,motion_mode='loop' if mode.get()=='순환' else 'pingpong',encounter_policy='wait' if encounter.get()=='계속 대기' else 'reverse',**v)
+            if existing:obs.update({key:existing[key] for key in ('paused','auto_scenarios') if key in existing})
             if kind=='amr':obs['motion_nodes']=list(entries)
             validate_actor(obs);compile_actor_path(self.map,obs)
             from types import SimpleNamespace
