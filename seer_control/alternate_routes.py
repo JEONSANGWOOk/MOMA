@@ -23,10 +23,10 @@ def split_reference(start,reference):
     return [start,p]+list(reference[i+1:]),[start,p]+list(reversed(reference[:i+1]))
 
 
-def alternate_route(model,start,goal,a,b,reference,radius):
+def alternate_route(model,start,goal,a,b,reference,radius,include_dynamic=False):
     # Dynamic actors are waited for at execution, rather than closing map lanes.
     scene=SimpleNamespace(walls=model.walls,virtual_walls=model.virtual_walls,area_records=model.area_records,
-        obstacles=[o for o in model.obstacles if not o.get('dynamic')])
+        obstacles=[o for o in model.obstacles if include_dynamic or not o.get('dynamic')])
     original=adjacency(model);graph={key:[] for key in original}
     def clear(points):return bool(points) and all(clear_segment(scene,x,y,radius+.04) for x,y in zip(points,points[1:]))
     for key,edges in original.items():

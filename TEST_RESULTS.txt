@@ -1,3 +1,6 @@
+v1.7 validation (2026-10-03)
+179 unit tests PASS. Position-based classification, brief-stop hysteresis, paused actor static reclassification, per-object override, unknown waiting, graph/local avoidance and unreachable goal skip with next goal. GUI: global/per-obstacle settings save and automatic status display, no Tk callback errors. SIM only; no hardware commands.
+
 v1.6 validation (2026-10-03)
 167 unit tests PASS. AMR intermediate nodes/curves/direction, disconnected route rejection, person multi-point loop, persistence, UI settings/save and 3D render. No physical robot commands.
 

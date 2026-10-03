@@ -39,9 +39,9 @@ class ConsoleAdapter:
                 if a['goal'] not in c.robot_stations:raise ValueError('로봇 Station에 없는 목적지입니다.')
                 c.send_command('navigate',c._station_nav_payload(c.map.nodes[a['goal']]))
             else:
-                if c.sim.obstacle_policy=='reroute':
-                    a['timeout_s']=max(a['timeout_s'],c.sim.reroute_wait_s*(c.sim.reroute_attempt_limit+1)+120)
-                c.sim.navigate(a['goal'],route_nodes=None if c.sim.obstacle_policy=='reroute' else a.get('route_nodes'))
+                if c.sim.obstacle_policy in ('reroute','auto'):
+                    a['timeout_s']=max(a['timeout_s'],c.sim.auto_static_s+c.sim.auto_wait_s+c.sim.reroute_wait_s*(c.sim.reroute_attempt_limit+1)+120)
+                c.sim.navigate(a['goal'],route_nodes=None if c.sim.obstacle_policy in ('reroute','auto') else a.get('route_nodes'))
         elif typ in ('Translation','Rotation'):
             c.studio_motion_error=None
             if not c.studio_arm_safe:raise ValueError('로봇팔 safe_pose 완료 후 AMR를 이동하세요.')

@@ -11,9 +11,12 @@ class ObstacleUIMixin:
     def _obstacles_controls(self,right):
         frame,body=self.card(right,'주행 장애물 대응 · SIM')
         frame.pack(fill='x',pady=(0,8))
-        self.sim_obstacle_policy=tk.StringVar(value=POLICIES['wait'])
+        self.sim_obstacle_policy=tk.StringVar(value=POLICIES['auto'])
         choice=ttk.Combobox(body,textvariable=self.sim_obstacle_policy,values=list(POLICIES.values()),state='readonly')
         choice.pack(fill='x');choice.bind('<<ComboboxSelected>>',lambda event:self._sim_obstacle_change())
+        self.button(body,'자동 판단 / 장애물별 시나리오 설정',self._auto_scenario_dialog).pack(fill='x',pady=2)
+        self.auto_class_label=self.label(body,'자동 판단: 관측 대기',8,MUTED,anchor='w',justify='left',wraplength=270)
+        self.auto_class_label.pack(fill='x')
         row=tk.Frame(body,bg=PANEL);row.pack(fill='x',pady=2)
         self.reroute_wait=tk.StringVar(value='5');self.reroute_attempts=tk.StringVar(value='3')
         self.label(row,'다른 길 대기(초)',8,bg=PANEL).pack(side='left')
@@ -39,11 +42,54 @@ class ObstacleUIMixin:
             self.button(row,title,lambda m=mode:(self.tabs.select(self.nodes_page),self.edit_mode.set(m))).pack(side='left',expand=True,fill='x',padx=1)
 
     def _obstacles_restore(self):
-        self.sim_obstacle_policy.set(POLICIES.get(self.studio_config.get('sim_obstacle_policy'),POLICIES['wait']))
+        self.sim_obstacle_policy.set(POLICIES.get(self.studio_config.get('sim_obstacle_policy'),POLICIES['auto']))
         self.dynamic_paused.set(bool(self.studio_config.get('dynamic_paused',False)))
         self.actor_draft=None
         self.reroute_wait.set(str(self.studio_config.get('reroute_wait_s',5)))
         self.reroute_attempts.set(str(self.studio_config.get('reroute_attempts',3)))
+
+    def _auto_scenario_dialog(self):
+        from .obstacle_tracking import CLASSES,SCENARIOS,DEFAULTS
+        win=tk.Toplevel(self);win.title('자동 판단 / 장애물별 대응 시나리오');win.configure(bg=PANEL)
+        self.label(win,'SIM 위치 변화 추적 · 처음에는 판단 중 / 정지한 사람도 일정 시간 후 정적으로 판단',9,MUTED,bg=PANEL,wraplength=560).pack(padx=12,pady=10)
+        targets=[('기본 시나리오',None)]+[(str(o.get('id',f'장애물 {i+1}')),o) for i,o in enumerate(self.map.obstacles)]
+        target=tk.StringVar(value=targets[0][0]);row=self._studio_row(win)
+        ttk.Combobox(row,textvariable=target,values=[f'{i}. {label}' for i,(label,o) in enumerate(targets)],state='readonly',width=35).pack(side='left')
+        target.set('0. 기본 시나리오')
+        overrides=tk.BooleanVar(value=False);tk.Checkbutton(win,text='선택 장애물에 개별 시나리오 적용 (해제하면 기본값 사용)',variable=overrides,bg=PANEL).pack(anchor='w',padx=12)
+        choices={}
+        for key,label in CLASSES.items():
+            row=self._studio_row(win);self.label(row,label,bg=PANEL,width=10).pack(side='left')
+            choices[key]=tk.StringVar();ttk.Combobox(row,textvariable=choices[key],values=list(SCENARIOS.values()),state='readonly',width=47).pack(side='left')
+        variables={k:tk.StringVar(value=str(self.studio_config.get(k,v))) for k,v in [('auto_wait_s',5),('auto_moving_speed',.08),('auto_static_s',2)]}
+        for key,title in [('auto_wait_s','대기 후 행동 시간 (초)'),('auto_moving_speed','동적 판단 속도 (m/s)'),('auto_static_s','정적 판단 지속 시간 (초)')]:
+            row=self._studio_row(win);self.label(row,title,bg=PANEL,width=28,anchor='w').pack(side='left');ttk.Entry(row,textvariable=variables[key],width=10).pack(side='left')
+        def selected():return targets[int(target.get().split('.')[0])][1]
+        def load(*args):
+            obs=selected();cfg=self.studio_config.get('auto_scenarios',DEFAULTS)
+            overrides.set(bool(obs and obs.get('auto_scenarios')))
+            if obs:cfg=obs.get('auto_scenarios',cfg)
+            for key,var in choices.items():var.set(SCENARIOS.get(cfg.get(key,DEFAULTS[key]),SCENARIOS[DEFAULTS[key]]))
+        target.trace_add('write',load);load()
+        def save():
+            v={k:float(var.get()) for k,var in variables.items()}
+            if not all(math.isfinite(x) for x in v.values()) or not 0<=v['auto_wait_s']<=120 or not .02<=v['auto_moving_speed']<=1 or not .5<=v['auto_static_s']<=30:raise ValueError('대기 0~120초, 속도 0.02~1m/s, 정적 판단 0.5~30초')
+            cfg={key:next(k for k,label in SCENARIOS.items() if label==var.get()) for key,var in choices.items()}
+            obs=selected()
+            if obs is None:self.studio_config['auto_scenarios']=cfg
+            else:
+                def change():
+                    if overrides.get():obs['auto_scenarios']=cfg
+                    else:obs.pop('auto_scenarios',None)
+                self._studio_obstacle_edit(change,'장애물별 자동 대응 시나리오')
+            self.studio_config.update(v);self._studio_save_settings();self._auto_apply_settings();win.destroy()
+        self.button(win,'설정 저장',lambda:self.guarded(save),ORANGE).pack(pady=10)
+
+    def _auto_apply_settings(self):
+        from .obstacle_tracking import DEFAULTS,SCENARIOS
+        cfg=self.studio_config.get('auto_scenarios',{})
+        self.sim.auto_scenarios={k:cfg.get(k) if cfg.get(k) in SCENARIOS else v for k,v in DEFAULTS.items()}
+        for key,default in [('auto_wait_s',5),('auto_moving_speed',.08),('auto_static_s',2)]:setattr(self.sim,key,float(self.studio_config.get(key,default)))
 
     def _reroute_settings(self):
         wait=float(self.reroute_wait.get());attempts=int(self.reroute_attempts.get())
@@ -163,7 +209,7 @@ class ObstacleUIMixin:
             if not win.winfo_exists():return
             selected=tree.selection();tree.delete(*tree.get_children())
             for obs in self.map.obstacles:
-                if obs.get('dynamic'):tree.insert('','end',iid=obs['id'],text=obs['id'],values=('사람' if obs['kind']=='person' else 'AMR',obs['speed_mps'],obs.get('_motion','준비')))
+                if obs.get('dynamic'):tree.insert('','end',iid=obs['id'],text=obs['id'],values=('사람' if obs['kind']=='person' else 'AMR',obs['speed_mps'],obs.get('_motion','준비')+' / '+{'dynamic':'동적','static':'정적','unknown':'판단 중'}.get(obs.get('_classification'),'판단 중')))
             for item in selected:
                 if tree.exists(item):tree.selection_add(item)
             win.after(500,refresh)
