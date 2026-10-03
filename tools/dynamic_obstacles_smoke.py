@@ -25,12 +25,20 @@ with tempfile.TemporaryDirectory() as folder:
     app.report_callback_exception=lambda typ,value,tb:errors.append(str(value))
     try:
         app.pose_autosave.set(False)
-        model=MapModel(dict(format='amr-console-map-v1',name='Dynamic people / AMR SIM',nodes=[dict(id='A',x=0,y=0),dict(id='B',x=6,y=0)],
-            edges=[['A','B']],walls=[[-2,-3,8,-3],[8,-3,8,3],[8,3,-2,3],[-2,3,-2,-3]]))
+        model=MapModel(dict(format='amr-console-map-v1',name='Dynamic people / AMR SIM',nodes=[dict(id='A',x=0,y=0),dict(id='B',x=6,y=0),dict(id='C',x=4,y=1.7),dict(id='D',x=6,y=1.7)],
+            edges=[['A','B'],['C','D']],walls=[[-2,-3,8,-3],[8,-3,8,3],[8,3,-2,3],[-2,3,-2,-3]]))
         app.map=model;app.sim=Simulator(model);app.sim.collision_radius=.61;app.refresh_nodes()
         for kind,start,end in [('person',[2,0],[2,2]),('amr',[4,1.7],[6,1.7])]:
             app._actor_dialog(kind,start,end);app.update()
             win=next(w for w in app.winfo_children() if w.winfo_class()=='Toplevel')
+            if kind=='amr':
+                def widgets(w):
+                    for child in w.winfo_children():
+                        yield child
+                        yield from widgets(child)
+                choice=next(w for w in widgets(win) if w.winfo_class()=='TCombobox')
+                for key in ['C','D']:
+                    choice.set(key);next(b for b in buttons(win) if b.cget('text')=='포인트 추가').invoke()
             next(b for b in buttons(win) if b.cget('text')=='저장 / 배치').invoke()
         assert len(model.obstacles)==2
         app.sim_obstacle_policy.set(POLICIES['adaptive']);app._sim_obstacle_change()

@@ -14,15 +14,37 @@ def validate_actor(obs):
     if 'paused' in obs and type(obs['paused']) is not bool:raise ValueError('paused는 true/false입니다.')
     if obs.get('kind') not in ('person','amr'):raise ValueError('동적 장애물 종류: person / amr')
     pts=obs.get('motion_path')
-    if not isinstance(pts,list) or len(pts)!=2:raise ValueError('동적 장애물 경로는 시작/끝 두 점입니다.')
+    if not isinstance(pts,list) or len(pts)<2:raise ValueError('동적 장애물 경로는 두 개 이상의 포인트입니다.')
     for p in pts:
         if not isinstance(p,(list,tuple)) or len(p)!=2 or not all(math.isfinite(float(v)) for v in p):raise ValueError('동적 장애물 경로 좌표 오류')
-    if math.dist(*pts)<.05:raise ValueError('동적 장애물 이동 거리는 0.05m 이상입니다.')
+    if any(math.dist(a,b)<.05 for a,b in zip(pts,pts[1:])):raise ValueError('동적 장애물 이동 거리는 0.05m 이상입니다.')
     speed=float(obs.get('speed_mps',.5));dwell=float(obs.get('dwell_s',.5))
     if not math.isfinite(speed) or not .01<=speed<=2:raise ValueError('장애물 속도: 0.01~2m/s')
     if not math.isfinite(dwell) or not 0<=dwell<=60:raise ValueError('끝점 대기: 0~60초')
     obs['speed_mps']=speed;obs['dwell_s']=dwell
     obs['motion_path']=[[float(v) for v in p] for p in pts]
+
+
+def compile_actor_path(model,obs):
+    """Expand taught AMR nodes through directed map lanes, including curves."""
+    from .alternate_routes import lane
+    nodes=obs.get('motion_nodes')
+    if obs.get('motion_mode','pingpong') not in ('pingpong','loop'):raise ValueError('이동 방식 오류')
+    if nodes:
+        if obs['kind']!='amr' or len(nodes)<2 or any(n not in model.nodes for n in nodes):raise ValueError('기존 AMR 노드를 두 개 이상 선택하세요.')
+        points=[(model.nodes[nodes[0]]['x'],model.nodes[nodes[0]]['y'])];stops=set()
+        sequence=list(nodes)+ (list(reversed(nodes[:-1])) if obs.get('motion_mode','pingpong')=='pingpong' else [nodes[0]])
+        for a,b in zip(sequence,sequence[1:]):
+            if a==b:raise ValueError('연속된 동일 노드는 사용할 수 없습니다.')
+            route=model.route(a,b)
+            for x,y in zip(route,route[1:]):
+                for point in lane(model,x,y):
+                    if math.dist(points[-1],point)>1e-8:points.append(tuple(point))
+            stops.add(len(points)-1)
+        return points,stops
+    points=[tuple(p) for p in obs['motion_path']]
+    points+=list(reversed(points[:-1])) if obs.get('motion_mode','pingpong')=='pingpong' else [points[0]]
+    return points,set(range(1,len(points)))
 
 
 def actor_data(obs):
@@ -38,10 +60,15 @@ def update_actors(model,dt,robot,radius):
             obs['_motion']='일시정지';continue
         if obs.get('_dwell',0)>0:
             obs['_dwell']=max(0,obs['_dwell']-dt);obs['_motion']='끝점 대기';continue
-        goal=obs['motion_path'][obs.get('_goal',1)]
+        try:
+            if '_compiled' not in obs:obs['_compiled']=compile_actor_path(model,obs)
+            points,stops=obs['_compiled']
+        except (ValueError,KeyError):obs['_motion']='이동 방식 오류';continue
+        index=obs.get('_goal',1);goal=points[index]
         dx,dy=goal[0]-obs['x'],goal[1]-obs['y'];distance=math.hypot(dx,dy)
         if distance<1e-8:
-            obs['_goal']=1-obs.get('_goal',1);obs['_dwell']=obs.get('dwell_s',.5);continue
+            obs['_goal']=1 if index==len(points)-1 else index+1
+            obs['_dwell']=obs.get('dwell_s',.5) if index in stops else 0;continue
         travel=min(distance,dt*obs.get('speed_mps',.5));start=(obs['x'],obs['y'])
         end=(obs['x']+dx*travel/distance,obs['y']+dy*travel/distance)
         obstacles=[o for o in model.obstacles if o is not obs]+[dict(x=robot.x,y=robot.y,radius=radius)]
@@ -52,4 +79,5 @@ def update_actors(model,dt,robot,radius):
         obs['x'],obs['y']=end;obs['_heading']=math.atan2(dy,dx)
         obs['_motion']='걷는 중' if obs['kind']=='person' else '주행 중'
         if travel>=distance-1e-8:
-            obs['_goal']=1-obs.get('_goal',1);obs['_dwell']=obs.get('dwell_s',.5)
+            obs['_goal']=1 if index==len(points)-1 else index+1
+            obs['_dwell']=obs.get('dwell_s',.5) if index in stops else 0

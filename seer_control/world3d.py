@@ -207,7 +207,10 @@ class WorldView3D(tk.Canvas):
                     add_faces(cylinder(.05,.04,8),multiply(base,transform((.34*scale,0,.28))),'#5eaadb','world_actor')
                     label_height=.4
                 texts.append(((obstacle['x'],obstacle['y'],label_height),obstacle.get('id','')+' · '+obstacle.get('_motion','준비'),color))
-                a,b=obstacle['motion_path'];lines.append(((*a,.02),(*b,.02),'#a396bd',1,'world_actor_route'))
+                from .dynamic_obstacles import compile_actor_path
+                try:actor_points,_=compile_actor_path(self.app.map,obstacle)
+                except (ValueError,KeyError):actor_points=[]
+                for a,b in zip(actor_points,actor_points[1:]):lines.append(((*a,.02),(*b,.02),'#a396bd',1,'world_actor_route'))
             for a,b,c,d in (getattr(model,'virtual_walls',[]) if self.app.layers['벽'].get() else []):lines.append(((a,b,.08),(c,d,.08),'#d1446a',3,'world_virtual_wall'))
             if self.app.layers['영역'].get():
                 for area in getattr(model,'area_records',[]):

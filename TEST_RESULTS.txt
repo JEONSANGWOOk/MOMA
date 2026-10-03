@@ -1,3 +1,6 @@
+v1.6 validation (2026-10-03)
+167 unit tests PASS. AMR intermediate nodes/curves/direction, disconnected route rejection, person multi-point loop, persistence, UI settings/save and 3D render. No physical robot commands.
+
 v1.5 validation (2026-10-03)
 Unit tests: 161 PASS.
 Graph alternate routes, repeated new blockage, unreachable/disconnected goal skip, no teleport, mission next goal, dependent arm/DO omission, directional lanes, dynamic wait, policy-switch cancellation.

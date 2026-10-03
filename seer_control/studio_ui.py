@@ -853,7 +853,10 @@ class StudioMixin(FairinoUIMixin,ObstacleUIMixin):
         for obs in (getattr(self.map,'obstacles',[]) if self.layers['장애물'].get() else []):
             x,y=self.xy(obs['x'],obs['y']);scale=self._transform()[0];r=obs['radius']*scale
             if obs.get('dynamic'):
-                path=obs['motion_path'];c.create_line(*[v for p in path for v in self.xy(*p)],fill='#9e96bb',dash=(4,4),tags='studio_actor_route')
+                from .dynamic_obstacles import compile_actor_path
+                try:path,_=compile_actor_path(self.map,obs)
+                except (ValueError,KeyError):path=[]
+                if len(path)>1:c.create_line(*[v for p in path for v in self.xy(*p)],fill='#9e96bb',dash=(4,4),tags='studio_actor_route')
                 color='#de9535' if obs['kind']=='person' else '#8069bd'
                 if obs['kind']=='person':
                     c.create_oval(x-r,y-r,x+r,y+r,fill=color,outline='#ffffff',width=2,tags='studio_obstacle')

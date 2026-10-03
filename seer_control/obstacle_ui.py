@@ -76,44 +76,74 @@ class ObstacleUIMixin:
         self.sim.avoidance_status='재개 요청 · 장애물 다시 확인'
 
     def _actor_dialog(self,kind='person',start=None,end=None,existing=None):
-        self.sim_required()
-        state=self.sim.state
-        start=start or [state.x+2,state.y-2];end=end or [state.x+2,state.y+2]
-        values=dict(x1=start[0],y1=start[1],x2=end[0],y2=end[1],speed_mps=.6 if kind=='person' else .35,
-            radius=.3 if kind=='person' else .61,dwell_s=.5)
-        if existing:
-            kind=existing['kind'];start,end=existing['motion_path']
-            values.update(x1=start[0],y1=start[1],x2=end[0],y2=end[1],**{k:existing.get(k,values[k]) for k in ('speed_mps','radius','dwell_s')})
+        self.sim_required();state=self.sim.state
+        if existing:kind=existing['kind']
         win=tk.Toplevel(self);win.title('동적 장애물 · '+('사람' if kind=='person' else 'AMR'));win.configure(bg=PANEL)
-        self.label(win,'시작 ↔ 끝 왕복 이동 · 벽/로봇 앞에서는 통행 대기',9,MUTED,bg=PANEL).pack(padx=12,pady=10)
-        variables={k:tk.StringVar(value=str(v)) for k,v in values.items()}
-        for key,title in [('x1','시작 X (m)'),('y1','시작 Y (m)'),('x2','끝 X (m)'),('y2','끝 Y (m)'),('speed_mps','속도 (m/s)'),('radius','충돌 반경 (m)'),('dwell_s','끝점 대기 (초)')]:
-            row=self._studio_row(win);self.label(row,title,bg=PANEL,width=18,anchor='w').pack(side='left')
+        self.label(win,'포인트 순서대로 이동 · 벽/로봇 앞에서는 통행 대기',9,MUTED,bg=PANEL).pack(padx=12,pady=8)
+        entries=list(existing.get('motion_nodes',[])) if existing and kind=='amr' else []
+        if kind=='person':entries=[list(p) for p in existing['motion_path']] if existing else [start or [state.x+2,state.y-2],end or [state.x+2,state.y+2]]
+        listing=tk.Listbox(win,height=7,width=48);listing.pack(fill='x',padx=12)
+        def refresh():
+            listing.delete(0,'end')
+            for i,item in enumerate(entries):listing.insert('end',f'{i+1}. '+(item if kind=='amr' else f'X {item[0]:.3f} / Y {item[1]:.3f}'))
+        refresh();row=self._studio_row(win)
+        if kind=='amr':
+            node=tk.StringVar(value=next(iter(self.map.nodes),''))
+            ttk.Combobox(row,textvariable=node,values=list(self.map.nodes),state='readonly',width=18).pack(side='left')
+            def add():
+                if node.get() not in self.map.nodes:raise ValueError('유한 좌표를 입력하세요.')
+                entries.append(node.get());refresh()
+            self.label(win,'AMR은 기존 노드 사이의 연결 경로·곡선을 따라갑니다.',8,MUTED,bg=PANEL).pack()
+        else:
+            x=tk.StringVar(value=str(state.x+2));y=tk.StringVar(value=str(state.y))
+            for title,var in [('X',x),('Y',y)]:
+                self.label(row,title,bg=PANEL).pack(side='left');ttk.Entry(row,textvariable=var,width=9).pack(side='left')
+            def add():
+                point=[float(x.get()),float(y.get())]
+                if not all(math.isfinite(v) for v in point):raise ValueError('유한 좌표를 입력하세요.')
+                entries.append(point);refresh()
+        self.button(row,'포인트 추가',lambda:self.guarded(add)).pack(side='left',padx=3)
+        def remove():
+            selection=listing.curselection()
+            if selection:entries.pop(selection[0]);refresh()
+        def move(delta):
+            selection=listing.curselection()
+            if not selection:return
+            i=selection[0];j=i+delta
+            if 0<=j<len(entries):entries[i],entries[j]=entries[j],entries[i];refresh();listing.selection_set(j)
+        row=self._studio_row(win)
+        for title,command in [('선택 삭제',remove),('위로',lambda:move(-1)),('아래로',lambda:move(1))]:self.button(row,title,command).pack(side='left',padx=3)
+        mode=tk.StringVar(value='순환' if existing and existing.get('motion_mode')=='loop' else '왕복')
+        row=self._studio_row(win);self.label(row,'이동 방식',bg=PANEL,width=18,anchor='w').pack(side='left')
+        ttk.Combobox(row,textvariable=mode,values=['왕복','순환'],state='readonly',width=16).pack(side='left')
+        variables={k:tk.StringVar(value=str(existing.get(k,default) if existing else default)) for k,default in [('speed_mps',.6 if kind=='person' else .35),('radius',.3 if kind=='person' else .61),('dwell_s',.5)]}
+        for key,title in [('speed_mps','속도 (m/s)'),('radius','충돌 반경 (m)'),('dwell_s','등록 포인트 대기 (초)')]:
+            row=self._studio_row(win);self.label(row,title,bg=PANEL,width=22,anchor='w').pack(side='left')
             ttk.Entry(row,textvariable=variables[key],width=16).pack(side='left')
         def save():
+            from .dynamic_obstacles import compile_actor_path
             self.sim_required();v={k:float(var.get()) for k,var in variables.items()}
             if not all(math.isfinite(n) for n in v.values()) or not .1<=v['radius']<=2:raise ValueError('유한 숫자와 충돌 반경 0.1~2m가 필요합니다.')
-            first=[v['x1'],v['y1']];last=[v['x2'],v['y2']]
-            prefix='PERSON' if kind=='person' else 'AMR'
-            ids={o.get('id') for o in self.map.obstacles};index=1
+            if len(entries)<2:raise ValueError('포인트를 두 개 이상 추가하세요.')
+            points=[[self.map.nodes[n]['x'],self.map.nodes[n]['y']] for n in entries] if kind=='amr' else [list(p) for p in entries]
+            prefix='PERSON' if kind=='person' else 'AMR';ids={o.get('id') for o in self.map.obstacles};index=1
             while f'{prefix}{index}' in ids:index+=1
-            obs=dict(id=existing['id'] if existing else f'{prefix}{index}',dynamic=True,kind=kind,
-                x=first[0],y=first[1],motion_path=[first,last],radius=v['radius'],speed_mps=v['speed_mps'],dwell_s=v['dwell_s'])
-            validate_actor(obs)
+            obs=dict(id=existing['id'] if existing else f'{prefix}{index}',dynamic=True,kind=kind,x=points[0][0],y=points[0][1],motion_path=points,motion_mode='loop' if mode.get()=='순환' else 'pingpong',**v)
+            if kind=='amr':obs['motion_nodes']=list(entries)
+            validate_actor(obs);compile_actor_path(self.map,obs)
             from types import SimpleNamespace
-            scene=SimpleNamespace(walls=self.map.walls,virtual_walls=self.map.virtual_walls,area_records=self.map.area_records,
-                obstacles=[o for o in self.map.obstacles if o is not existing])
-            if collision_reason(scene,*first,obs['radius']) or math.dist(first,(state.x,state.y))<=obs['radius']+max(self.sim.collision_radius,self.map.robot_model['radius']):
-                raise ValueError('시작점이 벽/장애물/제어 AMR와 겹칩니다. 시작점을 옮기세요.')
+            scene=SimpleNamespace(walls=self.map.walls,virtual_walls=self.map.virtual_walls,area_records=self.map.area_records,obstacles=[o for o in self.map.obstacles if o is not existing])
+            if collision_reason(scene,*points[0],obs['radius']) or math.dist(points[0],(state.x,state.y))<=obs['radius']+max(self.sim.collision_radius,self.map.robot_model['radius']):raise ValueError('시작점이 벽/장애물/제어 AMR와 겹칩니다. 시작점을 옮기세요.')
             def change():
                 if existing:self.map.obstacles.remove(existing)
                 self.map.obstacles.append(obs)
-            self._studio_obstacle_edit(change,'동적 장애물 설정');self.draw_map();win.destroy()
+            self._studio_obstacle_edit(change,'동적 장애물 다중 포인트 설정');self.draw_map();win.destroy()
         row=self._studio_row(win);self.button(row,'저장 / 배치',lambda:self.guarded(save),ORANGE).pack(side='left')
-        def pick():
-            self.actor_draft=dict(kind=kind,start=None)
-            self.tabs.select(self.nodes_page);self.edit_mode.set('동적 장애물 배치');win.destroy()
-        self.button(row,'지도에서 시작·끝 선택',pick).pack(side='left',padx=5)
+        if kind=='person':
+            def pick():
+                self.actor_draft=dict(kind=kind,start=None)
+                self.tabs.select(self.nodes_page);self.edit_mode.set('동적 장애물 배치');win.destroy()
+            self.button(row,'지도에서 초기 두 점 선택',pick).pack(side='left',padx=5)
 
     def _actor_map_click(self,x,y):
         self.sim_required()
