@@ -1,0 +1,12 @@
+SEER AMR Control v0.9.0 - Dual LiDAR Merge
+
+- lasers[0] + lasers[1] are transformed into the robot frame and merged before display.
+- Uses each laser's install_info when provided by the controller.
+- Supports degree-based beam angles seen in events4.csv (e.g. -120 deg) and radian variants.
+- Respects beam valid=false.
+- Removed automatic map-fitting/calibration from the live 1101 path; it could distort dual-LiDAR geometry.
+- The merged scan is transformed once with the robot pose into the map/world frame.
+- Existing obstacle layer remains available on top of the merged scan.
+- Diagnostic log now records install_info/device_info for both sensors.
+
+Validation: 45 project tests passed.

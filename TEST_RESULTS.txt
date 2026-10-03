@@ -1,0 +1,72 @@
+v1.1 Workspace — 2026-10-03
+Python compile PASS
+Unit tests 124/124 PASS
+Studio GUI smoke PASS
+Operation layers / chase GUI PASS: seven shared layer variables exposed on
+operation map; 3D wall/node/path/grid visibility, SIM LiDAR on/off, real input
+count and blocked status, stale input hidden. Rear camera stays behind AMR
+for 0/+90/-90 degree headings and follows XY. No hardware commands sent.
+Screenshot reviewed: world3d_chase_lidar.png.
+SIM wall / avoidance GUI PASS: wall creation through editor clicks, blocking
+with SEER-sized footprint, wait-to-avoid policy switch, actual green detour
+preview, collision-free arrival at same destination and saved policy.
+Avoidance unit tests: circular obstacle, solid wall, forbidden polygon,
+closed-room no-path, blocked destination, blocked transit-node bypass,
+SIM detour completion, wait/removal resume, manual wall blocking and large radius.
+DualSense PASS: Windows detected Sony VID 054C / PID 0CE6 with 6 axes and
+14 buttons; read-only physical input sample succeeded. No hardware jog sent.
+Pad unit tests: neutral/released arming, deadzone, mixed motion, release,
+disconnect/stale/disabled input, stop latch, hot-plug, poll gap, invalid mapping,
+axis inversion and leased jog packet filtering.
+Pad GUI integration: synthetic samples move SIM, combine forward/turn, stop on
+release and disconnect, prevent resumed held-button movement, stop disables
+pad, real mode stages leased velocity and clears it without network transport.
+Default visual models: SEER AMB-CSW04-CE and FAIRINO FR5, original lightweight
+primitive URDFs. AMR chassis dimensions, six arm joints, finite transforms and
+safe-pose above-floor geometry validated. Precision manufacturer CAD not bundled.
+3D GUI PASS: 2D/3D switching, map/route/AMR/arm rendering, live SIM pose,
+SIM arm progress, all camera presets, orthographic projection, orbit,
+URDF import, manual joints, OBJ CAD import, settings dialog and save.
+3D screenshots reviewed: world3d_map.png / world3d_robot.png.
+Geometry PASS: RPY transforms, URDF joint origin/normalized axis/limits/mimic,
+package mesh lookup, missing mesh warning, invalid XML/axis rejection,
+ASCII/binary STL, negative OBJ indices, local scaling, camera projection.
+3D interaction PASS: perspective/orthographic ground projection roundtrip,
+click selects node and destination, double-click invokes existing navigation,
+manual relocation XY/heading and auto relocation XY reuse existing handlers,
+relocation gesture preserves camera, selected/candidate markers render.
+Relocation sends are intercepted in GUI tests; no hardware command is sent.
+Desktop layout PASS: 1366x768 / 1920x1080, 8 sidebar destinations,
+selected workspace title, map minimum viewport. Own test window screenshots reviewed.
+GUI coverage: 8 extension tabs; curved green canvas path; full SIM Actions;
+dynamic obstacle placement, stop and removal/resume; undo/redo; calibration settings.
+TCP/XML-RPC adapter tests use mock responses.
+Actual SEER AMR and robot-arm hardware compatibility has not been tested.
+Location tracking PASS: retain last arrival until next node, real arrival dwell,
+controller report precedence, stale state, map reset, proximity hysteresis,
+invalid/low-confidence coordinates and explicit goal fallback.
+GUI location panel and robot caption PASS after navigation to LM3.
+Node/path workspace GUI PASS: 1366x768 / 1920x1080 interactive editor map,
+map-to-node-list and list-to-map selection, path picking/highlight, curve control
+drag and returning to operation canvas with the shared map model.
+Map label readability PASS at 1366x768 / 1920x1080: all demo node IDs visible,
+no overlapping node/robot label bounding boxes; only one selected-path diagnostic.
+Curve-mode map header PASS at 1366x768 / 1920x1080: telemetry, edit hint,
+SIM diagnostic and selected-path information occupy separate measured rows.
+Workspace consolidation PASS: map file/mapping actions occur once in editor,
+none in operation workspace; operation clicks cannot create nodes or show curve
+editing handles; editor obstacle placement still blocks/resumes navigation.
+Loop dialog preview PASS: map node double-click appends stop, ordered curved
+route and robot marker visible, close-loop updates status, missing path marked,
+valid loop creates Taskchain and destroying dialog cancels refresh timer.
+Legacy JSON edge and one-way path validation tests PASS.
+Route planning PASS: non-adjacent visits expand through directed map paths,
+shortest distance / speed-based time / excluded-node detour, repeated stop,
+arrival waits only at requested stops, no invented diagonal for unreachable legs.
+SIM explicit curved route differs from shorter alternative and reaches goal;
+GUI-generated planned loop executes a full cycle and completes.
+Hardware controllers may replan between requested destinations.
+Destination-only stop PASS: one Action per requested stop with entire transit
+route_nodes; straight/corner transit speeds remain positive; transit spin skipped;
+final stop/heading retained. Old generated per-edge loops migrate on execution.
+GUI multi-hop loop passes LM6 without stopping en route to LM3 and completes.

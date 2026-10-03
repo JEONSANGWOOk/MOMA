@@ -1,0 +1,30 @@
+{
+  "taskchains": [
+    {
+      "name": "Extended SIM Demo",
+      "repeat_count": 1,
+      "tasks": [
+        {
+          "checked": true,
+          "groups": [
+            {
+              "checked": true,
+              "actions": [
+                {"type": "Path Nav", "goal": "LM2", "timeout_s": 120},
+                {"type": "Wait DI Trigger", "channel": 0, "value": true, "timeout_s": 120},
+                {"type": "Set DO", "channel": 1, "value": true, "timeout_s": 10},
+                {"type": "Translation", "distance_m": 0.2, "speed_mps": 0.1, "timeout_s": 20},
+                {"type": "Rotation", "angle_deg": 90, "speed_dps": 30, "timeout_s": 20},
+                {"type": "Wait", "duration_s": 1, "timeout_s": 10},
+                {"type": "Arm Action", "operation": "work", "duration_s": 2, "timeout_s": 30},
+                {"type": "Arm Action", "operation": "safe_pose", "duration_s": 1, "timeout_s": 30},
+                {"type": "Path Nav", "goal": "LM3", "timeout_s": 120},
+                {"type": "Set DO", "channel": 1, "value": false, "timeout_s": 10}
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

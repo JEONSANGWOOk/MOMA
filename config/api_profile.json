@@ -1,0 +1,101 @@
+{
+  "verified": true,
+  "transport": "seer-16-byte",
+  "notice": "공식 TCP API 1.2.1 및 SDK 기반. 실기 펌웨어 호환성 미검증.",
+  "documentation": [
+    "https://github.com/seer-robotics/Robokit_TCP_API_py",
+    "https://github.com/seer-robotics/SeerSdk4j"
+  ],
+  "status_queries": [
+    {
+      "name": "all",
+      "port": 19204,
+      "request_type": 1100,
+      "response_type": 11100,
+      "read_only": true
+    }
+  ],
+  "fields": {
+    "x": {
+      "path": "all.x",
+      "optional": true
+    },
+    "y": {
+      "path": "all.y",
+      "optional": true
+    },
+    "theta": {
+      "path": "all.angle",
+      "optional": true
+    },
+    "localization": {
+      "path": "all.confidence",
+      "optional": true
+    },
+    "speed": {
+      "path": "all.vx",
+      "optional": true
+    },
+    "battery": {
+      "path": "all.battery_level",
+      "optional": true,
+      "scale": 100
+    },
+    "blocked": {
+      "path": "all.blocked",
+      "optional": true
+    },
+    "charging": {
+      "path": "all.charging",
+      "optional": true
+    },
+    "task_status": {
+      "path": "all.task_status",
+      "optional": true
+    },
+    "target": {
+      "path": "all.target_id",
+      "optional": true
+    },
+    "laser": {
+      "path": "all.laser_beams",
+      "optional": true
+    },
+    "path": {
+      "path": "all.path",
+      "optional": true
+    },
+    "unfinished_path": {
+      "path": "all.unfinished_path",
+      "optional": true
+    },
+    "emergency": {
+      "path": "all.emergency",
+      "optional": true
+    },
+    "slam_status": {
+      "path": "all.slam_status",
+      "optional": true
+    },
+    "reloc_status": {
+      "path": "all.reloc_status",
+      "optional": true
+    },
+    "loadmap_status": {
+      "path": "all.loadmap_status",
+      "optional": true
+    },
+    "block_x": {
+      "path": "all.block_x",
+      "optional": true
+    },
+    "block_y": {
+      "path": "all.block_y",
+      "optional": true
+    },
+    "mode": {
+      "path": "all.mode",
+      "optional": true
+    }
+  }
+}

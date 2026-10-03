@@ -1,0 +1,171 @@
+<?xml version='1.0' encoding='utf-8'?>
+<robot name="SEER AMB-CSW04-CE - lightweight visual">
+  <material name="white">
+    <color rgba=".88 .91 .94 1" />
+  </material>
+  <material name="dark">
+    <color rgba=".12 .16 .20 1" />
+  </material>
+  <material name="blue">
+    <color rgba=".10 .63 .89 1" />
+  </material>
+  <material name="red">
+    <color rgba=".90 .13 .16 1" />
+  </material>
+  <link name="base_link">
+    <visual>
+      <origin xyz="0.0 0.0 0.11130578512396695" rpy="0 0 0" />
+      <geometry>
+        <box size="0.9581999999999999 0.6314 0.1413884297520661" />
+      </geometry>
+      <material name="white" />
+    </visual>
+    <visual>
+      <origin xyz="0.0 0.0 0.0327900826446281" rpy="0 0 0" />
+      <geometry>
+        <box size="0.9581999999999999 0.6314 0.033090909090909094" />
+      </geometry>
+      <material name="dark" />
+    </visual>
+    <visual>
+      <origin xyz="0.0 0.0 0.17658512396694215" rpy="0 0 0" />
+      <geometry>
+        <box size="0.8307434679334916 0.520742268041237 0.010829752066115703" />
+      </geometry>
+      <material name="white" />
+    </visual>
+    <visual>
+      <origin xyz="0.0 -0.31678487972508584 0.10107768595041323" rpy="0 0 0" />
+      <geometry>
+        <box size="0.7624631828978623 0.008679037800687284 0.00842314049586777" />
+      </geometry>
+      <material name="blue" />
+    </visual>
+    <visual>
+      <origin xyz="0.0 0.31678487972508584 0.10107768595041323" rpy="0 0 0" />
+      <geometry>
+        <box size="0.7624631828978623 0.008679037800687284 0.00842314049586777" />
+      </geometry>
+      <material name="blue" />
+    </visual>
+    <visual>
+      <origin xyz="-0.48137600950118764 0.0 0.06016528925619835" rpy="0 0 0" />
+      <geometry>
+        <box size="0.013656057007125891 0.4881958762886598 0.019252892561983474" />
+      </geometry>
+      <material name="dark" />
+    </visual>
+    <visual>
+      <origin xyz="-0.42361088836104516 -0.23867353951890033 0.1965" rpy="0 0 0" />
+      <geometry>
+        <cylinder radius="0.05" length=".06" />
+      </geometry>
+      <material name="dark" />
+    </visual>
+    <visual>
+      <origin xyz="0.48137600950118764 0.0 0.06016528925619835" rpy="0 0 0" />
+      <geometry>
+        <box size="0.013656057007125891 0.4881958762886598 0.019252892561983474" />
+      </geometry>
+      <material name="dark" />
+    </visual>
+    <visual>
+      <origin xyz="0.42361088836104516 0.23867353951890033 0.1965" rpy="0 0 0" />
+      <geometry>
+        <cylinder radius="0.05" length=".06" />
+      </geometry>
+      <material name="dark" />
+    </visual>
+    <visual>
+      <origin xyz="0.0 -0.29074776632302407 0.0648" rpy="1.5707963267948966 0 0" />
+      <geometry>
+        <cylinder radius="0.0648" length="0.04" />
+      </geometry>
+      <material name="dark" />
+    </visual>
+    <visual>
+      <origin xyz="0.0 -0.29074776632302407 0.03888" rpy="1.5707963267948966 0 0" />
+      <geometry>
+        <cylinder radius="0.03888" length="0.042" />
+      </geometry>
+      <material name="blue" />
+    </visual>
+    <visual>
+      <origin xyz="0.0 0.29074776632302407 0.0648" rpy="1.5707963267948966 0 0" />
+      <geometry>
+        <cylinder radius="0.0648" length="0.04" />
+      </geometry>
+      <material name="dark" />
+    </visual>
+    <visual>
+      <origin xyz="0.0 0.29074776632302407 0.03888" rpy="1.5707963267948966 0 0" />
+      <geometry>
+        <cylinder radius="0.03888" length="0.042" />
+      </geometry>
+      <material name="blue" />
+    </visual>
+    <visual>
+      <origin xyz="-0.34140142517814726 -0.21697594501718212 0.0324" rpy="1.5707963267948966 0 0" />
+      <geometry>
+        <cylinder radius="0.0324" length="0.026" />
+      </geometry>
+      <material name="dark" />
+    </visual>
+    <visual>
+      <origin xyz="-0.34140142517814726 0.21697594501718212 0.0324" rpy="1.5707963267948966 0 0" />
+      <geometry>
+        <cylinder radius="0.0324" length="0.026" />
+      </geometry>
+      <material name="dark" />
+    </visual>
+    <visual>
+      <origin xyz="0.34140142517814726 -0.21697594501718212 0.0324" rpy="1.5707963267948966 0 0" />
+      <geometry>
+        <cylinder radius="0.0324" length="0.026" />
+      </geometry>
+      <material name="dark" />
+    </visual>
+    <visual>
+      <origin xyz="0.34140142517814726 0.21697594501718212 0.0324" rpy="1.5707963267948966 0 0" />
+      <geometry>
+        <cylinder radius="0.0324" length="0.026" />
+      </geometry>
+      <material name="dark" />
+    </visual>
+    <visual>
+      <origin xyz="0.3527814726840855 -0.21697594501718212 0.18831735537190084" rpy="0 0 0" />
+      <geometry>
+        <cylinder radius="0.026" length="0.01203305785123967" />
+      </geometry>
+      <material name="red" />
+    </visual>
+    <visual>
+      <origin xyz="-0.330021377672209 -0.20612714776632302 0.21358677685950414" rpy="0 0 0" />
+      <geometry>
+        <cylinder radius="0.008" length="0.07821487603305786" />
+      </geometry>
+      <material name="dark" />
+    </visual>
+    <visual>
+      <origin xyz="-0.330021377672209 0.20612714776632302 0.21358677685950414" rpy="0 0 0" />
+      <geometry>
+        <cylinder radius="0.008" length="0.07821487603305786" />
+      </geometry>
+      <material name="dark" />
+    </visual>
+    <visual>
+      <origin xyz="0 0 .242" rpy="0 0 0" />
+      <geometry>
+        <cylinder radius="0.1" length="0.12" />
+      </geometry>
+      <material name="dark" />
+    </visual>
+    <visual>
+      <origin xyz="0 0 .302" rpy="0 0 0" />
+      <geometry>
+        <cylinder radius="0.12" length="0.012" />
+      </geometry>
+      <material name="white" />
+    </visual>
+  </link>
+</robot>
