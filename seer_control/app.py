@@ -25,6 +25,7 @@ from .studio_core import ACTION_DEFAULTS, validate_actions, point_segment_distan
 from .location import LocationTracker
 from .mission_preview import MissionMapPreview
 from .route_planner import plan_stops, plan_actions
+from .ui_scale import UIScaleMixin
 
 ROOT = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parents[1]))
 from .theme import BG, WHITE, INK, MUTED, PANEL, BLUE, GREEN, RED, ORANGE, DARK, GRID, CHROME, configure_styles
@@ -50,16 +51,16 @@ def _shape_summary(value, depth=0):
     return type(value).__name__
 
 
-class Console(GamepadMixin, SpatialMixin, StudioMixin, tk.Tk):
+class Console(UIScaleMixin, GamepadMixin, SpatialMixin, StudioMixin, tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title('AMR Control Studio | MoMa Standalone · v1.3 Workspace')
+        self.title('AMR Control Studio | MoMa Standalone · v1.4 Workspace')
         # Responsive startup size: fit the active monitor instead of assuming one fixed resolution.
-        sw=max(1024,self.winfo_screenwidth()); sh=max(700,self.winfo_screenheight())
-        start_w=min(1600,max(1080,int(sw*0.94)))
-        start_h=min(1000,max(680,int(sh*0.90)))
+        sw=self.winfo_screenwidth(); sh=self.winfo_screenheight()
+        start_w=min(1600,int(sw*.94))
+        start_h=min(1000,int(sh*.88))
         self.geometry(f'{start_w}x{start_h}+{max(0,(sw-start_w)//2)}+{max(0,(sh-start_h)//2)}')
-        self.minsize(min(1024,sw-40), min(650,sh-80))
+        self.minsize(min(800,sw-40), min(480,sh-80))
         self.configure(bg=BG)
         self.font = 'Malgun Gothic' if platform.system() == 'Windows' else 'Noto Sans CJK KR'
         self.option_add('*Font', (self.font, 9))
@@ -184,6 +185,7 @@ class Console(GamepadMixin, SpatialMixin, StudioMixin, tk.Tk):
         self.log('INFO', '시뮬레이션 시작 · 표시되는 로봇/센서 정보는 합성 데이터입니다.')
         self._studio_init()
         self._obstacles_restore()
+        self._ui_scale_init()
         self._spatial_restore()
         self._pad_start()
         self.last_tick = time.monotonic()
@@ -220,7 +222,7 @@ class Console(GamepadMixin, SpatialMixin, StudioMixin, tk.Tk):
     def _scrollable_frame(self, parent, bg=PANEL):
         """Create a vertically scrollable frame for short displays and high DPI scaling."""
         outer=tk.Frame(parent,bg=bg)
-        canvas=tk.Canvas(outer,bg=bg,highlightthickness=0,bd=0)
+        canvas=tk.Canvas(outer,bg=bg,highlightthickness=0,bd=0,width=1,height=1)
         sb=ttk.Scrollbar(outer,orient='vertical',command=canvas.yview)
         content=tk.Frame(canvas,bg=bg)
         window=canvas.create_window((0,0),window=content,anchor='nw')
@@ -244,15 +246,13 @@ class Console(GamepadMixin, SpatialMixin, StudioMixin, tk.Tk):
         return outer,content,canvas
 
     def _responsive_layout(self, event=None):
+        if event is not None and event.widget is not self:return
+        self._ui_scale_schedule()
         w=max(1,self.winfo_width()); h=max(1,self.winfo_height())
         side=max(235,min(360,int(w*0.24)))
         for widget in (getattr(self,'selected_node_options',None),getattr(self,'command_status',None),getattr(self,'reloc_info',None),getattr(self,'node_prop_text',None)):
             try: widget.configure(wraplength=max(210,side-35))
             except Exception: pass
-        compact=h<800
-        try:
-            for card in self.cards.values(): card.configure(font=(self.font,10 if compact else 11,'bold'))
-        except Exception: pass
 
     def _register_navigation(self, page, title, symbol='◆'):
         button = tk.Button(self.navigation, text=f'{symbol}  {title}', anchor='w',
@@ -329,6 +329,7 @@ class Console(GamepadMixin, SpatialMixin, StudioMixin, tk.Tk):
         titlebar.pack(fill='x')
         self.workspace_title = self.label(titlebar, '지도 / 제어', 11, INK, True)
         self.workspace_title.pack(side='left',padx=12,pady=7)
+        self._ui_scale_control(titlebar)
         self.label(titlebar, '지도: 우클릭 이동 · 휠 확대 · Esc 정지', 8, MUTED).pack(side='right',padx=12)
         self.tabs = ttk.Notebook(work,style='Workspace.TNotebook')
         self.tabs.pack(fill='both',expand=True,padx=8,pady=(0,6))

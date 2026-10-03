@@ -1,4 +1,14 @@
-v1.3 Dynamic obstacles — 2026-10-03
+v1.4 Early rejoin / responsive density — 2026-10-03
+Unit tests 153/153 PASS. New tests verify early original-line rejoin before
+a distant goal, preservation of bent reference suffix, and SIM lane tracking.
+Responsive GUI PASS at 1366x720 and 1024x640: auto density, usable map area,
+visible scrollbar, wheel over child labels, reach panel bottom, manual scale
+100/75% and persisted preference, early lane-return green preview.
+Existing wall/avoidance GUI regression PASS. Screenshots reviewed:
+ui_compact_1024.png, ui_compact_1366.png, obstacle_early_rejoin.png.
+Actual laptop multi-monitor DPI and hardware driving remain untested.
+
+Prior v1.3 Dynamic obstacles — 2026-10-03
 Unit tests 150/150 PASS. Ten new tests cover people and AMR movement/return,
 pause, actor sweep against wall/ego, clean save/load restart, invalid motion,
 LiDAR moving hits, adaptive dynamic wait/original-path resume, adaptive static

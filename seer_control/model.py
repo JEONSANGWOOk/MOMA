@@ -360,6 +360,7 @@ class Simulator:
             if not self._waypoints:
                 geometry,rec=self.segment_geometry(self._segment_start,self.route[0])
                 self._waypoints=list(geometry)
+                self._reference_waypoints=[(s.x,s.y)]+list(geometry)
                 self._segment_reverse=bool(rec and str((rec.get('properties') or {}).get('direction',0))=='1')
             rec=next((r for r in getattr(self.map,'path_records',[]) if r.get('a')==self._segment_start and r.get('b')==self.route[0]),None)
             limits=dict(getattr(self.map,'robot_model',DEFAULT_MODEL))
@@ -403,9 +404,11 @@ class Simulator:
                     self._velocity=0.;self.avoidance_status='장애물 정지 유지 · 수동 재개 필요';return
                 avoid=self.obstacle_policy=='avoid' or self.obstacle_policy=='adaptive' and not dynamic
                 if avoid and self._avoid_time>=self._avoid_next:
-                    from .avoidance import detour
+                    from .avoidance import detour,rejoin_detour
                     self._avoid_next=self._avoid_time+1.
-                    points=detour(self.map,(s.x,s.y),(n['x'],n['y']),limits['radius'])
+                    points=rejoin_detour(self.map,(s.x,s.y),getattr(self,'_reference_waypoints',[]),limits['radius'])
+                    rejoined=bool(points)
+                    if not points:points=detour(self.map,(s.x,s.y),(n['x'],n['y']),limits['radius'])
                     if not points and len(self.route)>1:
                         final=self.map.nodes[self.route[-1]]
                         points=detour(self.map,(s.x,s.y),(final['x'],final['y']),limits['radius'])
@@ -413,7 +416,7 @@ class Simulator:
                             self.route=[self.route[-1]];self._segment_start=None
                     if points:
                         self._waypoints=points[1:];self._segment_reverse=False
-                        self.avoidance_status='우회 주행';self._velocity=0.;return
+                        self.avoidance_status='우회 후 기존 경로 복귀' if rejoined else '우회 주행';self._velocity=0.;return
                     self.avoidance_status='우회 경로 없음 · 대기'
                 elif not avoid:self.avoidance_status='동적 장애물 통과 대기' if dynamic else '장애물 해제 대기'
                 desired=min(desired,math.sqrt(2*limits['maxdec']*max(0,clearance-stop_dist)))

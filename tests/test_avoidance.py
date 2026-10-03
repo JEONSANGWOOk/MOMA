@@ -1,6 +1,6 @@
 import unittest
 from seer_control.model import MapModel,Simulator
-from seer_control.avoidance import detour,clear_segment
+from seer_control.avoidance import detour,clear_segment,rejoin_detour
 from seer_control.studio_core import collision_reason
 
 
@@ -9,6 +9,29 @@ def fixture(walls=None,obstacles=None):
 
 
 class AvoidanceTests(unittest.TestCase):
+    def test_rejoins_near_obstacle_before_far_destination(self):
+        m=fixture(obstacles=[dict(x=1.5,y=0,radius=.3)])
+        reference=[(0,0),(10,0)]
+        path=rejoin_detour(m,(.4,0),reference,.23)
+        self.assertTrue(path)
+        peak=max(range(len(path)),key=lambda i:abs(path[i][1]))
+        rejoin=next(p for p in path[peak+1:] if abs(p[1])<1e-8)
+        self.assertLess(rejoin[0],2.4)
+        self.assertEqual(path[-1],(10,0))
+        self.assertTrue(all(clear_segment(m,a,b,.23) for a,b in zip(path,path[1:])))
+    def test_rejoin_preserves_bent_reference_suffix(self):
+        m=fixture(obstacles=[dict(x=1,y=0,radius=.2)])
+        reference=[(0,0),(2,0),(4,2),(7,2)]
+        path=rejoin_detour(m,(.1,0),reference,.23)
+        self.assertTrue(path);self.assertIn((4.,2.),path);self.assertEqual(path[-1],(7.,2.))
+    def test_sim_rejoins_original_line_early(self):
+        m=fixture(obstacles=[dict(x=1.5,y=0,radius=.3)]);m.nodes['B']['x']=8
+        s=Simulator(m);s.obstacle_policy='avoid';s.navigate('B');passed=False
+        for _ in range(1500):
+            s.tick(.1)
+            if s.state.x>2.4:
+                passed=True;self.assertAlmostEqual(s.state.y,0,places=5)
+        self.assertTrue(passed);self.assertEqual(s.state.last_node,'B')
     def test_local_obstacle_detour_is_clear(self):
         m=fixture(obstacles=[dict(x=1.5,y=0,radius=.3)])
         path=detour(m,(0,0),(3,0),.23)

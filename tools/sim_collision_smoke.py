@@ -30,7 +30,7 @@ with tempfile.TemporaryDirectory() as folder:
         assert app.sim.state.blocked and app.sim.state.x<1.4
         app.sim_obstacle_policy.set('우회 주행');app._sim_obstacle_change()
         for _ in range(30):app.sim.tick(.1)
-        assert app.sim.avoidance_status=='우회 주행'
+        assert '우회' in app.sim.avoidance_status
         assert max(abs(p[1]) for p in app.sim.navigation_points())>1
         app.draw_map();app.update()
         capture_window(app,Path(__file__).resolve().parents[1]/'artifacts/sim_wall_avoidance.png')

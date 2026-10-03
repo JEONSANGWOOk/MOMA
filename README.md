@@ -1,6 +1,8 @@
 # MOMA
 
-MoMa development code — SEER AMR Control Studio v1.3 Workspace.
+MoMa development code — SEER AMR Control Studio v1.4 Workspace.
+
+SIM 우회는 장애물 뒤의 가까운 안전 지점에서 기존 직선·곡선 경로에 복귀합니다. 화면 상단 **UI 배율**에서 자동 또는 65~115%를 선택할 수 있으며, 작은 화면의 제어 패널은 버튼 위에서도 마우스 휠로 스크롤할 수 있습니다.
 
 [한국어 사용 설명](README_KO.md) · [최종 변경 사항](RELEASE_NOTES_KO.md) · [검증 기록](TEST_RESULTS.txt)
 
