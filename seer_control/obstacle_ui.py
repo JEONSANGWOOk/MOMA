@@ -14,6 +14,7 @@ class ObstacleUIMixin:
         self.sim_obstacle_policy=tk.StringVar(value=POLICIES['auto'])
         choice=ttk.Combobox(body,textvariable=self.sim_obstacle_policy,values=list(POLICIES.values()),state='readonly')
         choice.pack(fill='x');choice.bind('<<ComboboxSelected>>',lambda event:self._sim_obstacle_change())
+        self.button(body,'상호 정지 자동 해소 적용',lambda:self.guarded(self._deadlock_preset)).pack(fill='x',pady=2)
         self.button(body,'자동 판단 / 장애물별 시나리오 설정',self._auto_scenario_dialog).pack(fill='x',pady=2)
         self.auto_class_label=self.label(body,'자동 판단: 관측 대기',8,MUTED,anchor='w',justify='left',wraplength=270)
         self.auto_class_label.pack(fill='x')
@@ -53,6 +54,14 @@ class ObstacleUIMixin:
         self.actor_draft=None
         self.reroute_wait.set(str(self.studio_config.get('reroute_wait_s',5)))
         self.reroute_attempts.set(str(self.studio_config.get('reroute_attempts',3)))
+
+    def _deadlock_preset(self):
+        from .obstacle_tracking import DEFAULTS
+        self.sim_required()
+        self.studio_config.update(auto_scenarios=dict(DEFAULTS),sim_obstacle_policy='auto')
+        self.sim_obstacle_policy.set(POLICIES['auto']);self.sim.obstacle_policy='auto'
+        self.sim._auto_block=None;self.sim._avoid_next=0.
+        self._auto_apply_settings();self._studio_save_settings()
 
     def _tracking_history(self):
         from .obstacle_tracking import CLASSES

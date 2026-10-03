@@ -41,8 +41,9 @@ with tempfile.TemporaryDirectory() as folder:
                     choice.set(key);next(b for b in buttons(win) if b.cget('text')=='포인트 추가').invoke()
             next(b for b in buttons(win) if b.cget('text')=='저장 / 배치').invoke()
         assert len(model.obstacles)==2
-        app.sim_obstacle_policy.set(POLICIES['adaptive']);app._sim_obstacle_change()
-        assert app.studio_config['sim_obstacle_policy']=='adaptive'
+        app.sim_obstacle_policy.set(POLICIES['wait']);app._sim_obstacle_change()
+        assert app.studio_config['sim_obstacle_policy']=='wait'
+        app.studio_config['auto_static_s']=30;app.sim.auto_static_s=30
         actor=model.obstacles[0];actor['paused']=True
         app.sim.navigate('B')
         for _ in range(200):app.sim.tick(.1)

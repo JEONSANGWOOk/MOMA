@@ -5,8 +5,8 @@ from types import SimpleNamespace
 from .studio_core import path_clearance
 
 CLASSES={'dynamic':'동적','static':'정적','unknown':'판단 중'}
-SCENARIOS={'wait':'해제될 때까지 대기','stop':'정지 / 수동 재개','avoid':'주변 우회 후 기존 경로 복귀','reroute':'다른 연결 경로 / 불가 목적지 패스','wait_avoid':'설정 시간 대기 → 주변 우회','wait_reroute':'설정 시간 대기 → 다른 경로 / 패스'}
-DEFAULTS={'dynamic':'wait','static':'wait_reroute','unknown':'wait'}
+SCENARIOS={'wait_recover':'대기 → 주변 우회 → 다른 경로 / 패스','wait':'해제될 때까지 대기','stop':'정지 / 수동 재개','avoid':'주변 우회 후 기존 경로 복귀','reroute':'다른 연결 경로 / 불가 목적지 패스','wait_avoid':'설정 시간 대기 → 주변 우회','wait_reroute':'설정 시간 대기 → 다른 경로 / 패스'}
+DEFAULTS={'dynamic':'wait','static':'wait_recover','unknown':'wait'}
 
 class ObstacleTracker:
  def __init__(self):

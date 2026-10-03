@@ -53,11 +53,13 @@ class AlternateTests(unittest.TestCase):
         self.assertEqual(runner.status,'COMPLETED',runner.error);self.assertEqual(s.state.last_node,'E')
         self.assertEqual(runner.actions[0]['status'],'패스');self.assertEqual(runner.actions[1]['status'],'목적지 미도착으로 생략')
         self.assertEqual(runner.skipped[0]['goal'],'B');self.assertFalse(s.do[0]);self.assertEqual(s.arm['status'],'IDLE')
-    def test_dynamic_actor_waits_without_skip(self):
+    def test_stopped_actor_becomes_static_and_reroutes(self):
         m=scene([dict(id='P',dynamic=True,kind='person',x=1.5,y=0,radius=.3,motion_path=[[1.5,0],[1.5,2]],speed_mps=.5,paused=True)])
         s=robot(m);s.navigate('B')
         for _ in range(200):s.tick(.1)
-        self.assertTrue(s.state.blocked);self.assertFalse(s.skipped_goals)
+        self.assertEqual(m.obstacles[0]['_classification'],'static');self.assertFalse(s.skipped_goals)
+        for _ in range(800):s.tick(.1)
+        self.assertEqual(s.state.last_node,'B')
     def test_one_way_lane_cannot_be_backtracked(self):
         m=scene([dict(x=1.5,y=0,radius=.3)])
         m.path_records=[dict(a='A',b='B',raw=make_path_record(m.nodes['A'],m.nodes['B']),properties={}),

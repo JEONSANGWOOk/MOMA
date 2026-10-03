@@ -197,7 +197,7 @@ class Simulator:
         if self.obstacle_policy in ('reroute','auto') and self._skipped_context:
             from .alternate_routes import alternate_route
             a,b,ref=self._skipped_context
-            next_plan=alternate_route(self.map,(s.x,s.y),goal,a,b,ref,max(self.collision_radius,self.map.robot_model['radius']),include_dynamic=self.obstacle_policy=='auto')
+            next_plan=alternate_route(self.map,(s.x,s.y),goal,a,b,ref,max(self.collision_radius,self.map.robot_model['radius']),include_dynamic=True)
         if self.mapping:
             raise ValueError('맵 생성 중에는 수동 탐색만 가능합니다.')
         start = self.map.nearest(s.x, s.y)
@@ -239,6 +239,28 @@ class Simulator:
         self._reroute_forced=False;self._skipped_context=None
         self._reroute_block_at=None;self._reroute_failures=0
         self.avoidance_status='다른 연결 경로 탐색 완료 · '+ ' → '.join(plan['nodes'])
+
+    def _try_local_detour(self,node,radius):
+        from .avoidance import detour,rejoin_detour
+        s=self.state
+        points=rejoin_detour(self.map,(s.x,s.y),getattr(self,'_reference_waypoints',[]),radius)
+        rejoined=bool(points)
+        if not points:points=detour(self.map,(s.x,s.y),(node['x'],node['y']),radius)
+        if not points and len(self.route)>1:
+            final=self.map.nodes[self.route[-1]]
+            points=detour(self.map,(s.x,s.y),(final['x'],final['y']),radius)
+            if points:self.route=[self.route[-1]];self._segment_start=None
+        if not points and not collision_reason(self.map,s.x,s.y,radius) and collision_reason(self.map,s.x,s.y,radius+.04):
+            # At a close standstill, relax only the extra planning buffer;
+            # preserve the full physical collision radius and swept checks.
+            points=rejoin_detour(self.map,(s.x,s.y),getattr(self,'_reference_waypoints',[]),radius,safety_margin=0)
+            rejoined=bool(points)
+            if not points:points=detour(self.map,(s.x,s.y),(node['x'],node['y']),radius,safety_margin=0)
+        if not points:return False
+        self._waypoints=points[1:];self._segment_reverse=False;self._velocity=0.
+        self.avoidance_status='우회 후 기존 경로 복귀' if rejoined else '우회 주행'
+        s.blocked=False;self._collision_blocked=False;self._reroute_block_at=None;self._reroute_failures=0
+        return True
 
     def skip_destination(self,reason):
         goal=self.state.target
@@ -454,6 +476,9 @@ class Simulator:
             if reason:
                 dynamic=reason.startswith('동적 장애물')
                 policy=self.obstacle_policy
+                if policy in ('adaptive','reroute'):
+                    _,classification,_,_=self.obstacle_tracker.blocker(self.map,(s.x,s.y),self._waypoints,limits['radius'],max(dec_dist,clearance+.05),reason)
+                    dynamic=classification!='static'
                 if policy=='auto':
                     from .obstacle_tracking import CLASSES,SCENARIOS
                     key,classification,speed,obstacle=self.obstacle_tracker.blocker(self.map,(s.x,s.y),self._waypoints,limits['radius'],max(dec_dist,clearance+.05),reason)
@@ -474,6 +499,12 @@ class Simulator:
                     # User-selected graph rerouting also applies to a moving blocker.
                     if policy=='reroute':dynamic=False
 
+                if policy=='recover':
+                    self._velocity=0.;s.blocked=True;self._collision_blocked=True;self.block_reason=reason
+                    if self._avoid_time<self._avoid_next:return
+                    self._avoid_next=self._avoid_time+1.
+                    if not self._reroute_forced and self._try_local_detour(n,limits['radius']):return
+                    policy='reroute';dynamic=False
                 if policy=='reroute' and not dynamic:
                     if self._reroute_block_at is None:self._reroute_block_at=self._avoid_time
                     elapsed=self._avoid_time-self._reroute_block_at
@@ -484,7 +515,7 @@ class Simulator:
                     if elapsed>=retry_wait:
                         from .alternate_routes import alternate_route
                         context=self._skipped_context or (self._segment_start,self.route[0],getattr(self,'_reference_waypoints',[]))
-                        plan=alternate_route(self.map,(s.x,s.y),s.target,*context,limits['radius'],include_dynamic=self.obstacle_policy=='auto')
+                        plan=alternate_route(self.map,(s.x,s.y),s.target,*context,limits['radius'],include_dynamic=True)
                         if plan:
                             s.blocked=False;self._collision_blocked=False;self._apply_alternate(plan)
                         else:
@@ -496,19 +527,8 @@ class Simulator:
                     self._velocity=0.;self.avoidance_status='장애물 정지 유지 · 수동 재개 필요';return
                 avoid=policy=='avoid' or policy=='adaptive' and not dynamic
                 if avoid and self._avoid_time>=self._avoid_next:
-                    from .avoidance import detour,rejoin_detour
                     self._avoid_next=self._avoid_time+1.
-                    points=rejoin_detour(self.map,(s.x,s.y),getattr(self,'_reference_waypoints',[]),limits['radius'])
-                    rejoined=bool(points)
-                    if not points:points=detour(self.map,(s.x,s.y),(n['x'],n['y']),limits['radius'])
-                    if not points and len(self.route)>1:
-                        final=self.map.nodes[self.route[-1]]
-                        points=detour(self.map,(s.x,s.y),(final['x'],final['y']),limits['radius'])
-                        if points:
-                            self.route=[self.route[-1]];self._segment_start=None
-                    if points:
-                        self._waypoints=points[1:];self._segment_reverse=False
-                        self.avoidance_status='우회 후 기존 경로 복귀' if rejoined else '우회 주행';self._velocity=0.;return
+                    if self._try_local_detour(n,limits['radius']):return
                     self.avoidance_status='우회 경로 없음 · 대기'
                 elif not avoid:self.avoidance_status='동적 장애물 통과 대기' if dynamic else '장애물 해제 대기'
                 desired=min(desired,math.sqrt(2*limits['maxdec']*max(0,clearance-stop_dist)))

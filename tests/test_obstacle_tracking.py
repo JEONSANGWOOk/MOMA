@@ -25,7 +25,7 @@ class TrackingTests(unittest.TestCase):
   obs=dict(x=1.5,y=0,radius=.3,map_fixed=False)
   if actor:obs.update(dynamic=True,kind='person',id='P',motion_path=[[1.5,0],[1.5,2]],paused=True,speed_mps=.5,dwell_s=0)
   m=MapModel(dict(format='amr-console-map-v1',nodes=[dict(id=k,x=x,y=y) for k,x,y in [('A',0,0),('B',3,0),('C',0,2),('D',3,2)]],edges=[['A','B'],['A','C'],['C','D'],['D','B']],walls=[],obstacles=[obs]))
-  s=Simulator(m);s.obstacle_policy='auto';s.auto_static_s=.5;s.auto_wait_s=.5;s.reroute_wait_s=.5;s.navigate('B');return s,obs
+  s=Simulator(m);s.obstacle_policy='auto';s.auto_scenarios['static']='wait_reroute';s.auto_static_s=.5;s.auto_wait_s=.5;s.reroute_wait_s=.5;s.navigate('B');return s,obs
  def test_auto_static_reroutes_on_graph(self):
   s,o=self.sim();upper=False
   for _ in range(800):s.tick(.1);upper|=s.state.y>1.5

@@ -1,3 +1,6 @@
+v1.9 validation (2026-10-03)
+192 unit tests PASS. Native AMR node-route head-on mutual stop, physical footprint no overlap, local detour and B arrival; graph fallback and no-route skip; explicit wait remains wait. GUI recovery preset persistence and head-on recovery. SIM only; no hardware commands.
+
 v1.8 validation (2026-10-03)
 188 unit tests PASS. Known fixed-map exclusion, new stationary/dynamic IDs, class transitions, association, unique concurrent IDs, range/occlusion, loss/reobservation/expiry, runtime persistence exclusion. GUI: 2D/3D markers/trails and live tracking list. SIM only; no hardware commands.
 

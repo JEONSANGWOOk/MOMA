@@ -8,7 +8,7 @@ def clear_segment(model,a,b,radius):
     return not path_clearance(model,a,[b],radius,math.dist(a,b))[1]
 
 
-def rejoin_detour(model,start,reference,radius):
+def rejoin_detour(model,start,reference,radius,safety_margin=.04):
     """Bypass the first blocked interval, then retain the original polyline."""
     if len(reference)<2:return None
     # Project onto the original segment, and only consider points ahead of it.
@@ -24,21 +24,21 @@ def rejoin_detour(model,start,reference,radius):
         samples.extend((a[0]+(b[0]-a[0])*j/count,a[1]+(b[1]-a[1])*j/count) for j in range(1,count+1))
     blocked=False;attempts=0
     for i,p in enumerate(samples):
-        if collision_reason(model,*p,radius+.04):blocked=True;continue
+        if collision_reason(model,*p,radius+safety_margin):blocked=True;continue
         if not blocked:continue
         # Prefer the earliest safe point beyond the obstacle, not the final goal.
         following=samples[i:min(len(samples),i+4)]
-        if any(not clear_segment(model,a,b,radius+.04) for a,b in zip(following,following[1:])):continue
+        if any(not clear_segment(model,a,b,radius+safety_margin) for a,b in zip(following,following[1:])):continue
         attempts+=1
-        bypass=detour(model,start,p,radius,max_cells=8000)
+        bypass=detour(model,start,p,radius,max_cells=8000,safety_margin=safety_margin)
         if bypass:return bypass+samples[i+1:]
         if attempts>=6:break
     return None
 
 
-def detour(model,start,goal,radius,max_cells=24000):
+def detour(model,start,goal,radius,max_cells=24000,safety_margin=.04):
     """Return collision-checked world points; None means wait, never teleport."""
-    radius+=.04
+    radius+=max(0,safety_margin)
     if collision_reason(model,*start,radius) or collision_reason(model,*goal,radius):return None
     if clear_segment(model,start,goal,radius):return [start,goal]
     points=[start,goal]+[(n['x'],n['y']) for n in model.nodes.values()]

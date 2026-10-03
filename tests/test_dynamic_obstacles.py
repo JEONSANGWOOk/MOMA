@@ -54,7 +54,7 @@ class ActorTests(unittest.TestCase):
         for _ in range(30):s.tick(.1)
         self.assertGreater(s.scan()[0][0],2)
     def test_adaptive_waits_for_dynamic_then_keeps_original_path(self):
-        m=scene([actor(paused=True)]);s=Simulator(m);s.obstacle_policy='adaptive';s.navigate('B')
+        m=scene([actor(paused=True)]);s=Simulator(m);s.obstacle_policy='adaptive';s.auto_static_s=30;s.navigate('B')
         for _ in range(150):s.tick(.1)
         self.assertTrue(s.state.blocked);self.assertIn('동적',s.avoidance_status)
         m.obstacles[0]['paused']=False;m.obstacles[0]['dwell_s']=60
