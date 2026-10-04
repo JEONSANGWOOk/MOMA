@@ -3,7 +3,7 @@ import math
 import re
 from .transport import ReadOnlyClient, MAX_FILE_PAYLOAD
 
-COMMANDS = {'navigate': (19206,3051), 'pause': (19206,3001),
+COMMANDS = {'navigate': (19206,3051), 'navigate_free': (19206,3050), 'pause': (19206,3001),
             'resume': (19206,3002), 'cancel': (19206,3003),
             'relocate': (19205,2002), 'confirm_loc': (19205,2003), 'cancel_reloc': (19205,2004),
             'motion': (19205,2010), 'stop_motion': (19205,2000),
@@ -24,6 +24,14 @@ class SeerClient(ReadOnlyClient):
             raise ValueError('문서 1.2.1의 지도 이름은 영문/숫자/_/-만 지원합니다.')
         if name=='navigate' and (not isinstance(payload,dict) or not isinstance(payload.get('id'),str) or not payload['id']):
             raise ValueError('로봇의 유효한 목적지 ID가 필요합니다.')
+        if name=='navigate_free':
+            if not isinstance(payload,dict):raise ValueError('자유 주행 목적지가 필요합니다.')
+            if 'id' in payload:
+                if not isinstance(payload['id'],str) or not payload['id'].strip():raise ValueError('유효한 Station ID가 필요합니다.')
+            elif any(type(payload.get(k)) not in (int,float) or not math.isfinite(payload[k]) for k in ('x','y')):
+                raise ValueError('자유 주행에는 유한한 x/y 좌표가 필요합니다.')
+            if 'angle' in payload and (type(payload['angle']) not in (int,float) or not math.isfinite(payload['angle'])):
+                raise ValueError('angle은 유한한 라디안 값이어야 합니다.')
         if name in ('lock_control','unlock_control'):
             if not isinstance(payload,dict) or not isinstance(payload.get('nick_name'),str) or not payload['nick_name'].strip():
                 raise ValueError(f'{4005 if name=="lock_control" else 4006} 제어권 API에는 nick_name이 필요합니다.')

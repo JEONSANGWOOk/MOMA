@@ -1,4 +1,4 @@
-# SEER AMR Control Studio v1.17 Workspace
+# SEER AMR Control Studio v1.18 Workspace
 
 **지도 영역 확대 / 연결 경로 탐색 보강 / 패스 마킹 정리**: 하단의 긴 지도 정보·조작 안내를 한 줄 요약과 `상세`로 줄였습니다. `지도 크게`로 제어 패널을 접어 지도 영역을 넓힐 수 있으며 정지 버튼은 남습니다. 탐색은 현재 위치의 모든 연결 경로 복귀 지점을 검사하고, 뒤로 복귀·먼 우회·이전 우회 후 재복귀를 검토합니다. 새 미션은 이전 패스 마킹을 초기화하며, 반복 중 마킹은 실제 노드 방문 시 지웁니다.
 
@@ -57,7 +57,7 @@ RoboShop의 지도 작업 화면을 참고한 데스크톱 디자인으로 변�
 지도 편집·전체 Action 실행·DI/DO·장애물 시험·자동 충전·알람과 기록 재생·로봇 모델·보정·로봇팔 연결을 추가했습니다.
 사용법과 실기 연결 범위: [확장 기능 안내](docs/EXTENDED_FEATURES_KO.md).
 시험용 미션: [Extended SIM Demo](examples/extended_demo_taskchain.json).
-실행 중인 이전 창을 종료하고 `run_windows.bat`으로 다시 실행하면 창 제목에 `v1.17 Workspace`가 표시됩니다. 기존 EXE에는 소스 변경이 자동 반영되지 않습니다.
+실행 중인 이전 창을 종료하고 `run_windows.bat`으로 다시 실행하면 창 제목에 `v1.18 Workspace`가 표시됩니다. 기존 EXE에는 소스 변경이 자동 반영되지 않습니다.
 
 목표: RoboShop 없이 미니PC에서 SEER AMR 상태/주행/맵 편집을 수행하고, 이후 로봇팔 제어를 같은 Taskchain에 통합할 수 있는 기반을 제공합니다.
 

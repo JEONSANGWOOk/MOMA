@@ -22,6 +22,23 @@ class LiveTests(unittest.TestCase):
         sock=self.response(3051,{})
         with patch('socket.create_connection',return_value=sock) as call:self.client.command('navigate',{'id':'LM1'})
         self.assertEqual(call.call_args.args[0],('localhost',19206));self.assertEqual(json.loads(sock.sent[16:]),{'id':'LM1'})
+    def test_free_navigation_station_and_coordinates(self):
+        for payload in ({'id':'LM7'},{'x':1.2,'y':3.4,'angle':.5}):
+            self.setUp()
+            sock=self.response(3050,{'ret_code':0})
+            with patch('socket.create_connection',return_value=sock) as call:
+                self.client.command('navigate_free',payload)
+            self.assertEqual(call.call_args.args[0],('localhost',19206))
+            self.assertEqual(HEADER.unpack(sock.sent[:16])[4],3050)
+            self.assertEqual(json.loads(sock.sent[16:]),payload)
+            self.assertEqual(call.call_count,1)
+
+    def test_invalid_free_navigation_never_sends(self):
+        for payload in (None,{}, {'id':''},{'x':True,'y':1},{'x':float('nan'),'y':2},{'x':1,'y':2,'angle':float('inf')}):
+            with patch('socket.create_connection') as call:
+                with self.assertRaises(ValueError):self.client.command('navigate_free',payload)
+                call.assert_not_called()
+
     def test_missing_pose(self):
         with patch('socket.create_connection',return_value=self.response(1100,{})):
             with self.assertRaises(ValueError):self.client.snapshot()

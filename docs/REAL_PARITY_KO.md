@@ -29,3 +29,13 @@
 자료에 맞춰 단일 미션/상태/보고서 인터페이스를 유지하며 각 실제 장비의 제어 어댑터를 구현합니다. 로컬 검증에서는 실제 로봇 연결이나 동작 명령을 수행하지 않았습니다.
 
 참고: 기존 구현은 docs/SOURCES_AND_API.md의 공식 TCP 문서 1.2.1과 docs/FR5_API_KO.md에 근거합니다. 현행 대상 펌웨어 호환성은 별도로 확인해야 합니다.
+
+
+## 공식 자유 주행 API 연결 (v1.18)
+미션 화면의 실기 주행 방식에서 지도 경로(3051) 또는 자유 경로(3050)를 선택합니다.
+선택은 저장되며 실기 목적지 이동/미션/충전 노드 이동에 적용됩니다. 기본은 3051이며 SIM 경로 정책에는 영향을 주지 않습니다.
+3050은 제어기가 자유 경로를 계획합니다. 지도 Bezier를 따라가는 3051과 다르며, PC의 장애물 분류·최근접 직선 복귀·목적지 패스 정책을 전송하는 API는 아닙니다.
+명령 응답은 접수 결과입니다. 기존 1020/위치/속도 상태 확인으로 도착을 판단합니다. 보고서에 선택한 API 번호를 기록합니다.
+대상 펌웨어에서 3050 지원 및 안전 설정 검증은 아직 수행하지 않았습니다.
+근거: [SEER 공식 공개 NetProtocol 1.2.1 PDF, 62/66/67쪽](https://raw.githubusercontent.com/seer-robotics/Robokit_TCP_API_py/master/robotkit-netprotocol-l-1.2.1.pdf).
+[현재 공식 Help Center](https://cn-dev.seer-group.com/en/help-center)의 Robokit API Protocol 링크는 Feishu 로그인이 필요하여 최신 본문과의 대조는 미완료입니다.

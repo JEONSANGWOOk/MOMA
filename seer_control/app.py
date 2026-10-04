@@ -55,7 +55,7 @@ def _shape_summary(value, depth=0):
 class Console(UIScaleMixin, GamepadMixin, SpatialMixin, StudioMixin, tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title('AMR Control Studio | MoMa Standalone · v1.17 Workspace')
+        self.title('AMR Control Studio | MoMa Standalone · v1.18 Workspace')
         # Responsive startup size: fit the active monitor instead of assuming one fixed resolution.
         sw=self.winfo_screenwidth(); sh=self.winfo_screenheight()
         start_w=min(1600,int(sw*.94))
@@ -1036,7 +1036,7 @@ class Console(UIScaleMixin, GamepadMixin, SpatialMixin, StudioMixin, tk.Tk):
                         elapsed=(time.monotonic()-started)*1000.0
                         self.events.put(('command_io',generation,('RX',command,port,api,payload,result,elapsed)))
 
-                        if command=='navigate':
+                        if command in ('navigate','navigate_free'):
                             try:
                                 task_probe=command_client.query(1020)
                                 self.events.put(('nav_probe',generation,task_probe))
@@ -1235,6 +1235,8 @@ class Console(UIScaleMixin, GamepadMixin, SpatialMixin, StudioMixin, tk.Tk):
         threading.Thread(target=work,daemon=True).start()
 
     def send_command(self,name,payload=None):
+        if name=='navigate' and getattr(self,'studio_config',{}).get('real_navigation_mode')=='free':
+            name='navigate_free'
         def send():
             if not self.real or not self.connected:raise ValueError('실기 연결이 필요합니다.')
             if not self.control_enabled:raise ValueError('상단에서 실기 · 제어 모드로 연결하세요.')

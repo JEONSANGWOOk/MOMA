@@ -29,7 +29,7 @@ class ConsoleAdapter:
     def mission_started(self,index):
         runner=getattr(self.c,'studio_runner',None)
         if runner and runner.report:
-            runner.report.metadata=dict(backend='REAL' if self.c.real else 'SIM',controller=controller_identity(getattr(self.c,'raw',{})) if self.c.real else {},hardware_verified=False)
+            runner.report.metadata=dict(backend='REAL' if self.c.real else 'SIM',controller=controller_identity(getattr(self.c,'raw',{})) if self.c.real else {},hardware_verified=False,navigation_api=3050 if getattr(self.c,'studio_config',{}).get('real_navigation_mode')=='free' else 3051)
         if not self.c.real and index==0:
             self.c.sim.skipped_goals.clear();self.c.sim.skip_result=None
 
@@ -337,6 +337,19 @@ class StudioMixin(FairinoUIMixin,ObstacleUIMixin):
         for title,fn in [('선택 Taskchain 실행',self.run_tasks),('일시정지',lambda:self.studio_runner.pause(time.monotonic())),
                          ('재개',lambda:self.studio_runner.resume(time.monotonic())),('취소',self.cancel_tasks),
                          ('실패 단계부터 재개',self._studio_retry),('수행 보고서',self._studio_report)]:self.button(row,title,fn).pack(side='left',padx=3)
+        navrow=self._studio_row(page)
+        ttk.Label(navrow,text='실기 주행 방식').pack(side='left',padx=3)
+        mode=tk.StringVar(value='자유 경로 (3050)' if self.studio_config.get('real_navigation_mode')=='free' else '지도 경로 (3051)')
+        selector=ttk.Combobox(navrow,textvariable=mode,values=('지도 경로 (3051)','자유 경로 (3050)'),state='readonly',width=22)
+        selector.pack(side='left',padx=5)
+        def save_mode(event=None):
+            if self.studio_runner.active:
+                mode.set('자유 경로 (3050)' if self.studio_config.get('real_navigation_mode')=='free' else '지도 경로 (3051)')
+                self.log('INFO','미션 완료 또는 취소 후 주행 방식을 변경하세요.');return
+            self.studio_config['real_navigation_mode']='free' if mode.get()=='자유 경로 (3050)' else 'fixed'
+            self._studio_save_settings()
+        selector.bind('<<ComboboxSelected>>',save_mode)
+        ttk.Label(navrow,text='3050: 제어기 경로 탐색 / 3051: 지도에 설정된 경로').pack(side='left',padx=5)
         self.studio_mission_label=self.label(page,'미션 대기',12,INK,bg=PANEL);self.studio_mission_label.pack(anchor='w',padx=12,pady=8)
         self.studio_action_tree=ttk.Treeview(page,columns=('step','type','target','status','timeout'),show='headings',height=10)
         for key,title in [('step','단계'),('type','Action'),('target','목적지 / 작업'),('status','상태'),('timeout','시간 제한(s)')]:
