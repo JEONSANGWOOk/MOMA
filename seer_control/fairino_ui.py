@@ -10,12 +10,13 @@ from tkinter import ttk, filedialog, messagebox
 from .fairino_api import profile, validate
 from .fairino_client import FairinoClient
 from .fairino_program_ui import FairinoProgramMixin
+from .arm_workspace import ArmWorkspaceMixin
 from .fairino_programs import program_actions
 from .studio_devices import arm_call
 from .theme import PANEL, INK, MUTED, RED
 
 
-class FairinoUIMixin(FairinoProgramMixin):
+class FairinoUIMixin(FairinoProgramMixin,ArmWorkspaceMixin):
     def _fr5_init(self):
         self.fr5_client=FairinoClient();self.fr5_feedback={};self.fr5_rx=0.;self.fr5_poll_at=0.
         self.fr5_pending=False;self.fr5_events=queue.Queue();self.fr5_epoch=0;self.fr5_error=''

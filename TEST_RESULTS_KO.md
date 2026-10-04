@@ -1,3 +1,10 @@
+# v1.20 검증 (2026-10-04)
+
+- unittest discover: 280 tests OK.
+- 신규 10개: 독립 MoveJ 완료/궤적, 자세 포함 수치 IK, 도달 불가 IK, MoveL 직선 오차/도착, 실패 목표에서 이동 차단, I/O 출력·센서 분리, 미등록 참조, 시간 초과, 일시정지/정지/관절 한계, 미지원 툴 좌표 차단.
+- arm_workspace_smoke: WORKSPACE 등록, 독립 예제 재생, 1366×768/1100×650 화면, 설정 저장 PASS. SDK 요청/AMR 상태 변경 없음.
+- 실제 FR5 연결/명령 전송 없음. 기본 URDF의 실제 제품 기구학/충돌 물리 일치 여부 미검증.
+
 # v1.19 검증 (2026-10-04)
 
 - unittest discover: 270 tests OK.
