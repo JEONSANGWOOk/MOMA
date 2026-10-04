@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.8)
+project(seer_sba400eu_description)
+find_package(ament_cmake REQUIRED)
+install(DIRECTORY urdf meshes config launch DESTINATION share/${PROJECT_NAME})
+ament_package()

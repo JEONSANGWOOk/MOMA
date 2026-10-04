@@ -4,6 +4,7 @@ from pathlib import Path
 import tkinter as tk
 from .geometry3d import RobotDescription, MeshAsset, load_mesh, box, cylinder, transform, multiply, point, identity
 from .smap import path_record_geometry
+from .smooth_renderer import renderer_for
 
 
 PRESETS={'사선':(-135,38),'위':(-90,89.9),'정면':(-90,8),'측면':(0,8),'뒤':(90,8)}
@@ -57,10 +58,10 @@ class WorldView3D(tk.Canvas):
         super().__init__(parent,bg='#dce5ef',highlightthickness=0)
         self.app=app;self.camera=Camera();self.fitted=None;self.drag=None
         self.arm_asset=RobotDescription.load(demo_path);self.arm_asset.synthetic=True
-        self.body_asset=RobotDescription.load(Path(__file__).resolve().parents[1]/'examples/seer_amb_csw04_ce.urdf');self.cad_asset=None
+        self.body_asset=RobotDescription.load(Path(__file__).resolve().parents[1]/'models/seer_sba400eu_description/urdf/sba400eu.urdf');self.cad_asset=None
         self.scales={'arm':1.,'amr':1.,'cad':1.}
         self.positions={'arm':{},'amr':{},'cad':{}}
-        self.mount=[0.,0.,.308,0.,0.,0.];self.cad_origin=[0.,0.,0.,0.,0.,0.]
+        self.mount=[0.,0.,.182,0.,0.,0.];self.cad_origin=[0.,0.,0.,0.,0.,0.]
         self.layers={key:tk.BooleanVar(value=True) for key in ('지도','점군','경로','좌표축','AMR','로봇팔','CAD')}
         self.follow=tk.BooleanVar(value=False);self.arm_follow=tk.BooleanVar(value=True)
         self.chase=False
@@ -166,10 +167,15 @@ class WorldView3D(tk.Canvas):
         if self.follow.get():
             self.camera.target=[pose['x'],pose['y'],.7]
             if self.chase:self.camera.yaw=math.degrees(pose['theta'])+180.;self.camera.pitch=28.
-        faces=[];lines=[];texts=[]
+        faces=[];lines=[];texts=[];gpu_assets=[];renderer=renderer_for(self)
         def add_faces(geometry,world,color,tag):faces.extend((tuple(point(world,p) for p in face),color,tag) for face in geometry)
         def add_asset(asset,role,world,color,tag):
             if isinstance(asset,RobotDescription):
+                if renderer:
+                    scaled=[list(row) for row in world]
+                    for i in range(3):
+                        for j in range(3):scaled[i][j]*=self.scales[role]
+                    gpu_assets.append((asset,dict(self.positions[role]),scaled,None,1));return
                 for vertices,shade,_ in asset.draw_faces(self.positions[role]):faces.append((tuple(point(world,tuple(v*self.scales[role] for v in p)) for p in vertices),shade,tag))
             elif asset:faces.extend((vertices,shade,tag) for vertices,shade,_ in asset.draw_faces(world,(self.scales[role],)*3,color))
         if self.layers['지도'].get():
@@ -247,6 +253,12 @@ class WorldView3D(tk.Canvas):
             for a,b in model.edges:
                 if frozenset((a,b)) not in represented:lines.append(((model.nodes[a]['x'],model.nodes[a]['y'],.035),(model.nodes[b]['x'],model.nodes[b]['y'],.035),'#6e8ba9',1,'world_path'))
             lines.extend(((a[0],a[1],.07),(b[0],b[1],.07),'#10966e',3,'world_active_route') for a,b in zip(route_points,route_points[1:]))
+        overrides=getattr(self.app,'lidar_mount_overrides',[])
+        if self.body_asset and self.body_asset.name=='SEER SBA-400EU':
+            for index,values in enumerate(overrides[:2]):
+                if len(values)==3 and all(math.isfinite(float(v)) for v in values):
+                    joint=next((j for j in self.body_asset.joints if j['name']==f'lidar_{index+1}_mount'),None)
+                    if joint:joint['origin']=transform((float(values[0]),float(values[1]),.1965),(0,0,float(values[2])))
         world=transform((pose['x'],pose['y'],0.),(0.,0.,pose['theta']))
         texts.append((point(world,(0,0,.20)),'SEER' if self.body_asset and self.body_asset.name.startswith('SEER') else 'AMR','#275176'))
         candidate=self.app.reloc_candidate
@@ -265,17 +277,25 @@ class WorldView3D(tk.Canvas):
                         add_faces(cylinder(.12,.065),multiply(world,transform((x,y,.12),(math.pi/2,0,0))),'#344354','world_amr')
                 lines.append((point(world,(0,0,.46)),point(world,(length*.65,0,.46)),'#e76158',3,'world_heading'))
         values=self._arm_positions(arm,measured or {});self.scene_joint_values=dict(values)
-        if self.layers['로봇팔'].get():add_asset(self.arm_asset,'arm',multiply(world,transform(self.mount[:3],self.mount[3:])),'#e9ac42','world_arm')
+        if self.layers['로봇팔'].get() and (not self.app.real or measured):add_asset(self.arm_asset,'arm',multiply(world,transform(self.mount[:3],self.mount[3:])),'#e9ac42','world_arm')
+        overlay=getattr(self.app,'sim_pose_overlay',None)
+        if self.app.real and overlay and overlay.get():
+            sim=self.app.sim.state
+            simworld=transform((sim.x,sim.y,0),(0,0,sim.theta))
+            if renderer and self.body_asset and self.layers['AMR'].get():gpu_assets.append((self.body_asset,{},simworld,'#319fea',.42))
+            dev=getattr(self.app,'arm_dev_sim',None)
+            if renderer and dev and self.layers['로봇팔'].get():gpu_assets.append((dev.kin.asset,dev.kin.positions(dev.q),multiply(simworld,transform(self.mount[:3],self.mount[3:])),'#319fea',.42))
+            texts.append((point(simworld,(0,0,.6)),'SIM 개발 · 파란색','#1687d0'))
         if self.layers['CAD'].get() and self.cad_asset:add_asset(self.cad_asset,'cad',transform(self.cad_origin[:3],self.cad_origin[3:]),'#a5b4c4','world_cad')
         if self.layers['좌표축'].get():
             for matrix in (identity(),world,multiply(world,transform(self.mount[:3],self.mount[3:]))):
                 origin=point(matrix,(0,0,.01))
                 for p,color,label in [((.5,0,.01),'#d44b4b','X'),((0,.5,.01),'#329467','Y'),((0,0,.51),'#397fca','Z')]:
                     end=point(matrix,p);lines.append((origin,end,color,2,'world_axes'));texts.append((end,label,color))
-        self.total_faces=len(faces)
+        self.total_faces=len(faces)+sum(sum(len(v[0]) for rows in a.links.values() for v in rows) for a,*_ in gpu_assets)
         if len(faces)>6000:faces=faces[::math.ceil(len(faces)/6000)]
         items=[]
-        for vertices,color,tag in faces:
+        for vertices,color,tag in ([] if renderer else faces):
             projected=[self.camera.project(p,width,height) for p in vertices]
             if not all(projected):continue
             if max(p[0] for p in projected)<-100 or min(p[0] for p in projected)>width+100 or max(p[1] for p in projected)<-100 or min(p[1] for p in projected)>height+100:continue
@@ -283,13 +303,17 @@ class WorldView3D(tk.Canvas):
             lighting=.68+.32*abs(dot(normal,normalize((.3,-.5,1))))
             rgb=[int(color[i:i+2],16) for i in (1,3,5)];shade='#'+''.join(f'{min(255,round(v*lighting)):02x}' for v in rgb)
             items.append((sum(p[2] for p in projected)/len(projected),'face',projected,shade,tag))
-        for a,b,color,line_width,tag in lines:
+        for a,b,color,line_width,tag in ([] if renderer else lines):
             projected=[self.camera.project(p,width,height) for p in (a,b)]
             if all(projected):items.append((sum(p[2] for p in projected)/2,'line',projected,(color,line_width),tag))
         for _,kind,projected,color,tag in sorted(items,key=lambda item:item[0],reverse=True):
             coords=[v for p in projected for v in p[:2]]
             if kind=='face':self.create_polygon(*coords,fill=color,outline=color,tags=('world_mesh',tag))
             else:self.create_line(*coords,fill=color[0],width=color[1],tags=tag)
+        if renderer:
+            from PIL import ImageTk
+            self.render_image=ImageTk.PhotoImage(renderer.render(self.camera,width,height,assets=gpu_assets,faces=faces,lines=[row[:4] for row in lines]))
+            self.create_image(0,0,anchor='nw',image=self.render_image,tags=('world_mesh','world_arm','world_amr'))
         for p,label,color in texts:
             projected=self.camera.project(p,width,height)
             if projected and 0<projected[0]<width and 0<projected[1]<height:self.create_text(*projected[:2],text=label,fill=color,font=(self.app.font,8,'bold'),tags='world_label')

@@ -1,0 +1,3 @@
+SBA-400EU visual reconstruction based on official photographs and published dimensions. This is not factory CAD. Sensor x/y/yaw, wheel sizes, mounting holes and cosmetic details are estimates. Calibrate extrinsics before hardware use. Chassis is 958.2 × 631.4 × 182 mm excluding lasers. Coordinate frame: x forward, y left, z up. Original generated STL/OBJ; colors in URDF.
+
+ROS2: put this package under workspace/src, run colcon build and source install/setup.bash. Then ros2 launch seer_sba400eu_description display.launch.py. Set RViz Fixed Frame to base_footprint and add RobotModel using /robot_description. Windows app imports urdf/sba400eu.urdf directly, without ROS.

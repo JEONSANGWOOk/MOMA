@@ -19,10 +19,14 @@ pause
 exit /b 1
 
 :run_python
+python -c "import PIL" >nul 2>&1
+if errorlevel 1 python -m pip install -r requirements.txt
 python -X utf8 main.py
 goto finished
 
 :run_py
+py -3 -c "import PIL" >nul 2>&1
+if errorlevel 1 py -3 -m pip install -r requirements.txt
 py -3 -X utf8 main.py
 
 :finished

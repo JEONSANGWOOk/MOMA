@@ -1,0 +1,51 @@
+{
+  "model": "SBA-400EU",
+  "source": "https://seer-robotics.ai/amr/liftingrobot/SBA-400EU",
+  "dimensions_m": [
+    0.9582,
+    0.6314,
+    0.182
+  ],
+  "rotation_diameter_m": 1.004,
+  "mass_kg": 100,
+  "ground_clearance_m": 0.02,
+  "lidar_scan_height_m": 0.1965,
+  "lidar": "2 (SICK HV)",
+  "extrinsics": [
+    {
+      "link": "lidar_1_link",
+      "xyz_rpy": [
+        0.36,
+        -0.235,
+        0.1965,
+        0,
+        0,
+        -0.7853981633974483
+      ],
+      "verified": false,
+      "basis": "photo estimate for x/y/yaw; published scan height for z"
+    },
+    {
+      "link": "lidar_2_link",
+      "xyz_rpy": [
+        -0.36,
+        0.235,
+        0.1965,
+        0,
+        0,
+        2.356194490192345
+      ],
+      "verified": false,
+      "basis": "photo estimate for x/y/yaw; published scan height for z"
+    }
+  ],
+  "arm_mount_xyz_rpy": [
+    0,
+    0,
+    0.182,
+    0,
+    0,
+    0
+  ],
+  "factory_cad": false
+}

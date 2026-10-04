@@ -3,7 +3,9 @@ import copy,json,math,time
 from pathlib import Path
 import tkinter as tk
 from tkinter import ttk,filedialog
-from .geometry3d import RobotDescription,point
+from .geometry3d import RobotDescription,point,identity
+from .smooth_renderer import renderer_for
+from .pose_display import real_arm_positions
 from .world3d import Camera,PRESETS,normalize,cross,subtract,dot
 from .arm_simulation import ArmSimulator
 from .fairino_api import profile,validate
@@ -38,24 +40,39 @@ class ArmCanvas(tk.Canvas):
    if p and q:self.create_line(*p[:2],*q[:2],fill=color,width=width)
   for i in range(-10,11):
    value=i*.1;line((value,-1,0),(value,1,0),'#cdd8e4');line((-1,value,0),(1,value,0),'#cdd8e4')
-  faces=[]
-  for vertices,color,name in self.sim.kin.asset.draw_faces(self.sim.kin.positions(self.sim.q)):
-   projected=[self.camera.project(p,w,h) for p in vertices]
-   if all(projected):
-    normal=normalize(cross(subtract(vertices[1],vertices[0]),subtract(vertices[2],vertices[0])))
-    brightness=.6+.4*abs(dot(normal,normalize((.3,-.5,1))))
-    color='#'+''.join(f'{round(int(color[i:i+2],16)*brightness):02x}' for i in (1,3,5))
-    faces.append((sum(p[2] for p in projected)/len(projected),projected,color,name))
-  for _,projected,color,name in sorted(faces,key=lambda row:row[0],reverse=True):self.create_polygon(*[v for p in projected for v in p[:2]],fill=color,outline=color,width=.5,tags=('arm_mesh',name))
-  for a,b in zip(self.sim.trail,self.sim.trail[1:]):line(a,b,'#e78119',2)
+  renderer=renderer_for(self)
+  display=getattr(self.app,'arm_dev_display',None);mode=display.get() if display else 'SIM 개발'
+  measured=real_arm_positions(self.app,self.sim.kin.joints);assets=[]
+  if mode=='SIM 개발':assets.append((self.sim.kin.asset,self.sim.kin.positions(self.sim.q),identity(),None,1))
+  elif measured:assets.append((self.sim.kin.asset,measured,identity(),None,1))
+  if mode=='실기 + SIM 비교':assets.append((self.sim.kin.asset,self.sim.kin.positions(self.sim.q),identity(),'#319fea',.42))
+  if renderer:
+   from PIL import ImageTk
+   self.render_image=ImageTk.PhotoImage(renderer.render(self.camera,w,h,assets=assets,grid=True))
+   self.create_image(0,0,anchor='nw',image=self.render_image,tags='arm_mesh')
+  else:
+   faces=[]
+   for vertices,color,name in [face for asset,positions,world,tint,alpha in assets for face in [(v,tint or c,n) for v,c,n in asset.draw_faces(positions,world)]]:
+    projected=[self.camera.project(p,w,h) for p in vertices]
+    if all(projected):
+     normal=normalize(cross(subtract(vertices[1],vertices[0]),subtract(vertices[2],vertices[0])))
+     brightness=.6+.4*abs(dot(normal,normalize((.3,-.5,1))))
+     color='#'+''.join(f'{round(int(color[i:i+2],16)*brightness):02x}' for i in (1,3,5))
+     faces.append((sum(p[2] for p in projected)/len(projected),projected,color,name))
+   for _,projected,color,name in sorted(faces,key=lambda row:row[0],reverse=True):self.create_polygon(*[v for p in projected for v in p[:2]],fill=color,outline=color,width=.5,tags=('arm_mesh',name))
+  if mode!='실기 자세':
+   for a,b in zip(self.sim.trail,self.sim.trail[1:]):line(a,b,'#319fea',2)
   for axis,color,label in [((.25,0,0),'#dc4c4c','X'),((0,.25,0),'#18a36a','Y'),((0,0,.25),'#267dde','Z')]:
    line((0,0,0),axis,color,3);p=self.camera.project(axis,w,h)
    if p:self.create_text(*p[:2],text=label,fill=color)
-  t=self.sim.kin.fk(self.sim.q);origin=point(t,(0,0,0))
+  q=[measured[j['name']] for j in self.sim.kin.joints] if mode=='실기 자세' and measured else self.sim.q
+  t=self.sim.kin.fk(q);origin=point(t,(0,0,0))
   for axis,color in [((.1,0,0),'#dc4c4c'),((0,.1,0),'#18a36a'),((0,0,.1),'#267dde')]:line(origin,point(t,axis),color,2)
   p=self.camera.project(origin,w,h)
-  if p:self.create_oval(p[0]-4,p[1]-4,p[0]+4,p[1]+4,fill='#ff981b',outline='white',tags='tcp')
-  self.create_text(12,12,anchor='nw',text='ARM SIM · '+self.sim.kin.asset.name+'\n좌드래그 회전 · 우드래그 이동 · 휠 확대 · 그리드 0.1m',fill='#28405d',font=(self.app.font,9))
+  if p and assets:self.create_oval(p[0]-4,p[1]-4,p[0]+4,p[1]+4,fill='#319fea' if mode!='실기 자세' else '#ef5b4d',outline='white',tags='tcp')
+  status='SIM 개발 — 주황 궤적' if mode=='SIM 개발' else ('REAL 수신 자세 — 원래 색상' if measured else 'REAL 자세 없음 / 수신 지연')
+  if mode=='실기 + SIM 비교':status+=' · SIM 예측 — 파란 겹쳐보기'
+  self.create_text(12,12,anchor='nw',text=status+'\n'+self.sim.kin.asset.name+' · '+('매끄러운 GPU 표면' if renderer else '기본 표면')+'\n좌드래그 회전 · 우드래그 이동 · 휠 확대',fill='#28405d',font=(self.app.font,9))
 
 class ArmWorkspaceMixin:
  def _arm_workspace_build(self):
@@ -91,6 +108,8 @@ class ArmWorkspaceMixin:
   def project(e=None):self.arm_dev_canvas.camera.perspective=projection.get()=='원근';self.arm_dev_canvas.render()
   selector.bind('<<ComboboxSelected>>',project)
   self.button(row,'맞춤',lambda:self.arm_dev_canvas.fit()).pack(side='left',padx=3)
+  self.arm_dev_display=tk.StringVar(value='SIM 개발')
+  ttk.Combobox(row,textvariable=self.arm_dev_display,values=['SIM 개발','실기 자세','실기 + SIM 비교'],state='readonly',width=17).pack(side='left',padx=3)
   self.arm_dev_canvas=ArmCanvas(left,self,self.arm_dev_sim);self.arm_dev_canvas.pack(fill='both',expand=True)
   self.arm_dev_feedback=tk.StringVar();ttk.Label(left,textvariable=self.arm_dev_feedback,wraplength=650).pack(fill='x',padx=5,pady=5)
   tabs=ttk.Notebook(right);tabs.pack(fill='both',expand=True)

@@ -16,6 +16,8 @@ class SpatialMixin:
         self.spatial_assets={}
         for mode in ('2D','3D'):
             tk.Radiobutton(toolbar,text=mode,variable=self.view_mode,value=mode,command=self._spatial_switch,bg=PANEL,activebackground=PANEL,fg=INK,selectcolor='#ffffff').pack(side='left',padx=2)
+        self.sim_pose_overlay=tk.BooleanVar(value=True)
+        ttk.Checkbutton(toolbar,text='SIM 비교',variable=self.sim_pose_overlay,command=self._spatial_render).pack(side='left',padx=2)
         camera=ttk.Combobox(toolbar,textvariable=self.camera_view,values=['사선','위','정면','측면','뒤','로봇 추적','뒤따라 보기'],state='readonly',width=10)
         camera.pack(side='left',padx=3);camera.bind('<<ComboboxSelected>>',lambda event:self._spatial_camera())
         projection=ttk.Combobox(toolbar,textvariable=self.projection_view,values=['원근','직교'],state='readonly',width=6)
@@ -85,7 +87,7 @@ class SpatialMixin:
             values=config.get(key)
             if isinstance(values,list) and len(values)==6 and all(type(v) in (int,float) and math.isfinite(v) for v in values):setattr(view,key,values)
         height=config.get('wall_height')
-        if view.mount==[0.,0.,.4285,0.,0.,0.] and not config.get('assets',{}):view.mount=[0.,0.,.308,0.,0.,0.]
+        if view.mount==[0.,0.,.4285,0.,0.,0.] and not config.get('assets',{}):view.mount=[0.,0.,.182,0.,0.,0.]
         if type(height) in (int,float) and .02<=height<=10:view.wall_height=height
         for key,value in (config.get('layers') if isinstance(config.get('layers'),dict) else {}).items():
             if key in view.layers and type(value) is bool:view.layers[key].set(value)
@@ -159,9 +161,9 @@ class SpatialMixin:
             self.spatial_assets.pop('arm',None);refresh_summary();joint_controls();view.refresh();self._spatial_save()
         self.button(row,'기본 FR5 복원',restore_demo).pack(side='left',padx=5)
         row=tk.Frame(body,bg=PANEL);row.pack(fill='x',padx=12,pady=3)
-        self.label(row,'기본 AMR: SEER AMB-CSW04-CE · FR5: 설치된 공식 ROS2 모델 / 경량 대체 모델',9,MUTED).pack(side='left')
+        self.label(row,'기본 AMR: SEER SBA-400EU · FR5: 설치된 공식 ROS2 모델 / 경량 대체 모델',9,MUTED).pack(side='left')
         def restore_amr():
-            view.body_asset=RobotDescription.load(self._spatial_demo_path().parent/'seer_amb_csw04_ce.urdf')
+            view.body_asset=RobotDescription.load(Path(__file__).resolve().parents[1]/'models/seer_sba400eu_description/urdf/sba400eu.urdf')
             view.positions['amr']={};view.scales['amr']=1.;self.spatial_assets.pop('amr',None)
             refresh_summary();joint_controls();view.refresh();self._spatial_save()
         self.button(row,'기본 SEER 복원',restore_amr).pack(side='left',padx=5)

@@ -1,0 +1,746 @@
+<robot name="SEER SBA-400EU">
+  <material name="silver">
+    <color rgba=".43 .46 .48 1" />
+  </material>
+  <material name="black">
+    <color rgba=".06 .07 .075 1" />
+  </material>
+  <material name="blue">
+    <color rgba=".015 .16 .62 1" />
+  </material>
+  <material name="teal">
+    <color rgba="0 .85 .94 1" />
+  </material>
+  <material name="red">
+    <color rgba=".92 .04 .04 1" />
+  </material>
+  <material name="yellow">
+    <color rgba=".95 .76 .04 1" />
+  </material>
+  <material name="white">
+    <color rgba=".95 .97 .98 1" />
+  </material>
+  <link name="base_footprint" />
+  <link name="base_link">
+    <inertial>
+      <origin xyz="0 0 .091" />
+      <mass value="100" />
+      <inertia ixx="3.598249666666666" iyy="7.927260333333336" izz="10.973443333333334" ixy="0" ixz="0" iyz="0" />
+    </inertial>
+    <visual>
+      <geometry>
+        <mesh filename="package://seer_sba400eu_description/meshes/chassis.stl" />
+      </geometry>
+      <material name="silver" />
+    </visual>
+    <visual>
+      <geometry>
+        <mesh filename="package://seer_sba400eu_description/meshes/top_plate.stl" />
+      </geometry>
+      <material name="black" />
+    </visual>
+    <visual>
+      <origin xyz="-0.295 -0.307 0.025" rpy="0 0 0" />
+      <geometry>
+        <box size=".35 .012 .019" />
+      </geometry>
+      <material name="black" />
+    </visual>
+    <visual>
+      <origin xyz="0.295 -0.307 0.025" rpy="0 0 0" />
+      <geometry>
+        <box size=".35 .012 .019" />
+      </geometry>
+      <material name="black" />
+    </visual>
+    <visual>
+      <origin xyz="-0.295 0.307 0.025" rpy="0 0 0" />
+      <geometry>
+        <box size=".35 .012 .019" />
+      </geometry>
+      <material name="black" />
+    </visual>
+    <visual>
+      <origin xyz="0.295 0.307 0.025" rpy="0 0 0" />
+      <geometry>
+        <box size=".35 .012 .019" />
+      </geometry>
+      <material name="black" />
+    </visual>
+    <visual>
+      <origin xyz="-0.471 0 0.025" rpy="0 0 0" />
+      <geometry>
+        <box size=".01 .47 .019" />
+      </geometry>
+      <material name="black" />
+    </visual>
+    <visual>
+      <origin xyz="0.471 0 0.025" rpy="0 0 0" />
+      <geometry>
+        <box size=".01 .47 .019" />
+      </geometry>
+      <material name="black" />
+    </visual>
+    <visual>
+      <origin xyz="-0.42 -0.301 0.162" rpy="0 0 0" />
+      <geometry>
+        <box size=".055 .008 .013" />
+      </geometry>
+      <material name="teal" />
+    </visual>
+    <visual>
+      <origin xyz="-0.45 -0.27 0.145" rpy="0 0 0" />
+      <geometry>
+        <box size=".009 .045 .037" />
+      </geometry>
+      <material name="teal" />
+    </visual>
+    <visual>
+      <origin xyz="-0.443 -0.29 0.159" rpy="0 0 -0.6" />
+      <geometry>
+        <box size=".035 .008 .014" />
+      </geometry>
+      <material name="teal" />
+    </visual>
+    <visual>
+      <origin xyz="-0.42 0.301 0.162" rpy="0 0 0" />
+      <geometry>
+        <box size=".055 .008 .013" />
+      </geometry>
+      <material name="teal" />
+    </visual>
+    <visual>
+      <origin xyz="-0.45 0.27 0.145" rpy="0 0 0" />
+      <geometry>
+        <box size=".009 .045 .037" />
+      </geometry>
+      <material name="teal" />
+    </visual>
+    <visual>
+      <origin xyz="-0.443 0.29 0.159" rpy="0 0 0.6" />
+      <geometry>
+        <box size=".035 .008 .014" />
+      </geometry>
+      <material name="teal" />
+    </visual>
+    <visual>
+      <origin xyz="0.42 -0.301 0.162" rpy="0 0 0" />
+      <geometry>
+        <box size=".055 .008 .013" />
+      </geometry>
+      <material name="teal" />
+    </visual>
+    <visual>
+      <origin xyz="0.45 -0.27 0.145" rpy="0 0 0" />
+      <geometry>
+        <box size=".009 .045 .037" />
+      </geometry>
+      <material name="teal" />
+    </visual>
+    <visual>
+      <origin xyz="0.443 -0.29 0.159" rpy="0 0 0.6" />
+      <geometry>
+        <box size=".035 .008 .014" />
+      </geometry>
+      <material name="teal" />
+    </visual>
+    <visual>
+      <origin xyz="0.42 0.301 0.162" rpy="0 0 0" />
+      <geometry>
+        <box size=".055 .008 .013" />
+      </geometry>
+      <material name="teal" />
+    </visual>
+    <visual>
+      <origin xyz="0.45 0.27 0.145" rpy="0 0 0" />
+      <geometry>
+        <box size=".009 .045 .037" />
+      </geometry>
+      <material name="teal" />
+    </visual>
+    <visual>
+      <origin xyz="0.443 0.29 0.159" rpy="0 0 -0.6" />
+      <geometry>
+        <box size=".035 .008 .014" />
+      </geometry>
+      <material name="teal" />
+    </visual>
+    <visual>
+      <origin xyz="-0.477 0 0.092" rpy="0 0 0" />
+      <geometry>
+        <box size=".007 .29 .064" />
+      </geometry>
+      <material name="black" />
+    </visual>
+    <visual>
+      <origin xyz="-0.478 -0.045 0.092" rpy="0 1.5707963267948966 0" />
+      <geometry>
+        <cylinder radius=".012" length=".009" />
+      </geometry>
+      <material name="black" />
+    </visual>
+    <visual>
+      <origin xyz="-0.478 0.045 0.092" rpy="0 1.5707963267948966 0" />
+      <geometry>
+        <cylinder radius=".012" length=".009" />
+      </geometry>
+      <material name="black" />
+    </visual>
+    <visual>
+      <origin xyz="-0.475 -0.19 0.1" rpy="0 1.5707963267948966 0" />
+      <geometry>
+        <cylinder radius=".018" length=".005" />
+      </geometry>
+      <material name="yellow" />
+    </visual>
+    <visual>
+      <origin xyz="-0.475 -0.19 0.1" rpy="0 1.5707963267948966 0" />
+      <geometry>
+        <cylinder radius=".012" length=".014" />
+      </geometry>
+      <material name="red" />
+    </visual>
+    <visual>
+      <origin xyz="0.477 0 0.092" rpy="0 0 0" />
+      <geometry>
+        <box size=".007 .29 .064" />
+      </geometry>
+      <material name="black" />
+    </visual>
+    <visual>
+      <origin xyz="0.478 -0.045 0.092" rpy="0 1.5707963267948966 0" />
+      <geometry>
+        <cylinder radius=".012" length=".009" />
+      </geometry>
+      <material name="black" />
+    </visual>
+    <visual>
+      <origin xyz="0.478 0.045 0.092" rpy="0 1.5707963267948966 0" />
+      <geometry>
+        <cylinder radius=".012" length=".009" />
+      </geometry>
+      <material name="black" />
+    </visual>
+    <visual>
+      <origin xyz="0.475 -0.19 0.1" rpy="0 1.5707963267948966 0" />
+      <geometry>
+        <cylinder radius=".018" length=".005" />
+      </geometry>
+      <material name="yellow" />
+    </visual>
+    <visual>
+      <origin xyz="0.475 -0.19 0.1" rpy="0 1.5707963267948966 0" />
+      <geometry>
+        <cylinder radius=".012" length=".014" />
+      </geometry>
+      <material name="red" />
+    </visual>
+    <visual>
+      <origin xyz="0.25 -0.309 0.085" rpy="1.5707963267948966 0 0" />
+      <geometry>
+        <cylinder radius=".020" length=".002" />
+      </geometry>
+      <material name="yellow" />
+    </visual>
+    <visual>
+      <origin xyz="0.25 -0.309 0.085" rpy="1.5707963267948966 0 0" />
+      <geometry>
+        <cylinder radius=".014" length=".011" />
+      </geometry>
+      <material name="red" />
+    </visual>
+    <visual>
+      <origin xyz="0.25 0.309 0.085" rpy="1.5707963267948966 0 0" />
+      <geometry>
+        <cylinder radius=".020" length=".002" />
+      </geometry>
+      <material name="yellow" />
+    </visual>
+    <visual>
+      <origin xyz="0.25 0.309 0.085" rpy="1.5707963267948966 0 0" />
+      <geometry>
+        <cylinder radius=".014" length=".011" />
+      </geometry>
+      <material name="red" />
+    </visual>
+    <collision>
+      <origin xyz="0 0 .101" />
+      <geometry>
+        <box size=".9582 .6314 .162" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="footprint_to_base" type="fixed">
+    <parent link="base_footprint" />
+    <child link="base_link" />
+    <origin xyz="0 0 0" rpy="0 0 0" />
+  </joint>
+  <link name="drive_left_wheel">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <cylinder radius=".081" length=".045" />
+      </geometry>
+      <material name="black" />
+    </visual>
+    <visual>
+      <geometry>
+        <mesh filename="package://seer_sba400eu_description/meshes/drive_left_blue_ring.stl" />
+      </geometry>
+      <material name="blue" />
+    </visual>
+    <visual>
+      <origin xyz="0 0 -0.023" rpy="0 0 0" />
+      <geometry>
+        <cylinder radius=".052" length=".002" />
+      </geometry>
+      <material name="black" />
+    </visual>
+    <visual>
+      <origin xyz="0 0 0.023" rpy="0 0 0" />
+      <geometry>
+        <cylinder radius=".052" length=".002" />
+      </geometry>
+      <material name="black" />
+    </visual>
+  </link>
+  <joint name="drive_left_joint" type="continuous">
+    <parent link="base_link" />
+    <child link="drive_left_wheel" />
+    <origin xyz="0 0.2932 0.081" rpy="1.5707963267948966 0 0" />
+    <axis xyz="0 0 1" />
+  </joint>
+  <link name="left_logo_panel">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <box size=".17 .045 .004" />
+      </geometry>
+      <material name="blue" />
+    </visual>
+    <visual>
+      <origin xyz="-0.040499999999999994 0.0 0.0026" rpy="0 0 -0.8721365020734334" />
+      <geometry>
+        <box size="0.03264965543462902 .0025 .001" />
+      </geometry>
+      <material name="white" />
+    </visual>
+    <visual>
+      <origin xyz="-0.051 0.006250000000000002 0.0026" rpy="0 0 -1.5707963267948966" />
+      <geometry>
+        <box size="0.0125 .0025 .001" />
+      </geometry>
+      <material name="white" />
+    </visual>
+    <visual>
+      <origin xyz="-0.040499999999999994 0.0 0.0026" rpy="0 0 0.0" />
+      <geometry>
+        <box size="0.021 .0025 .001" />
+      </geometry>
+      <material name="white" />
+    </visual>
+    <visual>
+      <origin xyz="-0.029999999999999995 -0.00625 0.0026" rpy="0 0 -1.5707963267948966" />
+      <geometry>
+        <box size="0.0125 .0025 .001" />
+      </geometry>
+      <material name="white" />
+    </visual>
+    <visual>
+      <origin xyz="-0.040499999999999994 -0.0125 0.0026" rpy="0 0 0.0" />
+      <geometry>
+        <box size="0.021 .0025 .001" />
+      </geometry>
+      <material name="white" />
+    </visual>
+    <visual>
+      <origin xyz="-0.018999999999999996 0.0 0.0026" rpy="0 0 1.5707963267948966" />
+      <geometry>
+        <box size="0.025 .0025 .001" />
+      </geometry>
+      <material name="white" />
+    </visual>
+    <visual>
+      <origin xyz="-0.008499999999999995 0.0125 0.0026" rpy="0 0 0.0" />
+      <geometry>
+        <box size="0.021 .0025 .001" />
+      </geometry>
+      <material name="white" />
+    </visual>
+    <visual>
+      <origin xyz="-0.010599999999999995 0.0 0.0026" rpy="0 0 0.0" />
+      <geometry>
+        <box size="0.016800000000000002 .0025 .001" />
+      </geometry>
+      <material name="white" />
+    </visual>
+    <visual>
+      <origin xyz="-0.008499999999999995 -0.0125 0.0026" rpy="0 0 0.0" />
+      <geometry>
+        <box size="0.021 .0025 .001" />
+      </geometry>
+      <material name="white" />
+    </visual>
+    <visual>
+      <origin xyz="0.013000000000000005 0.0 0.0026" rpy="0 0 1.5707963267948966" />
+      <geometry>
+        <box size="0.025 .0025 .001" />
+      </geometry>
+      <material name="white" />
+    </visual>
+    <visual>
+      <origin xyz="0.023500000000000007 0.0125 0.0026" rpy="0 0 0.0" />
+      <geometry>
+        <box size="0.021 .0025 .001" />
+      </geometry>
+      <material name="white" />
+    </visual>
+    <visual>
+      <origin xyz="0.021400000000000006 0.0 0.0026" rpy="0 0 0.0" />
+      <geometry>
+        <box size="0.016800000000000002 .0025 .001" />
+      </geometry>
+      <material name="white" />
+    </visual>
+    <visual>
+      <origin xyz="0.023500000000000007 -0.0125 0.0026" rpy="0 0 0.0" />
+      <geometry>
+        <box size="0.021 .0025 .001" />
+      </geometry>
+      <material name="white" />
+    </visual>
+    <visual>
+      <origin xyz="0.045000000000000005 0.0 0.0026" rpy="0 0 1.5707963267948966" />
+      <geometry>
+        <box size="0.025 .0025 .001" />
+      </geometry>
+      <material name="white" />
+    </visual>
+    <visual>
+      <origin xyz="0.05550000000000001 0.0125 0.0026" rpy="0 0 0.0" />
+      <geometry>
+        <box size="0.021 .0025 .001" />
+      </geometry>
+      <material name="white" />
+    </visual>
+    <visual>
+      <origin xyz="0.066 0.006250000000000002 0.0026" rpy="0 0 -1.5707963267948966" />
+      <geometry>
+        <box size="0.0125 .0025 .001" />
+      </geometry>
+      <material name="white" />
+    </visual>
+    <visual>
+      <origin xyz="0.05550000000000001 0.0 0.0026" rpy="0 0 0.0" />
+      <geometry>
+        <box size="0.021 .0025 .001" />
+      </geometry>
+      <material name="white" />
+    </visual>
+    <visual>
+      <origin xyz="0.060750000000000005 -0.00625 0.0026" rpy="0 0 -0.8721365020734334" />
+      <geometry>
+        <box size="0.01632482771731451 .0025 .001" />
+      </geometry>
+      <material name="white" />
+    </visual>
+  </link>
+  <joint name="left_logo_mount" type="fixed">
+    <parent link="base_link" />
+    <child link="left_logo_panel" />
+    <origin xyz="-0.27 0.306 0.12" rpy="1.5707963267948966 0 0" />
+  </joint>
+  <link name="drive_right_wheel">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <cylinder radius=".081" length=".045" />
+      </geometry>
+      <material name="black" />
+    </visual>
+    <visual>
+      <geometry>
+        <mesh filename="package://seer_sba400eu_description/meshes/drive_right_blue_ring.stl" />
+      </geometry>
+      <material name="blue" />
+    </visual>
+    <visual>
+      <origin xyz="0 0 -0.023" rpy="0 0 0" />
+      <geometry>
+        <cylinder radius=".052" length=".002" />
+      </geometry>
+      <material name="black" />
+    </visual>
+    <visual>
+      <origin xyz="0 0 0.023" rpy="0 0 0" />
+      <geometry>
+        <cylinder radius=".052" length=".002" />
+      </geometry>
+      <material name="black" />
+    </visual>
+  </link>
+  <joint name="drive_right_joint" type="continuous">
+    <parent link="base_link" />
+    <child link="drive_right_wheel" />
+    <origin xyz="0 -0.2932 0.081" rpy="1.5707963267948966 0 0" />
+    <axis xyz="0 0 1" />
+  </joint>
+  <link name="right_logo_panel">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <box size=".17 .045 .004" />
+      </geometry>
+      <material name="blue" />
+    </visual>
+    <visual>
+      <origin xyz="-0.040499999999999994 0.0 0.0026" rpy="0 0 -0.8721365020734334" />
+      <geometry>
+        <box size="0.03264965543462902 .0025 .001" />
+      </geometry>
+      <material name="white" />
+    </visual>
+    <visual>
+      <origin xyz="-0.051 0.006250000000000002 0.0026" rpy="0 0 -1.5707963267948966" />
+      <geometry>
+        <box size="0.0125 .0025 .001" />
+      </geometry>
+      <material name="white" />
+    </visual>
+    <visual>
+      <origin xyz="-0.040499999999999994 0.0 0.0026" rpy="0 0 0.0" />
+      <geometry>
+        <box size="0.021 .0025 .001" />
+      </geometry>
+      <material name="white" />
+    </visual>
+    <visual>
+      <origin xyz="-0.029999999999999995 -0.00625 0.0026" rpy="0 0 -1.5707963267948966" />
+      <geometry>
+        <box size="0.0125 .0025 .001" />
+      </geometry>
+      <material name="white" />
+    </visual>
+    <visual>
+      <origin xyz="-0.040499999999999994 -0.0125 0.0026" rpy="0 0 0.0" />
+      <geometry>
+        <box size="0.021 .0025 .001" />
+      </geometry>
+      <material name="white" />
+    </visual>
+    <visual>
+      <origin xyz="-0.018999999999999996 0.0 0.0026" rpy="0 0 1.5707963267948966" />
+      <geometry>
+        <box size="0.025 .0025 .001" />
+      </geometry>
+      <material name="white" />
+    </visual>
+    <visual>
+      <origin xyz="-0.008499999999999995 0.0125 0.0026" rpy="0 0 0.0" />
+      <geometry>
+        <box size="0.021 .0025 .001" />
+      </geometry>
+      <material name="white" />
+    </visual>
+    <visual>
+      <origin xyz="-0.010599999999999995 0.0 0.0026" rpy="0 0 0.0" />
+      <geometry>
+        <box size="0.016800000000000002 .0025 .001" />
+      </geometry>
+      <material name="white" />
+    </visual>
+    <visual>
+      <origin xyz="-0.008499999999999995 -0.0125 0.0026" rpy="0 0 0.0" />
+      <geometry>
+        <box size="0.021 .0025 .001" />
+      </geometry>
+      <material name="white" />
+    </visual>
+    <visual>
+      <origin xyz="0.013000000000000005 0.0 0.0026" rpy="0 0 1.5707963267948966" />
+      <geometry>
+        <box size="0.025 .0025 .001" />
+      </geometry>
+      <material name="white" />
+    </visual>
+    <visual>
+      <origin xyz="0.023500000000000007 0.0125 0.0026" rpy="0 0 0.0" />
+      <geometry>
+        <box size="0.021 .0025 .001" />
+      </geometry>
+      <material name="white" />
+    </visual>
+    <visual>
+      <origin xyz="0.021400000000000006 0.0 0.0026" rpy="0 0 0.0" />
+      <geometry>
+        <box size="0.016800000000000002 .0025 .001" />
+      </geometry>
+      <material name="white" />
+    </visual>
+    <visual>
+      <origin xyz="0.023500000000000007 -0.0125 0.0026" rpy="0 0 0.0" />
+      <geometry>
+        <box size="0.021 .0025 .001" />
+      </geometry>
+      <material name="white" />
+    </visual>
+    <visual>
+      <origin xyz="0.045000000000000005 0.0 0.0026" rpy="0 0 1.5707963267948966" />
+      <geometry>
+        <box size="0.025 .0025 .001" />
+      </geometry>
+      <material name="white" />
+    </visual>
+    <visual>
+      <origin xyz="0.05550000000000001 0.0125 0.0026" rpy="0 0 0.0" />
+      <geometry>
+        <box size="0.021 .0025 .001" />
+      </geometry>
+      <material name="white" />
+    </visual>
+    <visual>
+      <origin xyz="0.066 0.006250000000000002 0.0026" rpy="0 0 -1.5707963267948966" />
+      <geometry>
+        <box size="0.0125 .0025 .001" />
+      </geometry>
+      <material name="white" />
+    </visual>
+    <visual>
+      <origin xyz="0.05550000000000001 0.0 0.0026" rpy="0 0 0.0" />
+      <geometry>
+        <box size="0.021 .0025 .001" />
+      </geometry>
+      <material name="white" />
+    </visual>
+    <visual>
+      <origin xyz="0.060750000000000005 -0.00625 0.0026" rpy="0 0 -0.8721365020734334" />
+      <geometry>
+        <box size="0.01632482771731451 .0025 .001" />
+      </geometry>
+      <material name="white" />
+    </visual>
+  </link>
+  <joint name="right_logo_mount" type="fixed">
+    <parent link="base_link" />
+    <child link="right_logo_panel" />
+    <origin xyz="-0.27 -0.306 0.12" rpy="1.5707963267948966 0 0" />
+  </joint>
+  <link name="caster_r_r">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <cylinder radius=".028" length=".035" />
+      </geometry>
+      <material name="black" />
+    </visual>
+  </link>
+  <joint name="mount_caster_r_r" type="fixed">
+    <parent link="base_link" />
+    <child link="caster_r_r" />
+    <origin xyz="-0.35 -0.22 0.028" rpy="1.5707963267948966 0 0" />
+  </joint>
+  <link name="caster_r_l">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <cylinder radius=".028" length=".035" />
+      </geometry>
+      <material name="black" />
+    </visual>
+  </link>
+  <joint name="mount_caster_r_l" type="fixed">
+    <parent link="base_link" />
+    <child link="caster_r_l" />
+    <origin xyz="-0.35 0.22 0.028" rpy="1.5707963267948966 0 0" />
+  </joint>
+  <link name="caster_f_r">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <cylinder radius=".028" length=".035" />
+      </geometry>
+      <material name="black" />
+    </visual>
+  </link>
+  <joint name="mount_caster_f_r" type="fixed">
+    <parent link="base_link" />
+    <child link="caster_f_r" />
+    <origin xyz="0.35 -0.22 0.028" rpy="1.5707963267948966 0 0" />
+  </joint>
+  <link name="caster_f_l">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <cylinder radius=".028" length=".035" />
+      </geometry>
+      <material name="black" />
+    </visual>
+  </link>
+  <joint name="mount_caster_f_l" type="fixed">
+    <parent link="base_link" />
+    <child link="caster_f_l" />
+    <origin xyz="0.35 0.22 0.028" rpy="1.5707963267948966 0 0" />
+  </joint>
+  <link name="lidar_1_link">
+    <visual>
+      <origin xyz="0 0 0.001" rpy="0 0 0" />
+      <geometry>
+        <box size=".072 .072 .033" />
+      </geometry>
+      <material name="black" />
+    </visual>
+    <visual>
+      <origin xyz="0 0 0.028" rpy="0 0 0" />
+      <geometry>
+        <cylinder radius=".037" length=".031" />
+      </geometry>
+      <material name="black" />
+    </visual>
+    <visual>
+      <origin xyz="0.002 -0.036 -0.007" rpy="0 0 0" />
+      <geometry>
+        <box size=".060 .004 .009" />
+      </geometry>
+      <material name="yellow" />
+    </visual>
+  </link>
+  <joint name="lidar_1_mount" type="fixed">
+    <parent link="base_link" />
+    <child link="lidar_1_link" />
+    <origin xyz="0.36 -0.235 0.1965" rpy="0 0 -0.7853981633974483" />
+  </joint>
+  <link name="lidar_2_link">
+    <visual>
+      <origin xyz="0 0 0.001" rpy="0 0 0" />
+      <geometry>
+        <box size=".072 .072 .033" />
+      </geometry>
+      <material name="black" />
+    </visual>
+    <visual>
+      <origin xyz="0 0 0.028" rpy="0 0 0" />
+      <geometry>
+        <cylinder radius=".037" length=".031" />
+      </geometry>
+      <material name="black" />
+    </visual>
+    <visual>
+      <origin xyz="0.002 -0.036 -0.007" rpy="0 0 0" />
+      <geometry>
+        <box size=".060 .004 .009" />
+      </geometry>
+      <material name="yellow" />
+    </visual>
+  </link>
+  <joint name="lidar_2_mount" type="fixed">
+    <parent link="base_link" />
+    <child link="lidar_2_link" />
+    <origin xyz="-0.36 0.235 0.1965" rpy="0 0 2.356194490192345" />
+  </joint>
+  <link name="arm_mount_link" />
+  <joint name="arm_mount_joint" type="fixed">
+    <parent link="base_link" />
+    <child link="arm_mount_link" />
+    <origin xyz="0 0 0.182" rpy="0 0 0" />
+  </joint>
+</robot>

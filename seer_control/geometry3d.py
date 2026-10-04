@@ -39,7 +39,7 @@ def box(size):
     return [tuple(vertices[i] for i in face) for face in [(0,3,2,1),(4,5,6,7),(0,1,5,4),(1,2,6,5),(2,3,7,6),(3,0,4,7)]]
 
 
-def cylinder(radius,length,steps=12):
+def cylinder(radius,length,steps=64):
     rings=[[(radius*math.cos(i*2*math.pi/steps),radius*math.sin(i*2*math.pi/steps),z) for i in range(steps)] for z in (-length/2,length/2)]
     return [tuple(reversed(rings[0])),tuple(rings[1])]+[(rings[0][i],rings[0][(i+1)%steps],rings[1][(i+1)%steps],rings[1][i]) for i in range(steps)]
 
@@ -112,11 +112,11 @@ def load_mesh(path,max_faces=3000):
     else:raise ValueError('미리보기 메시 형식: STL / OBJ. STEP/IGES는 STL/OBJ로 내보내세요.')
     if not faces or not all(math.isfinite(v) for face in faces for p in face for v in p):raise ValueError('유효한 3D 면이 없습니다.')
     count=len(faces)
-    return MeshAsset(path.name,simplify_faces(faces,max_faces),count)
+    return MeshAsset(path.name,simplify_faces(faces,max_faces),count,faces)
 
 
 class MeshAsset:
-    def __init__(self,name,faces,total=None):self.name=name;self.faces=faces;self.total=total or len(faces)
+    def __init__(self,name,faces,total=None,full_faces=None):self.name=name;self.faces=faces;self.total=total or len(faces);self.full_faces=full_faces or faces
     def draw_faces(self,world=identity(),scale=(1,1,1),color='#b7c4d3'):
         return [(tuple(point(world,tuple(p[i]*scale[i] for i in range(3))) for p in face),color,self.name) for face in self.faces]
 
@@ -124,7 +124,7 @@ class MeshAsset:
 class RobotDescription:
     def __init__(self,name,links,joints,roots):
         self.name,self.links,self.joints,self.roots=name,links,joints,roots
-        self.warnings=[];self.synthetic=False
+        self.warnings=[];self.synthetic=False;self.full_visuals={}
 
     @classmethod
     def load(cls,path,asset_root=None):
@@ -133,7 +133,7 @@ class RobotDescription:
         try:root=ET.fromstring(path.read_text(encoding='utf-8-sig'))
         except ET.ParseError as error:raise ValueError('URDF XML 형식 오류: '+str(error)) from error
         if root.tag!='robot':raise ValueError('robot 요소를 포함한 URDF가 필요합니다. Xacro는 URDF로 변환하세요.')
-        links={};joints=[];warnings=[]
+        links={};joints=[];warnings=[];full_visuals={}
         materials={e.get('name'):e.find('color').get('rgba') for e in root.findall('material') if e.find('color') is not None}
         def origin(element):
             e=element.find('origin')
@@ -151,6 +151,7 @@ class RobotDescription:
                 color='#e9ac42'
                 if rgba:
                     values=vector(rgba,4);color='#'+''.join(f'{round(max(0,min(1,v))*255):02x}' for v in values[:3])
+                full=None
                 try:
                     e=geometry.find('box')
                     if e is not None:
@@ -178,10 +179,12 @@ class RobotDescription:
                         if resolved is None:raise ValueError('메시 파일을 찾지 못했습니다: '+filename)
                         mesh=load_mesh(resolved,max_faces=320)
                         faces=[tuple(tuple(p[i]*scale[i] for i in range(3)) for p in face) for face in mesh.faces]
+                        full=[tuple(tuple(p[i]*scale[i] for i in range(3)) for p in face) for face in mesh.full_faces]
                         if mesh.total>len(mesh.faces):warnings.append(f'{name}: 메시 단순화 {mesh.total} → {len(mesh.faces)}면')
                     else:raise ValueError('지원하지 않는 geometry입니다.')
                 except (ValueError,OSError,UnicodeError,TypeError) as error:
                     warnings.append(f'{name}: {error}');continue
+                if full is not None:full_visuals[(name,len(visuals))]=full
                 visuals.append((faces,origin(visual),color))
             links[name]=visuals
         if not links:raise ValueError('URDF link가 없습니다.')
@@ -208,7 +211,10 @@ class RobotDescription:
             joint["axis"]=tuple(v/length for v in joint["axis"])
         roots=[name for name in links if name not in child_links]
         if len(roots)!=1:raise ValueError('URDF는 하나의 root link를 가진 트리여야 합니다.')
-        model=cls(root.get('name',path.stem),links,joints,roots);model.warnings=warnings
+        model=cls(root.get('name',path.stem),links,joints,roots);model.warnings=warnings;model.full_visuals=full_visuals
+        if model.name=='fairino5_v6_robot':
+            from .visual_materials import style_fr5
+            style_fr5(model)
         if len(model.link_transforms({}))!=len(links):raise ValueError('URDF link에 순환 또는 끊어진 연결이 있습니다.')
         if any(not math.isfinite(j['lower']+j['upper']+j['multiplier']+j['offset']) or j['lower']>j['upper'] for j in joints):raise ValueError('URDF 관절 범위가 비정상입니다.')
         return model
