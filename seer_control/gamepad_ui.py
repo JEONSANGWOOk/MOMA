@@ -4,6 +4,7 @@ import time
 import tkinter as tk
 from tkinter import ttk
 from .gamepad import WindowsPad,PadGate,AXES
+from .manual_safety import controller_manual_reason
 from .theme import PANEL,MUTED,INK,BLUE
 
 
@@ -57,7 +58,7 @@ class GamepadMixin:
         allowed=(self.pad_enabled.get() and self.manual.get() and self.connected and
                  self.tabs.select()==str(self.operation_page) and focus is not None and focus.winfo_toplevel()==self and
                  not self.reloc_mode and not self.task_running and not self.studio_runner.active and self.studio_arm_safe)
-        allowed=allowed and (not self.real and self.sim_powered or self.real and self.control_enabled and now-self.last_state<=3 and self.live.get('emergency') is not True)
+        allowed=allowed and (not self.real and self.sim_powered or self.real and self.control_enabled and now-self.last_state<=3 and not controller_manual_reason(self.live,self.last_state,now))
         try:v,w,stop,status=self.pad_gate.evaluate(sample,now,allowed,**self.pad_config)
         except (ValueError,TypeError):
             self.pad_gate.reset();v,w,stop,status=0.,0.,False,'컨트롤러 입력 오류'
@@ -78,7 +79,7 @@ class GamepadMixin:
                     with self._jog_lock:self._jog_desired=dict(vx=motion[0],vy=0.,w=motion[1],_expires=now+.25)
                 else:
                     self.sim.drive(*motion);self.held=('gamepad',motion)
-            except (ValueError,TypeError):self._pad_stop();self.pad_gate.reset();status='수동 속도 설정을 확인하세요.'
+            except (ValueError,TypeError) as e:self._pad_stop();self.pad_gate.reset();status=str(e)
         if not allowed and sample and not stop:
             if not self.pad_enabled.get():status='조이스틱 사용을 켜세요.'
             elif not self.manual.get():status='수동 조작 활성화를 켜세요.'

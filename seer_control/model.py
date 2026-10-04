@@ -173,7 +173,7 @@ class Simulator:
         self.reroute_wait_s=5.;self.reroute_attempt_limit=3
         self._reroute_block_at=None;self._reroute_failures=0;self._reroute_forced=False
         self.skipped_goals={};self.skip_result=None;self._skipped_context=None
-        self._obstacle_latched=False
+        self._obstacle_latched=False;self._manual_stop_reason=''
         self.collision_radius=0.
         self.avoidance_status=''
         self._avoid_time=0.;self._avoid_next=0.
@@ -339,14 +339,28 @@ class Simulator:
             raise ValueError('장애물을 해제하세요.')
 
     def drive(self, v, w):
+        from .manual_safety import manual_motion_reason
+        # A rejected forward jog must not prevent a checked retreat.
+        if self._collision_blocked and not self._obstacle_latched:self.state.blocked=False
         self._ready()
         if self.route:
             raise ValueError('Task를 취소한 뒤 수동 조작하세요.')
-        self.v, self.w, self.lease = max(-.3, min(.3, v)), max(-.6, min(.6, w)), .3
+        v,w=max(-.3,min(.3,v)),max(-.6,min(.6,w))
+        radius=max(self.map.robot_model['radius'],self.collision_radius)
+        reason=manual_motion_reason(self.map,(self.state.x,self.state.y,self.state.theta),v,w,radius)
+        if reason:
+            self.v=self.w=self.lease=0.;self.state.speed=0.
+            self.state.blocked=True;self._collision_blocked=True;self.block_reason=reason;self._manual_stop_reason=reason
+            self.avoidance_status='수동 조작 차단 · '+reason
+            raise ValueError('수동 조작 차단 · '+reason)
+        self.state.blocked=False;self._collision_blocked=False;self.block_reason='';self._manual_stop_reason=''
+        self.v, self.w, self.lease = v,w,.3
         self.state.charging = False
         self.state.mode = 'MANUAL'
 
     def stop(self, latch=False):
+        if self._manual_stop_reason:
+            self.state.blocked=False;self._collision_blocked=False;self._manual_stop_reason='';self.block_reason=''
         self._skipped_context=None
         if self._obstacle_latched:self.state.blocked=False
         self._obstacle_latched=False
@@ -476,7 +490,7 @@ class Simulator:
         if self._obstacle_latched:
             s.blocked=True;self._velocity=0.;self.v=self.w=self.lease=0.
             self.avoidance_status='장애물 정지 유지 · 수동 재개 필요';return
-        if self._collision_blocked:
+        if self._collision_blocked and not self._manual_stop_reason:
             s.blocked=False;self._collision_blocked=False;self.block_reason=''
         self._charge_tick()
         if s.stopped or not s.motor or s.blocked:
@@ -682,19 +696,28 @@ class Simulator:
                 self._arrive(n,dt)
                 if not self.route:self.avoidance_status='목적지 도착'
         elif self.lease > 0:
+            from .manual_safety import manual_motion_reason,arc_pose
+            radius=max(self.map.robot_model['radius'],self.collision_radius)
+            reason=manual_motion_reason(self.map,(s.x,s.y,s.theta),self.v,self.w,radius)
+            if reason:
+                self.v=self.w=self.lease=0.;s.speed=0.;s.blocked=True
+                self._collision_blocked=True;self.block_reason=reason;self._manual_stop_reason=reason
+                self.avoidance_status='수동 조작 차단 · '+reason
+                return
             self.lease -= dt
             if self.lease <= 0:
                 self.v = self.w = 0
                 s.mode = 'IDLE'
-            s.theta = math.atan2(math.sin(s.theta+self.w*dt), math.cos(s.theta+self.w*dt))
             old_xy=(s.x,s.y)
+            old_pose=(s.x,s.y,s.theta)
             scale=getattr(self.map,'robot_model',DEFAULT_MODEL)['wheel_scale']
-            s.x += self.v*dt*scale*math.cos(s.theta)
-            s.y += self.v*dt*scale*math.sin(s.theta)
+            s.x,s.y,s.theta=arc_pose(old_pose,self.v,self.w,dt,scale)
+            s.theta=math.atan2(math.sin(s.theta),math.cos(s.theta))
             s.speed = self.v
             _,reason=path_clearance(self.map,old_xy,[(s.x,s.y)],max(getattr(self.map,'robot_model',DEFAULT_MODEL)['radius'],self.collision_radius),math.dist(old_xy,(s.x,s.y)))
             if reason:
                 s.x,s.y=old_xy
+                self.v=self.w=self.lease=0.
                 self._collision_blocked=True;s.blocked=True;self.block_reason=reason;s.speed=0
         else:
             self.v = self.w = 0

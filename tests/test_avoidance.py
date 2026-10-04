@@ -66,7 +66,9 @@ class AvoidanceTests(unittest.TestCase):
     def test_wall_blocks_manual_motion_and_large_footprint(self):
         m=fixture(walls=[[1,-2,1,2]]);s=Simulator(m);s.collision_radius=.6
         for _ in range(100):
-            if not s.state.blocked:s.drive(.3,0)
+            if not s.state.blocked:
+                try:s.drive(.3,0)
+                except ValueError:self.assertTrue(s.state.blocked)
             s.tick(.1)
         self.assertLessEqual(s.state.x,.4);self.assertEqual(s.state.speed,0)
     def test_unreachable_avoid_waits_without_crossing_wall(self):

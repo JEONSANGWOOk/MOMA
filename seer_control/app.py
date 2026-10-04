@@ -21,6 +21,7 @@ from .studio_ui import StudioMixin
 from .spatial_ui import SpatialMixin
 from .gamepad_ui import GamepadMixin
 from .gamepad import jog_packet
+from .manual_safety import controller_manual_reason
 from .studio_core import ACTION_DEFAULTS, validate_actions, point_segment_distance
 from .location import LocationTracker
 from .mission_preview import MissionMapPreview
@@ -54,7 +55,7 @@ def _shape_summary(value, depth=0):
 class Console(UIScaleMixin, GamepadMixin, SpatialMixin, StudioMixin, tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title('AMR Control Studio | MoMa Standalone · v1.15 Workspace')
+        self.title('AMR Control Studio | MoMa Standalone · v1.16 Workspace')
         # Responsive startup size: fit the active monitor instead of assuming one fixed resolution.
         sw=self.winfo_screenwidth(); sh=self.winfo_screenheight()
         start_w=min(1600,int(sw*.94))
@@ -1073,6 +1074,8 @@ class Console(UIScaleMixin, GamepadMixin, SpatialMixin, StudioMixin, tk.Tk):
             while not stop.is_set():
                 with self._jog_lock:
                     desired = jog_packet(self._jog_desired,time.monotonic())
+                    if desired is not None and controller_manual_reason(self.live,self.last_state,time.monotonic()):
+                        self._jog_desired=None;desired=None
                 if desired is not None:
                     try:
                         started=time.monotonic()
@@ -1980,8 +1983,11 @@ class Console(UIScaleMixin, GamepadMixin, SpatialMixin, StudioMixin, tk.Tk):
                     raise ValueError('상태 데이터가 오래되어 수동 조작하지 않습니다.')
                 if self.live.get('emergency') is True:
                     raise ValueError('하드웨어 비상정지가 활성화되어 있습니다.')
-                # Do not suppress the packet solely from cached BLOCKED state. The robot controller
-                # remains the final safety authority and will reject/limit unsafe motion itself.
+                reason=controller_manual_reason(self.live,self.last_state,time.monotonic())
+                if reason:
+                    self.release_drive(force=True)
+                    self.command_status.config(text='수동 정지 · '+reason,fg=ORANGE)
+                    self.log('JOG','수동 조작 차단 · '+reason);return
                 self.held=(direction,motion)
                 desired={'vx':motion[0],'vy':0.0,'w':motion[1]}
                 with self._jog_lock:
@@ -1994,7 +2000,13 @@ class Console(UIScaleMixin, GamepadMixin, SpatialMixin, StudioMixin, tk.Tk):
                 if self.task_running:
                     raise ValueError('Task 실행을 취소한 뒤 수동 조작하세요.')
                 self.held=(direction,motion)
-                self.sim.drive(*motion)
+                try:self.sim.drive(*motion)
+                except ValueError:
+                    self.release_drive()
+                    if not self.sim._manual_stop_reason:raise
+                    text='수동 정지 · '+self.sim._manual_stop_reason
+                    if self.command_status.cget('text')!=text:self.log('JOG',text)
+                    self.command_status.config(text=text,fg=ORANGE)
         self.guarded(press)
 
     def release_drive(self,event=None,force=False):

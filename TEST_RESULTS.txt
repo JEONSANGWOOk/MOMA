@@ -1,3 +1,4 @@
+v1.16: 247 unit tests PASS; manual forward/backward/arc, static/dynamic obstacle, full footprint, virtual wall/forbidden area, safe retreat, no automatic resume and controller interlocks. Manual GUI PASS.
 v1.15: 239 unit tests PASS; nearest original-line rejoin, straight remainder, reference preservation, stale-reference endpoint rejection, obstacle moving away and runtime short merge. SIM bypass GUI PASS.
 v1.14.1: 233 unit tests PASS; hidden actor future metadata is never read and does not affect decisions; configured speed is not used as observed velocity.
 v1.14: 231 unit tests PASS; crossing-person prediction, observed velocity, speed-aware alternative route, risk/turn cost, physical clearance and stationary watchdog. SIM bypass/report GUI PASS.
