@@ -1,5 +1,6 @@
 """Orbitable 3D world viewport using Tk's software polygon renderer."""
 import math
+from pathlib import Path
 import tkinter as tk
 from .geometry3d import RobotDescription, MeshAsset, load_mesh, box, cylinder, transform, multiply, point, identity
 from .smap import path_record_geometry
@@ -56,7 +57,7 @@ class WorldView3D(tk.Canvas):
         super().__init__(parent,bg='#dce5ef',highlightthickness=0)
         self.app=app;self.camera=Camera();self.fitted=None;self.drag=None
         self.arm_asset=RobotDescription.load(demo_path);self.arm_asset.synthetic=True
-        self.body_asset=RobotDescription.load(demo_path.parent/'seer_amb_csw04_ce.urdf');self.cad_asset=None
+        self.body_asset=RobotDescription.load(Path(__file__).resolve().parents[1]/'examples/seer_amb_csw04_ce.urdf');self.cad_asset=None
         self.scales={'arm':1.,'amr':1.,'cad':1.}
         self.positions={'arm':{},'amr':{},'cad':{}}
         self.mount=[0.,0.,.308,0.,0.,0.];self.cad_origin=[0.,0.,0.,0.,0.,0.]
@@ -139,7 +140,7 @@ class WorldView3D(tk.Canvas):
                 if type(value) in (int,float) and math.isfinite(value):values[joint['name']]=value
             self.arm_source='수신 관절값'
         elif self.arm_follow.get() and asset.synthetic and not self.app.real:
-            if asset.name.startswith('FAIRINO FR5'):
+            if (asset.name.startswith('FAIRINO FR5') or asset.name=='fairino5_v6_robot'):
                 safe=[0.,-1.57,1.57,-1.57,-1.57,0.];work=[.7,-1.,.9,-1.4,-1.2,.4]
             else:safe=[0.,-.35,.7,0.,.5,0.];work=[.9,-1.15,1.3,.8,.8,.4]
             operation=arm.get('operation','');key=(operation,arm.get('status'))

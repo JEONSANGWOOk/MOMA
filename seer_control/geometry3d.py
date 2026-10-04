@@ -54,6 +54,32 @@ def sphere(radius):
     return faces
 
 
+def simplify_faces(faces,budget):
+    """Merge nearby vertices rather than dropping independent surface triangles."""
+    if len(faces)<=budget:return faces
+    vertices=set(p for face in faces for p in face)
+    lo=[min(p[i] for p in vertices) for i in range(3)];hi=[max(p[i] for p in vertices) for i in range(3)]
+    extent=max(b-a for a,b in zip(lo,hi))
+    if extent<=1e-12:return faces[:budget]
+    best=faces
+    for resolution in (80,60,45,32,24,18,12,8,5,3):
+        size=extent/resolution;cells={};keys={}
+        for p in vertices:
+            key=tuple(round((p[i]-lo[i])/size) for i in range(3));keys[p]=key
+            sums,count=cells.get(key,([0.,0.,0.],0));cells[key]=([a+b for a,b in zip(sums,p)],count+1)
+        centers={key:tuple(v/count for v in sums) for key,(sums,count) in cells.items()}
+        result=[];seen=set()
+        for face in faces:
+            ids=tuple(keys[p] for p in face)
+            if len(set(ids))<3:continue
+            canonical=tuple(sorted(ids))
+            if canonical in seen:continue
+            seen.add(canonical);result.append(tuple(centers[key] for key in ids))
+        if result:best=result
+        if result and len(result)<=budget:return result
+    return best[:budget]
+
+
 def load_mesh(path,max_faces=3000):
     path=Path(path)
     if path.stat().st_size>64*1024*1024:raise ValueError('3D 미리보기 파일은 64 MB 이하로 가져오세요.')
@@ -86,8 +112,7 @@ def load_mesh(path,max_faces=3000):
     else:raise ValueError('미리보기 메시 형식: STL / OBJ. STEP/IGES는 STL/OBJ로 내보내세요.')
     if not faces or not all(math.isfinite(v) for face in faces for p in face for v in p):raise ValueError('유효한 3D 면이 없습니다.')
     count=len(faces)
-    stride=max(1,math.ceil(count/max_faces))
-    return MeshAsset(path.name,faces[::stride],count)
+    return MeshAsset(path.name,simplify_faces(faces,max_faces),count)
 
 
 class MeshAsset:
@@ -151,7 +176,7 @@ class RobotDescription:
                         else:candidates=[path.parent/filename]
                         resolved=next((candidate for candidate in candidates if candidate.is_file()),None)
                         if resolved is None:raise ValueError('메시 파일을 찾지 못했습니다: '+filename)
-                        mesh=load_mesh(resolved,max_faces=1200)
+                        mesh=load_mesh(resolved,max_faces=320)
                         faces=[tuple(tuple(p[i]*scale[i] for i in range(3)) for p in face) for face in mesh.faces]
                         if mesh.total>len(mesh.faces):warnings.append(f'{name}: 메시 단순화 {mesh.total} → {len(mesh.faces)}면')
                     else:raise ValueError('지원하지 않는 geometry입니다.')

@@ -55,7 +55,7 @@ def _shape_summary(value, depth=0):
 class Console(UIScaleMixin, GamepadMixin, SpatialMixin, StudioMixin, tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title('AMR Control Studio | MoMa Standalone · v1.20 Workspace')
+        self.title('AMR Control Studio | MoMa Standalone · v1.21 Workspace')
         # Responsive startup size: fit the active monitor instead of assuming one fixed resolution.
         sw=self.winfo_screenwidth(); sh=self.winfo_screenheight()
         start_w=min(1600,int(sw*.94))

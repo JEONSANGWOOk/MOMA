@@ -65,19 +65,22 @@ class ArmWorkspaceMixin:
    'safe_pose':dict(method='MoveJ',target=[0,-90,90,-90,-90,0],vel=20,tool=0,user=0),
    'demo_a':dict(method='MoveJ',target=[30,-100,100,-90,-70,20],vel=20,tool=0,user=0),
    'demo_b':dict(method='MoveJ',target=[-30,-80,70,-100,-100,-20],vel=20,tool=0,user=0)},programs={'관절 이동 예제':[dict(operation=n,timeout_s=60) for n in ('safe_pose','demo_a','demo_b','safe_pose')]})
+  selected=saved.get('urdf') or str(self._spatial_demo_path())
+  legacy=Path(__file__).resolve().parents[1]/'examples/fairino_fr5.urdf'
+  if Path(selected).resolve()==legacy.resolve():selected=str(self._spatial_demo_path())
   try:
    if saved.get('operations') is not None:cfg.update(operations=saved['operations'],programs=saved.get('programs',{}));validate(cfg)
-   asset=RobotDescription.load(saved.get('urdf') or self._spatial_demo_path())
+   asset=RobotDescription.load(selected)
   except Exception as e:
    self.log('ERROR','로봇팔 개발 설정 복원 실패: '+str(e));asset=RobotDescription.load(self._spatial_demo_path());cfg=profile()
-  self.arm_dev_config=cfg;self.arm_dev_urdf=saved.get('urdf') or str(self._spatial_demo_path());self.arm_dev_sim=ArmSimulator(asset)
+  self.arm_dev_config=cfg;self.arm_dev_urdf=selected;self.arm_dev_sim=ArmSimulator(asset)
   initial=saved.get('joints_rad',[math.radians(v) for v in [0,-90,90,-90,-90,0]] if len(asset.movable())==6 else [0]*len(asset.movable()))
   try:self.arm_dev_sim.q=self.arm_dev_sim.kin.clamp(initial)
   except ValueError:self.log('WARN','저장된 관절값을 복원하지 못해 모델 초기값을 사용합니다.')
   row=self._studio_row(page)
   self.label(row,'로봇팔 전용 3D 시뮬레이션',11,INK,True,bg=PANEL).pack(side='left',padx=4)
-  for title,fn in [('URDF 가져오기',self._aw_load_urdf),('API 작업 가져오기',self._aw_copy_api),('실기 API 개발',self._fr5_development),('설정 저장',self._aw_save)]:self.button(row,title,lambda f=fn:self.guarded(f)).pack(side='left',padx=3)
-  self._studio_note(page,'AMR 연결 없이 사용 · 이 화면의 관절/재생/I/O는 SIM 전용 · 기본 FR5는 형상 미리보기 모델이며 실기 좌표·충돌 검증을 대체하지 않습니다.')
+  for title,fn in [('공식 FR5 모델',self._aw_official_model),('URDF 가져오기',self._aw_load_urdf),('API 작업 가져오기',self._aw_copy_api),('실기 API 개발',self._fr5_development),('설정 저장',self._aw_save)]:self.button(row,title,lambda f=fn:self.guarded(f)).pack(side='left',padx=3)
+  self._studio_note(page,'AMR 연결 없이 사용 · 이 화면의 관절/재생/I/O는 SIM 전용 · 설치된 공식 FR5 ROS2 모델 사용 가능 · 실기 TCP 좌표·충돌 검증은 별도입니다.')
   pane=ttk.Panedwindow(page,orient='horizontal');pane.pack(fill='both',expand=True,padx=8,pady=4)
   left=ttk.Frame(pane);right=ttk.Frame(pane);pane.add(left,weight=3);pane.add(right,weight=2)
   row=self._studio_row(left);camera=tk.StringVar(value='사선')
@@ -196,6 +199,26 @@ class ArmWorkspaceMixin:
   if not path:return
   asset=RobotDescription.load(path);self.arm_dev_sim=ArmSimulator(asset);self.arm_dev_canvas.sim=self.arm_dev_sim;self.arm_dev_urdf=path;self._aw_joint_controls();self.arm_dev_canvas.fit()
   if asset.warnings:self.log('WARN','URDF: '+'; '.join(asset.warnings))
+ def _aw_use_official(self,path):
+  if self.arm_dev_sim.state in ('RUNNING','PAUSED') or self.studio_runner.active:raise ValueError('현재 작업을 정지한 뒤 공식 모델을 적용하세요.')
+  asset=RobotDescription.load(path);previous=list(self.arm_dev_sim.q)
+  self.arm_dev_sim=ArmSimulator(asset);self.arm_dev_sim.q=self.arm_dev_sim.kin.clamp(previous if len(previous)==6 else [0]*6)
+  self.arm_dev_canvas.sim=self.arm_dev_sim;self.arm_dev_urdf=str(path);self._aw_joint_controls();self.arm_dev_display_q=None;self.arm_dev_canvas.fit();self._aw_save()
+  # Apply the same model in the AMR + arm viewer without transmitting hardware commands.
+  old_joints=self.world3d.arm_asset.movable();old_values=self.sim.arm.get('joint_positions',{})
+  self.world3d.load_asset('arm',path);self.world3d.positions['arm']=self.arm_dev_sim.kin.positions(self.arm_dev_sim.q)
+  if old_values and len(old_joints)==6:
+   self.sim.arm['joint_positions']={new['name']:old_values.get(old['name'],0.) for old,new in zip(old_joints,asset.movable())}
+  self.spatial_assets['arm']=dict(path=str(path),root='',scale=1.)
+  self._spatial_save();self.log('MODEL','공식 FR5 ROS2 모델 적용: '+str(path))
+ def _aw_official_model(self):
+  if self.arm_dev_sim.state in ('RUNNING','PAUSED') or self.studio_runner.active:raise ValueError('작업을 정지한 뒤 모델을 변경하세요.')
+  from .fairino_model import installed,install
+  from .app import USER_DIR
+  path=installed(USER_DIR)
+  if path:self._aw_use_official(path);return
+  self.log('INFO','FAIRINO 공식 FR5 모델 다운로드 중 · 완료 후 자동 적용')
+  self._studio_submit(lambda:install(USER_DIR),self._aw_use_official)
  def _aw_copy_api(self):
   if self.arm_dev_sim.state in ('RUNNING','PAUSED'):raise ValueError('재생 정지 후 가져오세요.')
   cfg=self.studio_config['arm'];validate(cfg);self.arm_dev_config=profile();self.arm_dev_config.update(operations=copy.deepcopy(cfg.get('operations',{})),programs=copy.deepcopy(cfg.get('programs',{})));self._aw_refresh_ops();self.arm_dev_program_combo.configure(values=list(self.arm_dev_config['programs']))

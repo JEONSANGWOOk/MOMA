@@ -1,3 +1,10 @@
+# v1.21 검증 (2026-10-04)
+
+- unittest discover: 286 tests OK.
+- 모델 설치 신규 6개: 로컬 설치, 원본 해시 불일치 차단, 캐시 재사용/변조 검사, 고정 커밋 다운로드, 잘못된 다운로드 차단, 정점 병합 후 닫힌 메시 유지.
+- official_fr5_smoke: 실제 공식 URDF, 원본 STL 7개/6관절/패키지 경로, 독립 MoveJ 및 10mm MoveL, 공유 3D 뷰어 적용 PASS.
+- 공식 저장소 커밋 fcf0c7f0d60d949d8a9a4238f929a44d07f60379. 제어기/로봇 네트워크 접속 없음.
+
 # v1.20 검증 (2026-10-04)
 
 - unittest discover: 280 tests OK.

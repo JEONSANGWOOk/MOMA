@@ -23,8 +23,9 @@ class SpatialMixin:
         self.button(toolbar,'3D 모델 / 관절',self._spatial_dialog,BLUE).pack(side='left',padx=3)
 
     def _spatial_demo_path(self):
-        from .app import ROOT
-        return ROOT/'examples/fairino_fr5.urdf'
+        from .app import ROOT,USER_DIR
+        from .fairino_model import installed
+        return installed(USER_DIR) or ROOT/'examples/fairino_fr5.urdf'
 
     def _spatial_switch(self):
         self.release_drive()
@@ -158,7 +159,7 @@ class SpatialMixin:
             self.spatial_assets.pop('arm',None);refresh_summary();joint_controls();view.refresh();self._spatial_save()
         self.button(row,'기본 FR5 복원',restore_demo).pack(side='left',padx=5)
         row=tk.Frame(body,bg=PANEL);row.pack(fill='x',padx=12,pady=3)
-        self.label(row,'기본 모델: SEER AMB-CSW04-CE + FAIRINO FR5 · 경량 시각화 모델',9,MUTED).pack(side='left')
+        self.label(row,'기본 AMR: SEER AMB-CSW04-CE · FR5: 설치된 공식 ROS2 모델 / 경량 대체 모델',9,MUTED).pack(side='left')
         def restore_amr():
             view.body_asset=RobotDescription.load(self._spatial_demo_path().parent/'seer_amb_csw04_ce.urdf')
             view.positions['amr']={};view.scales['amr']=1.;self.spatial_assets.pop('amr',None)
