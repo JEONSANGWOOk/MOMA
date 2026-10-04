@@ -3,11 +3,13 @@ import math
 from .studio_core import point_segment_distance,collision_reason
 
 def moving_obstacles(model):
+    """Use measured velocity only; never inspect actor paths or script state."""
     for o in model.obstacles:
         vx,vy=o.get('_observed_velocity',(0.,0.))
         if math.hypot(vx,vy)>=.04:yield o,vx,vy
 
 def forecast_risk(model,p,radius):
+    # A constant-current-velocity hypothesis, not knowledge of future actions.
     # Soft costs only: a forecast never replaces physical collision checks.
     risk=0.
     for o,vx,vy in moving_obstacles(model):

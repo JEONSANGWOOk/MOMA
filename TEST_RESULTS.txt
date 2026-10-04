@@ -1,3 +1,4 @@
+v1.14.1: 233 unit tests PASS; hidden actor future metadata is never read and does not affect decisions; configured speed is not used as observed velocity.
 v1.14: 231 unit tests PASS; crossing-person prediction, observed velocity, speed-aware alternative route, risk/turn cost, physical clearance and stationary watchdog. SIM bypass/report GUI PASS.
 v1.13: 223 unit tests PASS; pass-before-detour static/dynamic, full AMR footprint, timeout recovery, sealed room and SIM GUI validation.
 v1.12: 215 unit tests PASS; mission report GUI and automatic TXT/JSON persistence PASS.

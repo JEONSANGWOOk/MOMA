@@ -59,3 +59,28 @@ class QualityTests(unittest.TestCase):
    self.assertFalse(collision_reason(m,s.state.x,s.state.y,.23))
    if not s.route:break
   self.assertTrue(predicted);self.assertEqual(s.state.last_node,'B');self.assertFalse(s.skipped_goals)
+
+ def test_hidden_actor_routine_never_changes_current_navigation_decision(self):
+  m=scene()
+  forbidden={'motion_path','node_path','speed_mps','_compiled','_goal','_direction','_heading','dwell_s','paused'}
+  class ObservedOnly(dict):
+   def get(self,key,default=None):
+    if key in forbidden:raise AssertionError('Planner read hidden actor routine: '+key)
+    return super().get(key,default)
+   def __getitem__(self,key):
+    if key in forbidden:raise AssertionError('Planner read hidden actor routine: '+key)
+    return super().__getitem__(key)
+  o=ObservedOnly(id='P',dynamic=True,x=2,y=1,radius=.2,_observed_velocity=(0.,-.5))
+  m.obstacles=[o]
+  def decision():
+   hit=projected_conflict(m,(0,0),[(4,0)],.23,.5)
+   return ((hit['time'],hit['distance']) if hit else None,route_cost(m,[(0,0),(4,0)],.23),detour(m,(0,0),(4,0),.23,risk_aware=True))
+  baseline=decision()
+  o.update(motion_path=[[2,1],[2,-1]],node_path=['A','B'],speed_mps=9,_compiled=([(-99,-99)],{}),_goal=88,_direction=-1,_heading=99,dwell_s=999,paused=True)
+  self.assertEqual(decision(),baseline)
+  o.update(motion_path=[[2,1],[100,100]],node_path=['B','A'],_goal=0,_direction=1,paused=False)
+  self.assertEqual(decision(),baseline)
+ def test_unobserved_motion_is_not_guessed_from_scripted_speed_or_heading(self):
+  m=scene();m.obstacles=[dict(id='P',dynamic=True,x=1,y=1,radius=.2,motion_path=[[1,1],[1,-1]],speed_mps=10,_heading=-1.57,_goal=1)]
+  self.assertIsNone(projected_conflict(m,(0,0),[(4,0)],.23,.5))
+  self.assertEqual(forecast_risk(m,(1,0),.23),0.)
