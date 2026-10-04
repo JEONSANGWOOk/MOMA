@@ -2,13 +2,14 @@
 import heapq
 import math
 from .studio_core import collision_reason,path_clearance
+from .navigation_quality import forecast_risk,projected_conflict,route_cost
 
 
 def clear_segment(model,a,b,radius):
     return not path_clearance(model,a,[b],radius,math.dist(a,b))[1]
 
 
-def rejoin_detour(model,start,reference,radius,safety_margin=.04):
+def rejoin_detour(model,start,reference,radius,safety_margin=.04,risk_aware=False):
     """Bypass the first blocked interval, then retain the original polyline."""
     if len(reference)<2:return None
     # Project onto the original segment, and only consider points ahead of it.
@@ -30,17 +31,18 @@ def rejoin_detour(model,start,reference,radius,safety_margin=.04):
         following=samples[i:min(len(samples),i+4)]
         if any(not clear_segment(model,a,b,radius+safety_margin) for a,b in zip(following,following[1:])):continue
         attempts+=1
-        bypass=detour(model,start,p,radius,max_cells=8000,safety_margin=safety_margin)
+        bypass=detour(model,start,p,radius,max_cells=8000,safety_margin=safety_margin,risk_aware=risk_aware)
         if bypass:return bypass+samples[i+1:]
         if attempts>=6:break
     return None
 
 
-def detour(model,start,goal,radius,max_cells=24000,safety_margin=.04,grid_step=None):
+def detour(model,start,goal,radius,max_cells=24000,safety_margin=.04,grid_step=None,risk_aware=False):
     """Return collision-checked world points; None means wait, never teleport."""
     radius+=max(0,safety_margin)
     if collision_reason(model,*start,radius) or collision_reason(model,*goal,radius):return None
-    if clear_segment(model,start,goal,radius):return [start,goal]
+    speed=getattr(model,'robot_model',{}).get('maxspeed',.45)
+    if clear_segment(model,start,goal,radius) and (not risk_aware or not projected_conflict(model,start,[goal],radius,speed)):return [start,goal]
     points=[start,goal]+[(n['x'],n['y']) for n in model.nodes.values()]
     points.extend((w[i],w[i+1]) for w in list(model.walls)+list(getattr(model,'virtual_walls',[])) for i in (0,2))
     points.extend((o['x'],o['y']) for o in getattr(model,'obstacles',[]))
@@ -50,7 +52,13 @@ def detour(model,start,goal,radius,max_cells=24000,safety_margin=.04,grid_step=N
     nx,ny=math.ceil((x1-x0)/step),math.ceil((y1-y0)/step)
     def world(cell):return x0+cell[0]*step,y0+cell[1]*step
     def cell(p):return round((p[0]-x0)/step),round((p[1]-y0)/step)
-    occupied={};edges={}
+    occupied={};edges={};penalties={}
+    def penalty(c):
+        if not risk_aware:return 0.
+        if c not in penalties:
+            p=world(c)
+            penalties[c]=(.8 if collision_reason(model,*p,radius+.18) else 0.)+forecast_risk(model,p,radius)*3.
+        return penalties[c]
     def free(c):
         if c not in occupied:occupied[c]=0<=c[0]<=nx and 0<=c[1]<=ny and not collision_reason(model,*world(c),radius)
         return occupied[c]
@@ -75,7 +83,7 @@ def detour(model,start,goal,radius,max_cells=24000,safety_margin=.04,grid_step=N
         for dx,dy in ((-1,0),(1,0),(0,-1),(0,1),(-1,-1),(-1,1),(1,-1),(1,1)):
             nxt=(c[0]+dx,c[1]+dy)
             if nxt in visited or not free(nxt) or not edge(c,nxt):continue
-            value=cost+step*math.hypot(dx,dy)
+            value=cost+step*math.hypot(dx,dy)*(1.+penalty(nxt))
             if value<costs.get(nxt,float('inf')):
                 costs[nxt]=value;parents[nxt]=c;heapq.heappush(queue,(value+math.dist(world(nxt),goal),value,nxt))
     if finish is None:return None
@@ -86,6 +94,10 @@ def detour(model,start,goal,radius,max_cells=24000,safety_margin=.04,grid_step=N
     simplified=[path[0]];i=0
     while i<len(path)-1:
         j=len(path)-1
-        while j>i+1 and not clear_segment(model,path[i],path[j],radius):j-=1
+        while j>i+1:
+            clear=clear_segment(model,path[i],path[j],radius)
+            better=not risk_aware or route_cost(model,[path[i],path[j]],radius,speed)<=route_cost(model,path[i:j+1],radius,speed)+.05
+            if clear and better:break
+            j-=1
         simplified.append(path[j]);i=j
     return simplified

@@ -24,7 +24,7 @@ def split_reference(start,reference):
     return [start,p]+list(reference[i+1:]),[start,p]+list(reversed(reference[:i+1]))
 
 
-def alternate_route(model,start,goal,a,b,reference,radius,include_dynamic=False,safety_margin=.04):
+def alternate_route(model,start,goal,a,b,reference,radius,include_dynamic=False,safety_margin=.04,optimize=False):
     # Dynamic actors are waited for at execution, rather than closing map lanes.
     scene=SimpleNamespace(walls=model.walls,virtual_walls=model.virtual_walls,area_records=model.area_records,
         obstacles=[o for o in model.obstacles if include_dynamic or not o.get('dynamic')])
@@ -38,26 +38,34 @@ def alternate_route(model,start,goal,a,b,reference,radius,include_dynamic=False,
         return bool(points) and all(clear_segment(scene,x,y,radius) for x,y in zip(points,points[1:]))
     for key,edges in original.items():
         for nxt,distance,seconds in edges:
-            if clear(lane(model,key,nxt)):graph[key].append((nxt,distance,seconds))
-    anchors=[]
+            if clear(lane(model,key,nxt)):
+                if optimize:
+                    from .navigation_quality import route_cost
+                    speed=distance/max(.001,seconds)
+                    seconds=route_cost(model,lane(model,key,nxt),radius,speed)
+                graph[key].append((nxt,distance,seconds))
+    anchors=[];anchor_speeds={}
+    def lane_speed(source,dest):
+        edge=next(((d,t) for nxt,d,t in original.get(source,[]) if nxt==dest),None)
+        return edge[0]/max(.001,edge[1]) if edge else model.robot_model['maxspeed']
     for key,node in model.nodes.items():
         if math.dist(start,(node['x'],node['y']))<1e-6 and not collision_reason(scene,*start,radius):anchors.append((key,[start]))
     forward,backward=split_reference(start,reference)
-    if b in graph and forward and math.dist(forward[-1],(model.nodes[b]['x'],model.nodes[b]['y']))<=1e-5 and clear_prefix(forward):anchors.append((b,forward))
+    if b in graph and forward and math.dist(forward[-1],(model.nodes[b]['x'],model.nodes[b]['y']))<=1e-5 and clear_prefix(forward):anchors.append((b,forward));anchor_speeds[id(forward)]=lane_speed(a,b)
     # Backtracking a directed lane requires an explicitly available reverse lane.
     if a in graph and b in original and any(nxt==a for nxt,_,_ in original[b]) and clear_prefix(backward):
         reverse,_=split_reference(start,lane(model,b,a))
-        if reverse and math.dist(start,reverse[1])<=.05 and clear_prefix(reverse):anchors.append((a,reverse))
+        if reverse and math.dist(start,reverse[1])<=.05 and clear_prefix(reverse):anchors.append((a,reverse));anchor_speeds[id(reverse)]=lane_speed(b,a)
     # Recover from any directed lane containing the current pose, including
     # an interrupted return-to-anchor segment after earlier replanning.
     for key,edges in original.items():
         for nxt,_,_ in edges:
             suffix,_=split_reference(start,lane(model,key,nxt))
-            if suffix and math.dist(start,suffix[1])<=.08 and clear_prefix(suffix):anchors.append((nxt,suffix))
+            if suffix and math.dist(start,suffix[1])<=.08 and clear_prefix(suffix):anchors.append((nxt,suffix));anchor_speeds[id(suffix)]=lane_speed(key,nxt)
     options=[]
     reachable=[]
     for anchor in graph:
-        try:result=shortest_path(graph,anchor,goal)
+        try:result=shortest_path(graph,anchor,goal,policy='time' if optimize else 'distance')
         except ValueError:continue
         reachable.append((anchor,result))
     routes=dict(reachable)
@@ -65,11 +73,15 @@ def alternate_route(model,start,goal,a,b,reference,radius,include_dynamic=False,
         result=routes.get(anchor)
         if result is None:continue
         length=sum(math.dist(x,y) for x,y in zip(prefix,prefix[1:]))
-        options.append((length+result['distance'],anchor,prefix,result['nodes']))
+        score=length+result['distance']
+        if optimize:
+            from .navigation_quality import route_cost
+            score=route_cost(model,prefix,radius,anchor_speeds.get(id(prefix),model.robot_model['maxspeed']))+result['seconds']
+        options.append((score,anchor,prefix,result['nodes']))
     if not options and safety_margin>0:
         # Try all lanes again without the extra buffer, never reducing the
         # actual robot footprint. This recovers physically passable corridors.
-        result=alternate_route(model,start,goal,a,b,reference,radius,include_dynamic,safety_margin=0)
+        result=alternate_route(model,start,goal,a,b,reference,radius,include_dynamic,safety_margin=0,optimize=optimize)
         if result:result['reduced_margin']=True
         return result
     if not options and reference:
@@ -83,10 +95,14 @@ def alternate_route(model,start,goal,a,b,reference,radius,include_dynamic=False,
             ranked=sorted(reachable,key=lambda pair:math.dist(start,(model.nodes[pair[0]]['x'],model.nodes[pair[0]]['y']))+pair[1]['distance'])
             for budget in (8000,24000):
                 for anchor,result in ranked:
-                    node=model.nodes[anchor];prefix=detour(scene,start,(node['x'],node['y']),radius,max_cells=budget,safety_margin=safety_margin)
+                    node=model.nodes[anchor];prefix=detour(scene,start,(node['x'],node['y']),radius,max_cells=budget,safety_margin=safety_margin,risk_aware=optimize)
                     if prefix:
                         length=sum(math.dist(x,y) for x,y in zip(prefix,prefix[1:]))
-                        options.append((length+result['distance'],anchor,prefix,result['nodes']))
+                        score=length+result['distance']
+                        if optimize:
+                            from .navigation_quality import route_cost
+                            score=route_cost(model,prefix,radius,model.robot_model['maxspeed'])+result['seconds']
+                        options.append((score,anchor,prefix,result['nodes']))
                 if options:break
     if not options:return None
     _,anchor,prefix,nodes=min(options)

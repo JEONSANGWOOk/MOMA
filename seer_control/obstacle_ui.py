@@ -15,7 +15,7 @@ class ObstacleUIMixin:
         choice=ttk.Combobox(body,textvariable=self.sim_obstacle_policy,values=list(POLICIES.values()),state='readonly')
         choice.pack(fill='x');choice.bind('<<ComboboxSelected>>',lambda event:self._sim_obstacle_change())
         self.prefer_graph_routes=tk.BooleanVar(value=True)
-        tk.Checkbutton(body,text='전체 경로 확인 / 연결 경로 우선 탐색',variable=self.prefer_graph_routes,bg=PANEL,command=self._route_preference_save).pack(anchor='w')
+        tk.Checkbutton(body,text='전체 경로 검사 / 시간·안전 우선 탐색',variable=self.prefer_graph_routes,bg=PANEL,command=self._route_preference_save).pack(anchor='w')
         self.button(body,'상호 정지 자동 해소 적용',lambda:self.guarded(self._deadlock_preset)).pack(fill='x',pady=2)
         self.button(body,'자동 판단 / 장애물별 시나리오 설정',self._auto_scenario_dialog).pack(fill='x',pady=2)
         self.auto_class_label=self.label(body,'자동 판단: 관측 대기',8,MUTED,anchor='w',justify='left',wraplength=270)

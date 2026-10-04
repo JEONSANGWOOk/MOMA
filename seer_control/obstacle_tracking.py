@@ -65,6 +65,8 @@ class ObstacleTracker:
    elif self.time-t['still_since']>=static_s:t['kind']='static'
    if self.is_known(obs):t['kind']='static';t['speed']=0.;speed=0.
    obs['_classification']=t['kind'];obs['_observed_speed']=round(speed,3)
+   origin=samples[0][1]
+   obs['_observed_velocity']=((p[0]-origin[0])/elapsed,(p[1]-origin[1])/elapsed) if elapsed>=.3 and not self.is_known(obs) else (0.,0.)
    record=self.detections.get(obs.get('_track_id'))
    if record and record['source'] is obs and record['last_seen']>=self.time-1e-8:record.update(kind=t['kind'],speed=speed)
 

@@ -177,6 +177,7 @@ class Simulator:
         self.collision_radius=0.
         self.avoidance_status=''
         self._avoid_time=0.;self._avoid_next=0.
+        self._progress_pose=None;self._progress_at=0.;self._recovery_next=0.
         self.applied_limits = dict(DEFAULT_MODEL)
         self.di = {i:False for i in range(64)}
         self.do = {i:False for i in range(64)}
@@ -198,7 +199,7 @@ class Simulator:
         if self.obstacle_policy in ('reroute','auto') and self._skipped_context:
             from .alternate_routes import alternate_route
             a,b,ref=self._skipped_context
-            next_plan=alternate_route(self.map,(s.x,s.y),goal,a,b,ref,max(self.collision_radius,self.map.robot_model['radius']),include_dynamic=True)
+            next_plan=alternate_route(self.map,(s.x,s.y),goal,a,b,ref,max(self.collision_radius,self.map.robot_model['radius']),include_dynamic=True,optimize=True)
         if self.mapping:
             raise ValueError('맵 생성 중에는 수동 탐색만 가능합니다.')
         start = self.map.nearest(s.x, s.y)
@@ -224,6 +225,7 @@ class Simulator:
         self._avoid_next=0.;self.avoidance_status='';self._auto_block=None
         self._reroute_block_at=None;self._reroute_failures=0;self._reroute_forced=False;self.skip_result=None
         self.v = self.w = self.lease = 0
+        self._progress_pose=(s.x,s.y,s.theta);self._progress_at=self._avoid_time;self._recovery_next=0.
         s.target, s.task, s.mode, s.charging = goal, f'이동 → {goal}', 'RUNNING', False
         if self.obstacle_policy in ('reroute','auto') and self._skipped_context:
             if next_plan:self._apply_alternate(next_plan)
@@ -244,19 +246,19 @@ class Simulator:
     def _try_local_detour(self,node,radius):
         from .avoidance import detour,rejoin_detour
         s=self.state
-        points=rejoin_detour(self.map,(s.x,s.y),getattr(self,'_reference_waypoints',[]),radius)
+        points=rejoin_detour(self.map,(s.x,s.y),getattr(self,'_reference_waypoints',[]),radius,risk_aware=True)
         rejoined=bool(points)
-        if not points:points=detour(self.map,(s.x,s.y),(node['x'],node['y']),radius)
+        if not points:points=detour(self.map,(s.x,s.y),(node['x'],node['y']),radius,risk_aware=True)
         if not points and len(self.route)>1:
             final=self.map.nodes[self.route[-1]]
-            points=detour(self.map,(s.x,s.y),(final['x'],final['y']),radius)
+            points=detour(self.map,(s.x,s.y),(final['x'],final['y']),radius,risk_aware=True)
             if points:self.route=[self.route[-1]];self._segment_start=None
         if not points and not collision_reason(self.map,s.x,s.y,radius) and collision_reason(self.map,s.x,s.y,radius+.04):
             # At a close standstill, relax only the extra planning buffer;
             # preserve the full physical collision radius and swept checks.
-            points=rejoin_detour(self.map,(s.x,s.y),getattr(self,'_reference_waypoints',[]),radius,safety_margin=0)
+            points=rejoin_detour(self.map,(s.x,s.y),getattr(self,'_reference_waypoints',[]),radius,safety_margin=0,risk_aware=True)
             rejoined=bool(points)
-            if not points:points=detour(self.map,(s.x,s.y),(node['x'],node['y']),radius,safety_margin=0)
+            if not points:points=detour(self.map,(s.x,s.y),(node['x'],node['y']),radius,safety_margin=0,risk_aware=True)
         if not points:return False
         self._waypoints=points[1:];self._segment_reverse=False;self._velocity=0.
         self.avoidance_status='우회 후 기존 경로 복귀' if rejoined else '우회 주행'
@@ -285,15 +287,15 @@ class Simulator:
             # Restore the closest reachable point of the original segment first.
             points=None
             if reference and math.dist(reference[-1],next_pos)<1e-5:
-                points=rejoin_detour(self.map,start,reference,radius,safety_margin=margin)
+                points=rejoin_detour(self.map,start,reference,radius,safety_margin=margin,risk_aware=True)
             if points:
                 destination=next_id;rejoined=True
             else:
                 destination=next_id;rejoined=False
-                points=detour(self.map,start,next_pos,radius,max_cells=80000,safety_margin=margin,grid_step=.08)
+                points=detour(self.map,start,next_pos,radius,max_cells=80000,safety_margin=margin,grid_step=.08,risk_aware=True)
             if not points and next_id!=s.target:
                 goal=self.map.nodes[s.target];destination=s.target
-                points=detour(self.map,start,(goal['x'],goal['y']),radius,max_cells=80000,safety_margin=margin,grid_step=.08)
+                points=detour(self.map,start,(goal['x'],goal['y']),radius,max_cells=80000,safety_margin=margin,grid_step=.08,risk_aware=True)
             if not points:continue
             if destination!=next_id:self.route=[destination];self._segment_start=None
             self._waypoints=points[1:];self._reference_waypoints=list(points)
@@ -491,6 +493,20 @@ class Simulator:
                     if key=='maxrot':value=math.radians(value)
                     limits[key]=min(limits[key],value)
             limits=zone_limits(self.map,s.x,s.y,limits);self.applied_limits=limits
+            # An independent progress watchdog also covers repeated heading /
+            # collision returns that never reach the normal reroute branch.
+            pose=(s.x,s.y,s.theta)
+            previous=self._progress_pose
+            turned=abs(math.atan2(math.sin(s.theta-previous[2]),math.cos(s.theta-previous[2]))) if previous else 0.
+            if previous is None or math.dist(pose[:2],previous[:2])>=.08 or turned>=.25:
+                self._progress_pose=pose;self._progress_at=self._avoid_time
+            stall_limit=max(6.,self.auto_wait_s+2.)
+            if self.obstacle_policy in ('auto','reroute') and self._avoid_time-self._progress_at>=stall_limit and self._avoid_time>=self._recovery_next:
+                self._recovery_next=self._avoid_time+3.
+                if self.try_recovery_detour():
+                    self._progress_at=self._avoid_time
+                    self.avoidance_status='정체 탈출 · '+self.avoidance_status
+                    return
             distance_left=0.;prev=(s.x,s.y)
             for point in self._waypoints:distance_left+=math.dist(prev,point);prev=point
             distance_to_goal=distance_left+sum(self.map.distance(a,b) for a,b in zip(self.route,self.route[1:]))
@@ -516,7 +532,7 @@ class Simulator:
                     permit=scenario not in ('wait','stop')
                 if ahead_reason and permit:
                     from .alternate_routes import alternate_route
-                    plan=alternate_route(self.map,(s.x,s.y),s.target,self._segment_start,self.route[0],getattr(self,'_reference_waypoints',[]),limits['radius'],include_dynamic=True)
+                    plan=alternate_route(self.map,(s.x,s.y),s.target,self._segment_start,self.route[0],getattr(self,'_reference_waypoints',[]),limits['radius'],include_dynamic=True,optimize=True)
                     if plan:
                         self._apply_alternate(plan)
                         self.avoidance_status='다른 연결 경로 · 전체 구간 검사 · '+ ' → '.join(plan['nodes'])
@@ -532,6 +548,13 @@ class Simulator:
             stop_dist=max(.025,float(props.get('obsStopDist',.05) or .05))
             dec_dist=max(stop_dist,float(props.get('obsDecDist',.5) or .5))
             clearance,reason=path_clearance(self.map,(s.x,s.y),self._waypoints,limits['radius'],max(dec_dist,self._velocity**2/(2*max(.01,limits['maxdec']))+stop_dist))
+            from .navigation_quality import projected_conflict
+            predicted=None
+            if not reason:
+                predicted=projected_conflict(self.map,(s.x,s.y),self._waypoints,limits['radius'],max(self._velocity,desired))
+                if predicted:
+                    clearance=predicted['distance'];reason='동적 장애물 예상 충돌 · '+str(predicted['obstacle'].get('id','이동체'))
+                    desired=min(desired,max(0.,(clearance-stop_dist)/max(.2,predicted['time'])))
             self.detected_obstacle=reason
             if self._reroute_forced:reason=self.detected_obstacle='기존 연결 경로에 복귀 불가'
             if not reason:
@@ -541,7 +564,7 @@ class Simulator:
                 policy=self.obstacle_policy
                 if policy in ('adaptive','reroute'):
                     _,classification,_,_=self.obstacle_tracker.blocker(self.map,(s.x,s.y),self._waypoints,limits['radius'],max(dec_dist,clearance+.05),reason)
-                    dynamic=classification!='static'
+                    dynamic=predicted is not None or classification!='static'
                 if policy=='auto':
                     from .obstacle_tracking import CLASSES,SCENARIOS
                     key,classification,speed,obstacle=self.obstacle_tracker.blocker(self.map,(s.x,s.y),self._waypoints,limits['radius'],max(dec_dist,clearance+.05),reason)
@@ -549,6 +572,9 @@ class Simulator:
                     scenario=overrides.get(classification,self.auto_scenarios[classification])
                     if scenario not in SCENARIOS:scenario='wait'
                     token=(key,classification,scenario)
+                    if predicted:
+                        obstacle=predicted['obstacle'];classification='dynamic';speed=obstacle.get('_observed_speed',0.)
+                        key=obstacle.get('_track_id',id(obstacle));scenario=obstacle.get('auto_scenarios',{}).get(classification,self.auto_scenarios[classification]);token=(key,classification,scenario)
                     if token!=self._auto_block:self._auto_block=token;self._auto_block_at=self._avoid_time;self._reroute_block_at=None;self._reroute_failures=0
                     elapsed=self._avoid_time-self._auto_block_at
                     self.auto_obstacle_status=f'{CLASSES[classification]} · 관측 {speed:.2f} m/s · '+SCENARIOS.get(scenario,'대기')
@@ -578,7 +604,7 @@ class Simulator:
                     if elapsed>=retry_wait:
                         from .alternate_routes import alternate_route
                         context=self._skipped_context or (self._segment_start,self.route[0],getattr(self,'_reference_waypoints',[]))
-                        plan=alternate_route(self.map,(s.x,s.y),s.target,*context,limits['radius'],include_dynamic=True)
+                        plan=alternate_route(self.map,(s.x,s.y),s.target,*context,limits['radius'],include_dynamic=True,optimize=True)
                         if plan:
                             s.blocked=False;self._collision_blocked=False;self._apply_alternate(plan)
                         else:
