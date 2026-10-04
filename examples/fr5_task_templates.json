@@ -1,0 +1,168 @@
+{
+  "format": "fairino-task-library-v1",
+  "operations": {},
+  "programs": {
+    "픽앤플레이스": [
+      {
+        "operation": "safe_pose",
+        "timeout_s": 60
+      },
+      {
+        "operation": "grip_open",
+        "timeout_s": 60
+      },
+      {
+        "operation": "pick_approach",
+        "timeout_s": 60
+      },
+      {
+        "operation": "pick_contact",
+        "timeout_s": 60
+      },
+      {
+        "operation": "grip_close",
+        "timeout_s": 60
+      },
+      {
+        "operation": "grip_confirm",
+        "timeout_s": 60
+      },
+      {
+        "operation": "pick_approach",
+        "timeout_s": 60
+      },
+      {
+        "operation": "place_approach",
+        "timeout_s": 60
+      },
+      {
+        "operation": "place_contact",
+        "timeout_s": 60
+      },
+      {
+        "operation": "grip_open",
+        "timeout_s": 60
+      },
+      {
+        "operation": "place_approach",
+        "timeout_s": 60
+      },
+      {
+        "operation": "safe_pose",
+        "timeout_s": 60
+      }
+    ],
+    "도어 열기": [
+      {
+        "operation": "safe_pose",
+        "timeout_s": 60
+      },
+      {
+        "operation": "grip_open",
+        "timeout_s": 60
+      },
+      {
+        "operation": "door_approach",
+        "timeout_s": 60
+      },
+      {
+        "operation": "door_handle",
+        "timeout_s": 60
+      },
+      {
+        "operation": "grip_close",
+        "timeout_s": 60
+      },
+      {
+        "operation": "grip_confirm",
+        "timeout_s": 60
+      },
+      {
+        "operation": "door_unlatch",
+        "timeout_s": 60
+      },
+      {
+        "operation": "door_arc_1",
+        "timeout_s": 60
+      },
+      {
+        "operation": "door_arc_2",
+        "timeout_s": 60
+      },
+      {
+        "operation": "door_arc_3",
+        "timeout_s": 60
+      },
+      {
+        "operation": "grip_open",
+        "timeout_s": 60
+      },
+      {
+        "operation": "door_retreat",
+        "timeout_s": 60
+      },
+      {
+        "operation": "safe_pose",
+        "timeout_s": 60
+      }
+    ],
+    "자재 공급": [
+      {
+        "operation": "safe_pose",
+        "timeout_s": 60
+      },
+      {
+        "operation": "machine_ready",
+        "timeout_s": 60
+      },
+      {
+        "operation": "grip_open",
+        "timeout_s": 60
+      },
+      {
+        "operation": "supply_approach",
+        "timeout_s": 60
+      },
+      {
+        "operation": "supply_pick",
+        "timeout_s": 60
+      },
+      {
+        "operation": "grip_close",
+        "timeout_s": 60
+      },
+      {
+        "operation": "grip_confirm",
+        "timeout_s": 60
+      },
+      {
+        "operation": "supply_approach",
+        "timeout_s": 60
+      },
+      {
+        "operation": "machine_approach",
+        "timeout_s": 60
+      },
+      {
+        "operation": "machine_insert",
+        "timeout_s": 60
+      },
+      {
+        "operation": "grip_open",
+        "timeout_s": 60
+      },
+      {
+        "operation": "machine_approach",
+        "timeout_s": 60
+      },
+      {
+        "operation": "supply_done",
+        "timeout_s": 60
+      },
+      {
+        "operation": "safe_pose",
+        "timeout_s": 60
+      }
+    ]
+  }
+}

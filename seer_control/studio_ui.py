@@ -16,6 +16,7 @@ from .studio_core import (EditHistory, Recorder, MissionRunner, ACTION_DEFAULTS,
 from .studio_devices import DeviceBridge, tcp_operation, arm_call, validate_operation, get_field
 from .fairino_ui import FairinoUIMixin
 from .fairino_api import validate as validate_fr5
+from .fairino_programs import expand_actions
 from .obstacle_ui import ObstacleUIMixin
 from .route_planner import plan_stops, plan_actions, adjacency, upgrade_loop_chain
 
@@ -35,9 +36,14 @@ class ConsoleAdapter:
 
     def begin(self,a):
         c=self.c;state=c.current_state();typ=a['type']
-        if not c.connected or (not c.real and not c.sim_powered):raise ValueError('로봇 연결/전원이 꺼져 있습니다.')
-        if c.real and not c.control_enabled:raise ValueError('실기 제어권이 필요합니다.')
-        self.context=dict(start=(state['x'],state['y']),theta=state['theta'],turn=0.,seen=False,token=None,type=typ)
+        standalone=c.real and a.get('_fr5_standalone') is True and typ in ('Arm Action','Wait')
+        if standalone:
+            if c.connected:raise ValueError('FR5 단독 개발은 AMR 연결을 해제한 고정형 설치에서만 사용하세요.')
+            if c.studio_config['arm'].get('driver')!='fairino' or not c.fr5_client.connected:raise ValueError('FR5 단독 개발에 FR5 실기 연결이 필요합니다.')
+        else:
+            if not c.connected or (not c.real and not c.sim_powered):raise ValueError('로봇 연결/전원이 꺼져 있습니다.')
+            if c.real and not c.control_enabled:raise ValueError('실기 제어권이 필요합니다.')
+        self.context=dict(start=(state['x'],state['y']),theta=state['theta'],turn=0.,seen=False,token=None,type=typ,standalone=standalone)
         self.motion=(0.,0.)
         if typ=='Path Nav':
             c.studio_command_error=None
@@ -69,9 +75,11 @@ class ConsoleAdapter:
                 elif name=='clear_obstacles':c.map.obstacles=[]
                 else:raise ValueError('SIM Custom Action: set_di / set_battery / clear_obstacles')
         elif typ=='Arm Action':
-            if abs(float(state.get('speed',0)))>.02 or state.get('emergency') or state.get('stopped') or (not c.real and c.sim.route):
+            if not standalone and (abs(float(state.get('speed',0)))>.02 or state.get('emergency') or state.get('stopped') or (not c.real and c.sim.route)):
                 raise ValueError('로봇팔 작업 전 AMR 정지 확인이 필요합니다.')
             if c.real:
+                if not standalone and time.monotonic()-c.last_state>3:raise ValueError('AMR 정지 상태 수신이 오래되었습니다.')
+                if not standalone and state.get('task') in ('RUNNING','WAITING','SUSPENDED'):raise ValueError('AMR 주행 종료 후 로봇팔 작업을 실행하세요.')
                 if c.studio_config['arm'].get('driver')!='fairino' and not c.studio_config['arm'].get('stop_method'):raise ValueError('로봇팔 stop_method 설정이 필요합니다.')
                 config=copy.deepcopy(c.studio_config['arm'])
                 self.context['token']=c._studio_submit(lambda:c._arm_call(config,'execute',a['operation']))
@@ -82,7 +90,7 @@ class ConsoleAdapter:
                 if cfg.get('driver')=='fairino':
                     spec=cfg.get('operations',{}).get(a['operation'])
                     if not spec:raise ValueError('등록되지 않은 FR5 작업: '+a['operation'])
-                    if spec['method']=='MoveL':raise ValueError('SIM MoveL 역기구학은 지원하지 않습니다. MoveJ 작업으로 관절 자세를 지정하세요.')
+                    if spec['method']!='MoveJ':raise ValueError('SIM FR5는 MoveJ만 지원합니다. 프로그램의 MoveL/I/O는 실기 개발 화면에서 검증하세요.')
                     validate_fr5(cfg)
                     names=[j['name'] for j in c.world3d.arm_asset.movable()]
                     if len(names)!=6:raise ValueError('SIM FR5는 6축 URDF 모델이 필요합니다.')
@@ -130,9 +138,13 @@ class ConsoleAdapter:
 
     def poll(self,a,dt,elapsed):
         c=self.c;typ=a['type'];state=c.current_state()
-        if not c.connected or (not c.real and not c.sim_powered):raise ValueError('미션 중 연결/전원이 끊겼습니다.')
-        if c.real and (time.monotonic()-c.last_state>3 or not c.control_enabled):raise ValueError('실기 상태/제어권이 유효하지 않습니다.')
-        if c.real and state.get('emergency'):raise ValueError('비상정지가 활성화되었습니다.')
+        if self.context.get('standalone'):
+            if c.connected or not c.fr5_client.connected:raise ValueError('FR5 단독 시험 연결 상태가 변경되었습니다.')
+            if typ=='Wait' and (time.monotonic()-c.fr5_rx>3 or c.fr5_feedback.get('status')=='ERROR'):raise ValueError('FR5 대기 중 상태 수신/오류를 확인하세요.')
+        else:
+            if not c.connected or (not c.real and not c.sim_powered):raise ValueError('미션 중 연결/전원이 끊겼습니다.')
+            if c.real and (time.monotonic()-c.last_state>3 or not c.control_enabled):raise ValueError('실기 상태/제어권이 유효하지 않습니다.')
+            if c.real and state.get('emergency'):raise ValueError('비상정지가 활성화되었습니다.')
         if typ=='Path Nav':
             if c.real and getattr(c,'studio_command_error',None):raise ValueError(c.studio_command_error)
             if not c.real:
@@ -168,6 +180,12 @@ class ConsoleAdapter:
         if typ=='Wait DI Trigger':return c._studio_io_value('di',a['channel'])==a['value']
         if typ=='Branch DI':return True
         if typ=='Arm Action':
+            if c.real and not self.context.get('standalone'):
+                current=c.current_state()
+                if not c.connected or not c.control_enabled or time.monotonic()-c.last_state>3:
+                    raise ValueError('FR5 작업 중 AMR 상태/제어 연결이 소실되었습니다.')
+                if abs(float(current.get('speed',0)))>.02 or current.get('emergency') or current.get('stopped') or current.get('task') in ('RUNNING','WAITING','SUSPENDED'):
+                    raise ValueError('FR5 작업 중 AMR 정지 상태가 해제되었습니다.')
             if not c.real:
                 progress=min(1.,elapsed/max(.001,a['duration_s']));c.sim.arm['progress']=progress
                 if 'joint_target' in self.context:
@@ -218,14 +236,14 @@ class ConsoleAdapter:
         if self.c.real and self.context.get('type')=='Arm Action' and self.c.studio_config['arm'].get('driver')=='fairino':
             cfg=copy.deepcopy(self.c.studio_config['arm'])
             self.c._studio_submit(lambda:self.c._arm_call(cfg,'pause'),lambda r:None)
-        if self.c.real:self.c.send_command('pause',{})
-        else:self.c.sim.command('pause')
+        if self.c.real and not self.context.get('standalone'):self.c.send_command('pause',{})
+        elif not self.c.real:self.c.sim.command('pause')
     def resume(self):
         if self.c.real and self.context.get('type')=='Arm Action' and self.c.studio_config['arm'].get('driver')=='fairino':
             cfg=copy.deepcopy(self.c.studio_config['arm'])
             self.c._studio_submit(lambda:self.c._arm_call(cfg,'resume'),lambda r:None)
-        if self.c.real:self.c.send_command('resume',{})
-        else:self.c.sim.command('resume')
+        if self.c.real and not self.context.get('standalone'):self.c.send_command('resume',{})
+        elif not self.c.real:self.c.sim.command('resume')
         if self.motion!=(0.,0.):self._motion(True)
     def cancel(self):
         c=self.c;self._motion(False)
@@ -235,8 +253,8 @@ class ConsoleAdapter:
         c.studio_bridge.cancel(self.context.get('token'))
         c.studio_bridge.cancel(self.context.get('status_token'))
         if c.real:
-            if c.connected and c.control_enabled:c.send_command('cancel',{})
-            if self.context.get('type')=='Arm Action':
+            if c.connected and c.control_enabled and not self.context.get('standalone'):c.send_command('cancel',{})
+            if self.context.get('type')=='Arm Action' or self.context.get('standalone'):
                 config=copy.deepcopy(c.studio_config['arm'])
                 if config.get('driver')=='fairino':c._fr5_priority_stop()
                 elif config.get('stop_method'):c._studio_submit(lambda:arm_call(config,'stop'),c._studio_show_device)
@@ -770,7 +788,7 @@ class StudioMixin(FairinoUIMixin,ObstacleUIMixin):
             if upgrade_loop_chain(self.map,chain):
                 self.log('MISSION','기존 순환 미션 변환 · 중간 노드는 통과, 방문 목적지만 정지')
                 self.tc_refresh()
-            actions=flatten_actions(chain)
+            actions=expand_actions(self.studio_config['arm'],flatten_actions(chain))
             if chain.get('loop_route') and chain.get('move_to_start',True):
                 start=chain['loop_route'][0];n=self.map.nodes[start];s=self.current_state()
                 if math.hypot(s['x']-n['x'],s['y']-n['y'])>.1:
@@ -796,7 +814,13 @@ class StudioMixin(FairinoUIMixin,ObstacleUIMixin):
                         raise ValueError('계획 경로가 변경되었습니다. 순환 미션을 다시 설정하세요.')
                 if self.real and a['type'] in ('Set DO','Custom Action'):validate_operation(self.studio_config['peripherals'],'set_do' if a['type']=='Set DO' else a['operation'])
                 if self.real and a['type'] in ('Wait DI Trigger','Branch DI'):validate_operation(self.studio_config['peripherals'],'read_io')
-                if self.real and a['type']=='Arm Action' and self.studio_config['arm'].get('verified') is not True:raise ValueError('실기 로봇팔 연결 설정이 필요합니다.')
+                if self.real and a['type']=='Arm Action':
+                    arm=self.studio_config['arm']
+                    if arm.get('verified') is not True:raise ValueError('실기 로봇팔 연결 설정이 필요합니다.')
+                    if arm.get('driver')=='fairino':
+                        validate_fr5(arm,True)
+                        if a['operation'] not in arm.get('operations',{}):raise ValueError('등록되지 않은 FR5 작업: '+a['operation'])
+                        if not self.fr5_client.connected or time.monotonic()-self.fr5_rx>2:raise ValueError('FR5 연결 및 최신 상태 수신이 필요합니다.')
             self.studio_runner.start(validated,repeat)
             self.studio_charge_inhibit=False
             self.task_running=True;self.studio_playing=False;self.studio_play_frame=None

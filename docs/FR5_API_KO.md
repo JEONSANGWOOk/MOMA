@@ -60,3 +60,6 @@ ros2 launch fairino5_v6_moveit2_config demo.launch.py
 - [SDK 이동 API](https://fairino-doc-en.readthedocs.io/latest/SDKManual/PythonRobotMovement.html)
 - [SDK 상태 API](https://fairino-doc-en.readthedocs.io/latest/SDKManual/PythonRobotStatusInquiry.html)
 - [SDK 소스의 XML-RPC / StopMotion 구현](https://github.com/FAIR-INNOVATION/fairino-python-sdk/blob/main/windows/fairino/Robot.py)
+
+
+복합 작업 개발과 I/O 연동은 [FR5 작업 개발 안내](FR5_TASK_DEVELOPMENT_KO.md)를 참고하세요.

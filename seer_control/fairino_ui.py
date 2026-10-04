@@ -9,11 +9,13 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from .fairino_api import profile, validate
 from .fairino_client import FairinoClient
+from .fairino_program_ui import FairinoProgramMixin
+from .fairino_programs import program_actions
 from .studio_devices import arm_call
 from .theme import PANEL, INK, MUTED, RED
 
 
-class FairinoUIMixin:
+class FairinoUIMixin(FairinoProgramMixin):
     def _fr5_init(self):
         self.fr5_client=FairinoClient();self.fr5_feedback={};self.fr5_rx=0.;self.fr5_poll_at=0.
         self.fr5_pending=False;self.fr5_events=queue.Queue();self.fr5_epoch=0;self.fr5_error=''
@@ -26,7 +28,7 @@ class FairinoUIMixin:
     def _fr5_receive(self,result):
         self.fr5_feedback=result;self.fr5_rx=time.monotonic();self.fr5_error=''
         cfg=self.studio_config['arm'];safe=cfg.get('operations',{}).get('safe_pose',{})
-        self.studio_arm_safe=(result.get('status') not in ('ERROR','RUNNING','CANCELED')
+        self.studio_arm_safe=(result.get('status') not in ('ERROR','RUNNING','CANCELED','PAUSED')
             and result.get('motion_done')==1 and safe.get('method')=='MoveJ'
             and len(safe.get('target',[]))==6
             and all(abs(a-b)<=.5 for a,b in zip(result.get('joints_deg',[]),safe['target']))
@@ -51,7 +53,7 @@ class FairinoUIMixin:
 
     def _fr5_stop(self):
         if not self.real:return
-        arm_active=self.studio_runner.active and self.studio_runner.adapter.context.get('type')=='Arm Action'
+        arm_active=self.studio_runner.active and (self.studio_runner.adapter.context.get('type')=='Arm Action' or self.studio_runner.adapter.context.get('standalone'))
         if self.studio_runner.active:self.studio_runner.cancel()
         if not arm_active:self._fr5_priority_stop()
 
@@ -82,12 +84,13 @@ class FairinoUIMixin:
             return
         if now-self.fr5_rx>2 or not self.fr5_client.connected:self.studio_arm_safe=False
         # Mission polls its own feedback; idle refresh is 5 Hz and never blocks Tk.
-        if self.fr5_client.connected and not self.fr5_pending and self.studio_runner.status!='RUNNING' and now-self.fr5_poll_at>=.2:
+        if self.fr5_client.connected and not self.fr5_pending and (self.studio_runner.status!='RUNNING' or self.studio_runner.actions[self.studio_runner.index]['type']=='Wait') and now-self.fr5_poll_at>=.2:
             self.fr5_poll_at=now
             self._fr5_queue(lambda:self._arm_call(copy.deepcopy(cfg),'status'))
 
     def _fr5_controls(self,page):
         row=self._studio_row(page)
+        self.button(row,'FR5 작업 개발',lambda:self.guarded(self._fr5_development)).pack(side='left',padx=3)
         self.button(row,'FR5 연결 설정',lambda:self.guarded(self._fr5_dialog)).pack(side='left',padx=3)
         self.button(row,'FR5 연결 시험 / 관절 수신',lambda:self.guarded(self._fr5_connect)).pack(side='left',padx=3)
         self.button(row,'FR5 작업 실행',lambda:self.guarded(self._fr5_run)).pack(side='left',padx=3)
@@ -120,7 +123,7 @@ class FairinoUIMixin:
             box.delete('1.0','end');box.insert('1.0',json.dumps(ops,ensure_ascii=False,indent=2))
         self.button(row,'수신한 현재 자세로 작업 등록',lambda:self.guarded(teach)).pack(side='left',padx=6)
         def save():
-            value=dict(driver='fairino',**{k:v.get().strip() for k,v in vars.items()},verified=enabled.get(),version_confirmed=confirmed.get(),operations=self._studio_json(box))
+            value=dict(cfg);value.update(driver='fairino',**{k:v.get().strip() for k,v in vars.items()},verified=enabled.get(),version_confirmed=confirmed.get(),operations=self._studio_json(box))
             validate(value,motion=enabled.get())
             if self.fr5_client.connected:self._fr5_priority_stop()
             self.studio_config['arm']=value;self.studio_arm_safe=False;self._studio_save_settings()
@@ -131,7 +134,7 @@ class FairinoUIMixin:
 
     def _fr5_run(self):
         if self.studio_runner.active:raise ValueError('미션 실행 중입니다.')
-        cfg=self.studio_config['arm'];names=list(cfg.get('operations',{}))
+        cfg=self.studio_config['arm'];names=list(cfg.get('operations',{}))+list(cfg.get('programs',{}))
         if cfg.get('driver')!='fairino' or not names:raise ValueError('FR5 작업을 먼저 등록하세요.')
         if self.real and (not self.fr5_client.connected or time.monotonic()-self.fr5_rx>2):raise ValueError('FR5 연결 시험으로 현재 상태를 확인하세요.')
         win=tk.Toplevel(self);win.title('FR5 등록 작업 실행');var=tk.StringVar(value=names[0])
@@ -139,6 +142,7 @@ class FairinoUIMixin:
         def run():
             operation=var.get()
             if self.real and not messagebox.askokcancel('FR5 실기 동작',f'{operation} 작업으로 FR5가 움직입니다. 등록한 목표와 주변 작업 공간을 확인하세요.',parent=win):return
-            self.studio_runner.start([dict(type='Arm Action',operation=operation,duration_s=2,timeout_s=60)])
+            actions=program_actions(cfg,operation) if operation in cfg.get('programs',{}) else [dict(type='Arm Action',operation=operation,duration_s=2,timeout_s=60)]
+            self.studio_runner.start(actions)
             self.task_running=True;win.destroy()
         self.button(win,'선택 작업 실행',lambda:self.guarded(run)).pack(pady=8)
