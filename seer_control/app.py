@@ -55,7 +55,7 @@ def _shape_summary(value, depth=0):
 class Console(UIScaleMixin, GamepadMixin, SpatialMixin, StudioMixin, tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title('AMR Control Studio | MoMa Standalone · v1.16 Workspace')
+        self.title('AMR Control Studio | MoMa Standalone · v1.17 Workspace')
         # Responsive startup size: fit the active monitor instead of assuming one fixed resolution.
         sw=self.winfo_screenwidth(); sh=self.winfo_screenheight()
         start_w=min(1600,int(sw*.94))
@@ -668,6 +668,7 @@ class Console(UIScaleMixin, GamepadMixin, SpatialMixin, StudioMixin, tk.Tk):
     def _robot_info(self):
         top=tk.Frame(self.robot_info_page,bg=BG); top.pack(fill='x',pady=(10,4))
         self.label(top,'SEER 로봇 실시간 운영 정보 · API 1000/1002/1007/1100/1101',12,INK,True,bg=BG).pack(side='left')
+        self.button(top,'실기 연동 현황',self._studio_real_capabilities).pack(side='right',padx=6)
         self.robot_info_status=self.label(top,'연결 대기',9,MUTED,bg=BG); self.robot_info_status.pack(side='right')
         self.robot_info_text=tk.Text(self.robot_info_page,bg=WHITE,fg=INK,insertbackground=INK,font=(self.font,10),relief='flat',padx=16,pady=14,state='disabled',wrap='none')
         self.robot_info_text.pack(fill='both',expand=True,pady=(4,10))

@@ -19,6 +19,7 @@ from .fairino_api import validate as validate_fr5
 from .obstacle_ui import ObstacleUIMixin
 from .route_planner import plan_stops, plan_actions, adjacency, upgrade_loop_chain
 
+from .hardware_capabilities import FEATURES,controller_identity,real_state_event
 from .theme import PANEL, INK, MUTED, GREEN, ORANGE, RED
 SETTINGS=Path.home()/'.seer_amr_console'/'studio_settings.json'
 
@@ -26,6 +27,9 @@ SETTINGS=Path.home()/'.seer_amr_console'/'studio_settings.json'
 class ConsoleAdapter:
     def __init__(self,console):self.c=console;self.context={};self.motion=(0.,0.)
     def mission_started(self,index):
+        runner=getattr(self.c,'studio_runner',None)
+        if runner and runner.report:
+            runner.report.metadata=dict(backend='REAL' if self.c.real else 'SIM',controller=controller_identity(getattr(self.c,'raw',{})) if self.c.real else {},hardware_verified=False)
         if not self.c.real and index==0:
             self.c.sim.skipped_goals.clear();self.c.sim.skip_result=None
 
@@ -340,6 +344,24 @@ class StudioMixin(FairinoUIMixin,ObstacleUIMixin):
         self.studio_action_tree.pack(fill='both',expand=True,padx=12,pady=8)
         self._studio_note(page,'Taskchain의 모든 체크된 Task/Group을 순서대로 실행합니다. Branch DI의 target은 1부터 시작하는 단계 번호입니다. 실패한 장비 명령은 자동 재전송하지 않습니다. 실패 단계 재개 버튼은 사용자가 재실행을 선택하는 기능입니다.')
 
+    def _studio_real_capabilities(self):
+        win=tk.Toplevel(self);win.title('실기 연동 현황');self._fit_dialog(win,1150,700)
+        identity=controller_identity(self.raw)
+        ttk.Label(win,text='수신된 제어기 정보: '+json.dumps(identity,ensure_ascii=False)).pack(anchor='w',padx=10,pady=8)
+        ttk.Label(win,text='API 연동은 실제 장비 검증 완료를 뜻하지 않습니다. SIM 장애물 설정은 현재 실기 제어기에 전송되지 않습니다.').pack(anchor='w',padx=10)
+        frame=ttk.Frame(win);frame.pack(fill='both',expand=True,padx=10,pady=8)
+        tree=ttk.Treeview(frame,columns=('feature','sim','real','required'),show='headings')
+        for key,title,width in [('feature','기능',230),('sim','SIM',140),('real','현재 실기 구현',250),('required','동일 동작을 위한 확인/추가 구현',470)]:
+            tree.heading(key,text=title);tree.column(key,width=width,minwidth=80)
+        for row in FEATURES:tree.insert('','end',values=row)
+        ybar=ttk.Scrollbar(frame,orient='vertical',command=tree.yview);ybar.pack(side='right',fill='y')
+        xbar=ttk.Scrollbar(frame,orient='horizontal',command=tree.xview);xbar.pack(side='bottom',fill='x')
+        tree.configure(yscrollcommand=ybar.set,xscrollcommand=xbar.set);tree.pack(fill='both',expand=True)
+        def export():
+            name=filedialog.asksaveasfilename(parent=win,defaultextension='.json',initialfile='real_robot_capabilities.json')
+            if name:self.guarded(lambda:Path(name).write_text(json.dumps(dict(controller=identity,hardware_verified=False,features=[dict(zip(('feature','sim','real','required'),row)) for row in FEATURES]),ensure_ascii=False,indent=2),encoding='utf-8'))
+        self.button(win,'연동 현황 저장',export).pack(pady=8)
+
     def _studio_report(self,report=None):
         report=report or self.studio_runner.report
         if report is None:
@@ -378,6 +400,12 @@ class StudioMixin(FairinoUIMixin,ObstacleUIMixin):
         if report is None:return
         if getattr(self,'_mission_audit_report',None) is not report:
             self._mission_audit_report=report;self._mission_audit_state=None
+        if runner.active and self.real:
+            event=real_state_event(self.current_state())
+            event_key=(runner.cycle,runner.index,event)
+            if event_key!=self._mission_audit_state:
+                report.add(runner.cycle,runner.index,'실기 제어기 상태',runner.actions[runner.index].get('goal',''),event)
+                self._mission_audit_state=event_key
         if runner.active and not self.real:
             import re
             raw=(self.sim.block_reason,self.sim.auto_obstacle_status,self.sim.avoidance_status)
