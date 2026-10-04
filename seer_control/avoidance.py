@@ -9,6 +9,25 @@ def clear_segment(model,a,b,radius):
     return not path_clearance(model,a,[b],radius,math.dist(a,b))[1]
 
 
+def nearest_clear_rejoin(model,start,reference,radius):
+    """Short connector to the nearest original point, if onward travel is safe."""
+    if len(reference)<2:return None
+    candidates=[]
+    for i,(a,b) in enumerate(zip(reference,reference[1:])):
+        dx,dy=b[0]-a[0],b[1]-a[1];sq=dx*dx+dy*dy
+        t=max(0.,min(1.,((start[0]-a[0])*dx+(start[1]-a[1])*dy)/sq)) if sq else 0.
+        p=(a[0]+dx*t,a[1]+dy*t);candidates.append((math.dist(start,p),i,p))
+    distance,i,p=min(candidates)
+    if distance<=.05:return None
+    tail=[p]+reference[i+1:]
+    if not clear_segment(model,start,p,radius+.04):return None
+    if path_clearance(model,p,tail[1:],radius+.04,1.)[1]:return None
+    points=[start]+tail
+    speed=getattr(model,'robot_model',{}).get('maxspeed',.45)
+    if projected_conflict(model,start,points[1:],radius,speed):return None
+    return points
+
+
 def rejoin_detour(model,start,reference,radius,safety_margin=.04,risk_aware=False):
     """Bypass the first blocked interval, then retain the original polyline."""
     if len(reference)<2:return None
@@ -23,6 +42,16 @@ def rejoin_detour(model,start,reference,radius,safety_margin=.04,risk_aware=Fals
     for a,b in zip(remaining,remaining[1:]):
         count=max(1,math.ceil(math.dist(a,b)/.12))
         samples.extend((a[0]+(b[0]-a[0])*j/count,a[1]+(b[1]-a[1])*j/count) for j in range(1,count+1))
+    # Once already beyond a blocker, merge at the nearest safe projection.
+    # Do not keep following an old detour just because no blocker remains ahead.
+    ahead_blocked=any(collision_reason(model,*p,radius+safety_margin) for p in samples)
+    if not ahead_blocked and math.dist(start,projection)>.02:
+        for i,p in enumerate(samples):
+            if collision_reason(model,*p,radius+safety_margin):continue
+            bypass=detour(model,start,p,radius,max_cells=24000,safety_margin=safety_margin,risk_aware=risk_aware)
+            if bypass:return bypass+samples[i+1:]
+            if i>=23:break
+        return None
     blocked=False;attempts=0
     for i,p in enumerate(samples):
         if collision_reason(model,*p,radius+safety_margin):blocked=True;continue
@@ -33,7 +62,7 @@ def rejoin_detour(model,start,reference,radius,safety_margin=.04,risk_aware=Fals
         attempts+=1
         bypass=detour(model,start,p,radius,max_cells=8000,safety_margin=safety_margin,risk_aware=risk_aware)
         if bypass:return bypass+samples[i+1:]
-        if attempts>=6:break
+        if attempts>=24:break
     return None
 
 

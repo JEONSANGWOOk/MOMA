@@ -178,6 +178,7 @@ class Simulator:
         self.avoidance_status=''
         self._avoid_time=0.;self._avoid_next=0.
         self._progress_pose=None;self._progress_at=0.;self._recovery_next=0.
+        self._local_avoidance_active=False;self._rejoin_check_at=0.
         self.applied_limits = dict(DEFAULT_MODEL)
         self.di = {i:False for i in range(64)}
         self.do = {i:False for i in range(64)}
@@ -226,6 +227,7 @@ class Simulator:
         self._reroute_block_at=None;self._reroute_failures=0;self._reroute_forced=False;self.skip_result=None
         self.v = self.w = self.lease = 0
         self._progress_pose=(s.x,s.y,s.theta);self._progress_at=self._avoid_time;self._recovery_next=0.
+        self._local_avoidance_active=False;self._rejoin_check_at=0.
         s.target, s.task, s.mode, s.charging = goal, f'이동 → {goal}', 'RUNNING', False
         if self.obstacle_policy in ('reroute','auto') and self._skipped_context:
             if next_plan:self._apply_alternate(next_plan)
@@ -236,6 +238,7 @@ class Simulator:
             self._skipped_context=(None,start,[(s.x,s.y),(self.map.nodes[start]['x'],self.map.nodes[start]['y'])])
 
     def _apply_alternate(self,plan):
+        self._local_avoidance_active=False
         self.route=list(plan['nodes']);self._waypoints=list(plan['prefix'])
         self._reference_waypoints=list(plan['prefix']);self._segment_start=None
         self._segment_reverse=False;self._velocity=0.;self._arrival_align=False
@@ -246,7 +249,9 @@ class Simulator:
     def _try_local_detour(self,node,radius):
         from .avoidance import detour,rejoin_detour
         s=self.state
-        points=rejoin_detour(self.map,(s.x,s.y),getattr(self,'_reference_waypoints',[]),radius,risk_aware=True)
+        reference=getattr(self,'_reference_waypoints',[])
+        if reference and math.dist(reference[-1],(node['x'],node['y']))>1e-5:reference=[]
+        points=rejoin_detour(self.map,(s.x,s.y),reference,radius,risk_aware=True)
         rejoined=bool(points)
         if not points:points=detour(self.map,(s.x,s.y),(node['x'],node['y']),radius,risk_aware=True)
         if not points and len(self.route)>1:
@@ -256,10 +261,11 @@ class Simulator:
         if not points and not collision_reason(self.map,s.x,s.y,radius) and collision_reason(self.map,s.x,s.y,radius+.04):
             # At a close standstill, relax only the extra planning buffer;
             # preserve the full physical collision radius and swept checks.
-            points=rejoin_detour(self.map,(s.x,s.y),getattr(self,'_reference_waypoints',[]),radius,safety_margin=0,risk_aware=True)
+            points=rejoin_detour(self.map,(s.x,s.y),reference,radius,safety_margin=0,risk_aware=True)
             rejoined=bool(points)
             if not points:points=detour(self.map,(s.x,s.y),(node['x'],node['y']),radius,safety_margin=0,risk_aware=True)
         if not points:return False
+        self._local_avoidance_active=True
         self._waypoints=points[1:];self._segment_reverse=False;self._velocity=0.
         self.avoidance_status='우회 후 기존 경로 복귀' if rejoined else '우회 주행'
         s.blocked=False;self._collision_blocked=False;self._reroute_block_at=None;self._reroute_failures=0
@@ -298,7 +304,10 @@ class Simulator:
                 points=detour(self.map,start,(goal['x'],goal['y']),radius,max_cells=80000,safety_margin=margin,grid_step=.08,risk_aware=True)
             if not points:continue
             if destination!=next_id:self.route=[destination];self._segment_start=None
-            self._waypoints=points[1:];self._reference_waypoints=list(points)
+            self._local_avoidance_active=True
+            self._waypoints=points[1:]
+            # Keep the original segment separate from temporary avoidance points.
+            if destination!=next_id:self._reference_waypoints=list(points)
             self._segment_reverse=False;self._velocity=0.;self._arrival_align=False
             self._reroute_forced=False;self._skipped_context=None
             self._reroute_block_at=None;self._reroute_failures=0
@@ -424,6 +433,7 @@ class Simulator:
         self._arrival_align=False
         s.x,s.y,s.last_node=n['x'],n['y'],n['id']
         self.skipped_goals.pop(n['id'],None)
+        self._local_avoidance_active=False
         self._segment_start=n['id'];self.route.pop(0)
         if not self.route:
             s.mode,s.task,s.target='IDLE','완료','';s.speed=0;self._velocity=0
@@ -493,6 +503,15 @@ class Simulator:
                     if key=='maxrot':value=math.radians(value)
                     limits[key]=min(limits[key],value)
             limits=zone_limits(self.map,s.x,s.y,limits);self.applied_limits=limits
+            if self._local_avoidance_active and self._avoid_time>=self._rejoin_check_at:
+                self._rejoin_check_at=self._avoid_time+.5
+                reference=getattr(self,'_reference_waypoints',[])
+                if reference and math.dist(reference[-1],(n['x'],n['y']))<1e-5:
+                    from .avoidance import nearest_clear_rejoin
+                    merged=nearest_clear_rejoin(self.map,(s.x,s.y),reference,limits['radius'])
+                    if merged:
+                        self._waypoints=merged[1:];self._local_avoidance_active=False
+                        self._velocity=0.;self.avoidance_status='장애물 통과 · 최단 연결로 기존 경로 복귀'
             # An independent progress watchdog also covers repeated heading /
             # collision returns that never reach the normal reroute branch.
             pose=(s.x,s.y,s.theta)
