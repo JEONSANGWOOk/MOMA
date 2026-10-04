@@ -10,6 +10,7 @@ from .world3d import Camera,PRESETS,normalize,cross,subtract,dot
 from .arm_simulation import ArmSimulator
 from .fairino_api import profile,validate
 from .fairino_programs import TEMPLATES,template,library,FORMAT
+from .arm_scene_ui import ArmSceneMixin
 from .theme import PANEL,INK,BLUE,RED
 
 class ArmCanvas(tk.Canvas):
@@ -46,13 +47,16 @@ class ArmCanvas(tk.Canvas):
   if mode=='SIM 개발':assets.append((self.sim.kin.asset,self.sim.kin.positions(self.sim.q),identity(),None,1))
   elif measured:assets.append((self.sim.kin.asset,measured,identity(),None,1))
   if mode=='실기 + SIM 비교':assets.append((self.sim.kin.asset,self.sim.kin.positions(self.sim.q),identity(),'#319fea',.42))
+  show=getattr(self.app,'arm_collision_bounds',None)
+  physical_faces,physical_lines=self.sim.physics.geometry(self.sim.q,show.get() if show else False) if mode!='실기 자세' else ([],[])
+  if mode!='실기 자세' and self.sim.physics.forecast_q is not None:assets.append((self.sim.kin.asset,self.sim.kin.positions(self.sim.physics.forecast_q),identity(),'#ef4e55',.22))
   if renderer:
    from PIL import ImageTk
-   self.render_image=ImageTk.PhotoImage(renderer.render(self.camera,w,h,assets=assets,grid=True))
+   self.render_image=ImageTk.PhotoImage(renderer.render(self.camera,w,h,assets=assets,faces=physical_faces,lines=physical_lines,grid=True))
    self.create_image(0,0,anchor='nw',image=self.render_image,tags='arm_mesh')
   else:
    faces=[]
-   for vertices,color,name in [face for asset,positions,world,tint,alpha in assets for face in [(v,tint or c,n) for v,c,n in asset.draw_faces(positions,world)]]:
+   for vertices,color,name in physical_faces+[face for asset,positions,world,tint,alpha in assets for face in [(v,tint or c,n) for v,c,n in asset.draw_faces(positions,world)]]:
     projected=[self.camera.project(p,w,h) for p in vertices]
     if all(projected):
      normal=normalize(cross(subtract(vertices[1],vertices[0]),subtract(vertices[2],vertices[0])))
@@ -60,6 +64,7 @@ class ArmCanvas(tk.Canvas):
      color='#'+''.join(f'{round(int(color[i:i+2],16)*brightness):02x}' for i in (1,3,5))
      faces.append((sum(p[2] for p in projected)/len(projected),projected,color,name))
    for _,projected,color,name in sorted(faces,key=lambda row:row[0],reverse=True):self.create_polygon(*[v for p in projected for v in p[:2]],fill=color,outline=color,width=.5,tags=('arm_mesh',name))
+  for a,b,color,width in physical_lines:line(a,b,color,width)
   if mode!='실기 자세':
    for a,b in zip(self.sim.trail,self.sim.trail[1:]):line(a,b,'#319fea',2)
   for axis,color,label in [((.25,0,0),'#dc4c4c','X'),((0,.25,0),'#18a36a','Y'),((0,0,.25),'#267dde','Z')]:
@@ -70,11 +75,11 @@ class ArmCanvas(tk.Canvas):
   for axis,color in [((.1,0,0),'#dc4c4c'),((0,.1,0),'#18a36a'),((0,0,.1),'#267dde')]:line(origin,point(t,axis),color,2)
   p=self.camera.project(origin,w,h)
   if p and assets:self.create_oval(p[0]-4,p[1]-4,p[0]+4,p[1]+4,fill='#319fea' if mode!='실기 자세' else '#ef5b4d',outline='white',tags='tcp')
-  status='SIM 개발 — 주황 궤적' if mode=='SIM 개발' else ('REAL 수신 자세 — 원래 색상' if measured else 'REAL 자세 없음 / 수신 지연')
+  status='SIM 개발 — 파란 궤적' if mode=='SIM 개발' else ('REAL 수신 자세 — 원래 색상' if measured else 'REAL 자세 없음 / 수신 지연')
   if mode=='실기 + SIM 비교':status+=' · SIM 예측 — 파란 겹쳐보기'
   self.create_text(12,12,anchor='nw',text=status+'\n'+self.sim.kin.asset.name+' · '+('매끄러운 GPU 표면' if renderer else '기본 표면')+'\n좌드래그 회전 · 우드래그 이동 · 휠 확대',fill='#28405d',font=(self.app.font,9))
 
-class ArmWorkspaceMixin:
+class ArmWorkspaceMixin(ArmSceneMixin):
  def _arm_workspace_build(self):
   page=ttk.Frame(self.tabs);self.tabs.add(page,text='로봇팔 개발');self._register_navigation(page,'로봇팔 개발','⚙');self._sync_navigation();self.arm_workspace_page=page
   saved=self.studio_config.get('arm_workspace',{})
@@ -91,6 +96,8 @@ class ArmWorkspaceMixin:
   except Exception as e:
    self.log('ERROR','로봇팔 개발 설정 복원 실패: '+str(e));asset=RobotDescription.load(self._spatial_demo_path());cfg=profile()
   self.arm_dev_config=cfg;self.arm_dev_urdf=selected;self.arm_dev_sim=ArmSimulator(asset)
+  try:self.arm_dev_sim.physics.restore(saved.get('physics',{}))
+  except Exception as e:self.log('WARN','물리 장면 복원 실패: '+str(e))
   initial=saved.get('joints_rad',[math.radians(v) for v in [0,-90,90,-90,-90,0]] if len(asset.movable())==6 else [0]*len(asset.movable()))
   try:self.arm_dev_sim.q=self.arm_dev_sim.kin.clamp(initial)
   except ValueError:self.log('WARN','저장된 관절값을 복원하지 못해 모델 초기값을 사용합니다.')
@@ -113,7 +120,7 @@ class ArmWorkspaceMixin:
   self.arm_dev_canvas=ArmCanvas(left,self,self.arm_dev_sim);self.arm_dev_canvas.pack(fill='both',expand=True)
   self.arm_dev_feedback=tk.StringVar();ttk.Label(left,textvariable=self.arm_dev_feedback,wraplength=650).pack(fill='x',padx=5,pady=5)
   tabs=ttk.Notebook(right);tabs.pack(fill='both',expand=True)
-  controls=ttk.Frame(tabs);programs=ttk.Frame(tabs);tabs.add(controls,text='관절 / 티칭 / I/O');tabs.add(programs,text='동작 프로그램')
+  controls=ttk.Frame(tabs);programs=ttk.Frame(tabs);tabs.add(controls,text='관절 / 티칭 / I/O');tabs.add(programs,text='동작 프로그램');self._aps_build(tabs)
   holder,inner,_=self._scrollable_frame(controls,bg=PANEL);holder.pack(fill='both',expand=True);self.arm_dev_joint_frame=tk.Frame(inner,bg=PANEL);self.arm_dev_joint_frame.pack(fill='x');self._aw_joint_controls()
   row=self._studio_row(inner);self.arm_dev_op=tk.StringVar(value='new_pose');self.arm_dev_method=tk.StringVar(value='MoveJ')
   ttk.Entry(row,textvariable=self.arm_dev_op,width=19).pack(side='left');ttk.Combobox(row,textvariable=self.arm_dev_method,values=['MoveJ','MoveL','SetDO','SetToolDO','WaitDI','WaitToolDI'],state='readonly',width=11).pack(side='left',padx=3)
@@ -211,17 +218,17 @@ class ArmWorkspaceMixin:
   elif self.arm_dev_sim.state=='PAUSED':self.arm_dev_sim.state='RUNNING'
  def _aw_stop(self):self.arm_dev_sim.stop()
  def _aw_save(self):
-  validate(self.arm_dev_config);self.studio_config['arm_workspace']=dict(urdf=self.arm_dev_urdf,joints_rad=self.arm_dev_sim.q,operations=copy.deepcopy(self.arm_dev_config['operations']),programs=copy.deepcopy(self.arm_dev_config['programs']));self._studio_save_settings();self.log('SIM','로봇팔 개발 설정 저장')
+  validate(self.arm_dev_config);self.studio_config['arm_workspace']=dict(urdf=self.arm_dev_urdf,joints_rad=self.arm_dev_sim.q,operations=copy.deepcopy(self.arm_dev_config['operations']),programs=copy.deepcopy(self.arm_dev_config['programs']),physics=self.arm_dev_sim.physics.snapshot());self._studio_save_settings();self.log('SIM','로봇팔 개발 설정 저장')
  def _aw_load_urdf(self):
   if self.arm_dev_sim.state in ('RUNNING','PAUSED'):raise ValueError('재생 정지 후 모델을 변경하세요.')
   path=filedialog.askopenfilename(filetypes=[('URDF','*.urdf')])
   if not path:return
-  asset=RobotDescription.load(path);self.arm_dev_sim=ArmSimulator(asset);self.arm_dev_canvas.sim=self.arm_dev_sim;self.arm_dev_urdf=path;self._aw_joint_controls();self.arm_dev_canvas.fit()
+  asset=RobotDescription.load(path);scene=self.arm_dev_sim.physics.snapshot();self.arm_dev_sim=ArmSimulator(asset);self.arm_dev_sim.physics.restore(scene);self.arm_dev_canvas.sim=self.arm_dev_sim;self.arm_dev_urdf=path;self._aw_joint_controls();self.arm_dev_canvas.fit()
   if asset.warnings:self.log('WARN','URDF: '+'; '.join(asset.warnings))
  def _aw_use_official(self,path):
   if self.arm_dev_sim.state in ('RUNNING','PAUSED') or self.studio_runner.active:raise ValueError('현재 작업을 정지한 뒤 공식 모델을 적용하세요.')
-  asset=RobotDescription.load(path);previous=list(self.arm_dev_sim.q)
-  self.arm_dev_sim=ArmSimulator(asset);self.arm_dev_sim.q=self.arm_dev_sim.kin.clamp(previous if len(previous)==6 else [0]*6)
+  asset=RobotDescription.load(path);previous=list(self.arm_dev_sim.q);scene=self.arm_dev_sim.physics.snapshot()
+  self.arm_dev_sim=ArmSimulator(asset);self.arm_dev_sim.physics.restore(scene);self.arm_dev_sim.q=self.arm_dev_sim.kin.clamp(previous if len(previous)==6 else [0]*6)
   self.arm_dev_canvas.sim=self.arm_dev_sim;self.arm_dev_urdf=str(path);self._aw_joint_controls();self.arm_dev_display_q=None;self.arm_dev_canvas.fit();self._aw_save()
   # Apply the same model in the AMR + arm viewer without transmitting hardware commands.
   old_joints=self.world3d.arm_asset.movable();old_values=self.sim.arm.get('joint_positions',{})
@@ -253,7 +260,7 @@ class ArmWorkspaceMixin:
   if path:
    value=library(self.arm_dev_config);value['simulation_model']=self.arm_dev_urdf;value['hardware_verified']=False;Path(path).write_text(json.dumps(value,ensure_ascii=False,indent=2),encoding='utf-8')
  def _aw_report(self):
-  win=tk.Toplevel(self);win.title('로봇팔 SIM 실행 이력');self._fit_dialog(win,650,400);box=tk.Text(win,wrap='word');box.pack(fill='both',expand=True);box.insert('1.0',json.dumps(dict(status=self.arm_dev_sim.state,error=self.arm_dev_sim.error,events=self.arm_dev_sim.events),ensure_ascii=False,indent=2));box.configure(state='disabled')
+  win=tk.Toplevel(self);win.title('로봇팔 SIM 실행 이력');self._fit_dialog(win,650,400);box=tk.Text(win,wrap='word');box.pack(fill='both',expand=True);box.insert('1.0',json.dumps(dict(status=self.arm_dev_sim.state,error=self.arm_dev_sim.error,events=self.arm_dev_sim.events,physics_events=self.arm_dev_sim.physics.events),ensure_ascii=False,indent=2));box.configure(state='disabled')
  def _aw_tick(self):
   if not self.winfo_exists():return
   now=time.monotonic();self.arm_dev_sim.tick(min(.15,now-self.arm_dev_time));self.arm_dev_time=now
@@ -263,5 +270,5 @@ class ArmWorkspaceMixin:
     for joint,v,q in zip(self.arm_dev_sim.kin.joints,self.arm_dev_vars,self.arm_dev_sim.q):v.set(round(q if joint['type']=='prismatic' else math.degrees(q),3))
     self.arm_dev_syncing=False;self.arm_dev_display_q=tuple(self.arm_dev_sim.q)
    pose=self.arm_dev_sim.kin.pose(self.arm_dev_sim.q);self.arm_dev_feedback.set(f'{self.arm_dev_sim.state} · 단계 {min(self.arm_dev_sim.index+1,len(self.arm_dev_sim.actions))}/{len(self.arm_dev_sim.actions)} · TCP [mm/도]: '+', '.join(f'{v:.1f}' for v in pose)+(' · '+self.arm_dev_sim.error if self.arm_dev_sim.error else ''))
-   self.arm_dev_io_text.set(json.dumps(self.arm_dev_sim.io,ensure_ascii=False));self.arm_dev_canvas.render()
+   self.arm_dev_io_text.set(json.dumps(self.arm_dev_sim.io,ensure_ascii=False));self._aps_refresh();self.arm_dev_canvas.render()
   self.after(80,self._aw_tick)

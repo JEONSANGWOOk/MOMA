@@ -3,6 +3,7 @@ import copy
 import math
 from .geometry3d import transform
 from .fairino_api import vector
+from .arm_physics import ArmPhysics
 from .fairino_programs import program_actions
 
 def wrap(v):return (v+math.pi)%(2*math.pi)-math.pi
@@ -72,11 +73,13 @@ class ArmSimulator:
  def __init__(self,asset):
   self.kin=ArmKinematics(asset);self.q=self.kin.clamp([0.]*len(self.kin.joints));self.state='IDLE'
   self.actions=[];self.index=0;self.elapsed=0.;self.entered=False;self.path=[];self.path_time=0.
+  self.physics=ArmPhysics(self.kin)
   self.io={'DO':{},'ToolDO':{},'DI':{},'ToolDI':{}};self.events=[];self.error='';self.trail=[]
  def set_joints(self,q):
   if self.state in ('RUNNING','PAUSED'):raise ValueError('재생을 정지한 뒤 관절을 조절하세요.')
   checked=self.kin.clamp(q)
   if any(abs(a-b)>1e-7 for a,b in zip(q,checked)):raise ValueError('URDF 관절 범위를 벗어났습니다.')
+  self.physics.check_motion(self.q,checked)
   self.q=checked
  def start(self,config,program=None,operation=None):
   from .fairino_api import validate
@@ -87,6 +90,7 @@ class ArmSimulator:
   # Check all referenced operations before any simulated movement.
   for a in self.actions:
    if a['type']=='Arm Action' and a['operation'] not in config['operations']:raise ValueError('미등록 작업: '+str(a['operation']))
+  self.physics.blocked=[];self.physics.future_risk=[];self.physics.forecast_q=None
   self.state='RUNNING';self.index=0;self.elapsed=0;self.entered=False;self.error='';self.events=[];self.trail=[]
  def stop(self):
   if self.state in ('RUNNING','PAUSED'):self.events.append(dict(step=self.index+1,result='취소'))
@@ -114,7 +118,9 @@ class ArmSimulator:
   elif method.startswith('Set'):
    self.io['ToolDO' if method=='SetToolDO' else 'DO'][spec['id']]=spec['status']
  def tick(self,dt):
-  if self.state!='RUNNING':return
+  dt=max(0.,float(dt))
+  if self.state!='RUNNING':
+   self.physics.advance(self.q,self.io,dt);return
   a=self.actions[self.index]
   try:
    if not self.entered:self._enter(a)
@@ -126,7 +132,11 @@ class ArmSimulator:
     spec=self.config['operations'][a['operation']];method=spec['method']
     if method in ('MoveJ','MoveL'):
      ratio=min(1.,self.elapsed/self.path_time)*(len(self.path)-1);i=min(len(self.path)-2,int(ratio));fraction=ratio-i
-     self.q=[a+(b-a)*fraction for a,b in zip(self.path[i],self.path[i+1])];done=self.elapsed>=self.path_time
+     target=[a+(b-a)*fraction for a,b in zip(self.path[i],self.path[i+1])]
+     future=min(1.,(self.elapsed+.25)/self.path_time)*(len(self.path)-1);fi=min(len(self.path)-2,int(future));ff=future-fi
+     self.physics.forecast([a+(b-a)*ff for a,b in zip(self.path[fi],self.path[fi+1])])
+     self.physics.check_motion(self.q,target)
+     self.q=target;done=self.elapsed>=self.path_time
      p=tuple(v/1000 for v in self.kin.pose(self.q)[:3])
      if not self.trail or math.dist(p,self.trail[-1])>.002:self.trail.append(p);self.trail=self.trail[-800:]
     elif method.startswith('Wait'):done=self.io['ToolDI' if method=='WaitToolDI' else 'DI'].get(spec['id'],0)==spec['status']
@@ -137,3 +147,4 @@ class ArmSimulator:
     if self.index>=len(self.actions):self.state='COMPLETED'
   except Exception as error:
    self.error=str(error);self.state='FAILED';self.events.append(dict(step=self.index+1,operation=a.get('operation','대기'),result='실패',detail=self.error))
+  finally:self.physics.advance(self.q,self.io,dt)
