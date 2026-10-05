@@ -16,6 +16,8 @@ class ObstacleUIMixin:
         choice.pack(fill='x');choice.bind('<<ComboboxSelected>>',lambda event:self._sim_obstacle_change())
         self.blocked_recovery_enabled=tk.BooleanVar(value=True)
         tk.Checkbutton(body,text='BLOCKED 회복 · 뒤쪽 우선 / 제한 후진 우회',variable=self.blocked_recovery_enabled,bg=PANEL,command=self._blocked_recovery_save).pack(anchor='w')
+        self.prefer_line_rejoin=tk.BooleanVar(value=True)
+        tk.Checkbutton(body,text='장애물만 우회 / 원래 경로 최단 복귀 우선',variable=self.prefer_line_rejoin,bg=PANEL,command=self._line_rejoin_save).pack(anchor='w')
         self.prefer_graph_routes=tk.BooleanVar(value=True)
         tk.Checkbutton(body,text='전체 경로 검사 / 시간·안전 우선 탐색',variable=self.prefer_graph_routes,bg=PANEL,command=self._route_preference_save).pack(anchor='w')
         self.button(body,'상호 정지 자동 해소 적용',lambda:self.guarded(self._deadlock_preset)).pack(fill='x',pady=2)
@@ -58,6 +60,7 @@ class ObstacleUIMixin:
         self.dynamic_paused.set(bool(self.studio_config.get('dynamic_paused',False)))
         self.prefer_graph_routes.set(bool(self.studio_config.get('prefer_graph_routes',True)))
         self.blocked_recovery_enabled.set(bool(self.studio_config.get('blocked_recovery_enabled',True)));self.sim.blocked_recovery.enabled=self.blocked_recovery_enabled.get()
+        self.prefer_line_rejoin.set(bool(self.studio_config.get('prefer_line_rejoin',True)));self.sim.prefer_line_rejoin=self.prefer_line_rejoin.get()
         self.actor_draft=None
         self.reroute_wait.set(str(self.studio_config.get('reroute_wait_s',5)))
         self.reroute_attempts.set(str(self.studio_config.get('reroute_attempts',3)))
@@ -66,6 +69,10 @@ class ObstacleUIMixin:
         self.sim.blocked_recovery.enabled=self.blocked_recovery_enabled.get()
         if not self.sim.blocked_recovery.enabled:self.sim.blocked_recovery.reset()
         self.studio_config['blocked_recovery_enabled']=self.blocked_recovery_enabled.get();self._studio_save_settings()
+
+    def _line_rejoin_save(self):
+        self.sim.prefer_line_rejoin=self.prefer_line_rejoin.get()
+        self.studio_config['prefer_line_rejoin']=self.prefer_line_rejoin.get();self._studio_save_settings()
 
     def _route_preference_save(self):
         self.studio_config['prefer_graph_routes']=self.prefer_graph_routes.get()

@@ -74,7 +74,9 @@ class BlockedRecovery:
    s.blocked=False;sim._collision_blocked=False;return True
   node=sim.map.nodes[sim.route[0]];goal=(node['x'],node['y']);points=None
   if self.priority==1 and self.rear and math.dist(origin,self.rear)>.04 and clear_segment(sim.map,origin,self.rear,r+.01):
-   tail=detour(sim.map,self.rear,goal,r,safety_margin=self.side_margin,max_cells=40000,risk_aware=True)
+   reference=getattr(sim,'_reference_waypoints',[])
+   tail=rejoin_detour(sim.map,self.rear,reference,r,safety_margin=self.side_margin,risk_aware=True) if reference and math.dist(reference[-1],goal)<1e-5 else None
+   if not tail:tail=detour(sim.map,self.rear,goal,r,safety_margin=self.side_margin,max_cells=40000,risk_aware=True)
    if tail:points=[origin]+tail
   if points is None and self.priority==2:
    reference=getattr(sim,'_reference_waypoints',[])

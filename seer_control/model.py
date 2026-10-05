@@ -180,7 +180,7 @@ class Simulator:
         self._progress_pose=None;self._progress_at=0.;self._recovery_next=0.
         self._local_avoidance_active=False;self._rejoin_check_at=0.
         from .blocked_recovery import BlockedRecovery
-        self.blocked_recovery=BlockedRecovery();self._recovery_narrow=False
+        self.blocked_recovery=BlockedRecovery();self._recovery_narrow=False;self.prefer_line_rejoin=False
         self.applied_limits = dict(DEFAULT_MODEL)
         self.di = {i:False for i in range(64)}
         self.do = {i:False for i in range(64)}
@@ -248,6 +248,21 @@ class Simulator:
         self._reroute_forced=False;self._skipped_context=None
         self._reroute_block_at=None;self._reroute_failures=0
         self.avoidance_status='다른 연결 경로 탐색 완료 · '+ ' → '.join(plan['nodes'])
+
+    def _try_line_bypass(self,node,radius):
+        """Keep the nominal line; replace only its currently obstructed interval."""
+        from .avoidance import rejoin_detour
+        reference=getattr(self,'_reference_waypoints',[])
+        if len(reference)<2 or math.dist(reference[-1],(node['x'],node['y']))>1e-5:return False
+        points=rejoin_detour(self.map,(self.state.x,self.state.y),reference,radius,
+                            safety_margin=.01 if self._recovery_narrow else .04,risk_aware=True)
+        if not points:return False
+        self._waypoints=points[1:];self._local_avoidance_active=True;self._segment_reverse=False
+        self._velocity=0.;self._arrival_align=False
+        self.state.blocked=False;self._collision_blocked=False;self.block_reason=''
+        self._reroute_block_at=None;self._reroute_failures=0
+        self.avoidance_status='장애물 구간만 우회 → 원래 경로 복귀'
+        return True
 
     def _try_local_detour(self,node,radius):
         from .avoidance import detour,rejoin_detour
@@ -566,7 +581,7 @@ class Simulator:
                 angle1=math.atan2(b[1]-a[1],b[0]-a[0]);angle2=math.atan2(c[1]-b[1],c[0]-b[0])
                 curvature=abs(math.atan2(math.sin(angle2-angle1),math.cos(angle2-angle1)))/max(.001,(ab+bc)/2)
                 if curvature>1e-6:desired=min(desired,limits['maxrot']/curvature)
-            if self.prefer_graph_routes and self.obstacle_policy in ('auto','reroute') and self._avoid_time>=self._route_scan_next:
+            if self.prefer_graph_routes and not (self.prefer_line_rejoin and self._local_avoidance_active) and self.obstacle_policy in ('auto','reroute') and self._avoid_time>=self._route_scan_next:
                 self._route_scan_next=self._avoid_time+1.
                 remaining=self.navigation_points()[1:];previous=(s.x,s.y);horizon=0.
                 for point in remaining:horizon+=math.dist(previous,point);previous=point
@@ -577,6 +592,7 @@ class Simulator:
                     scenario=(obs or {}).get('auto_scenarios',{}).get(kind,self.auto_scenarios[kind])
                     permit=scenario not in ('wait','stop')
                 if ahead_reason and permit:
+                    if self.prefer_line_rejoin and not self._local_avoidance_active and not self._reroute_forced and self._try_line_bypass(n,limits['radius']):return
                     from .alternate_routes import alternate_route
                     plan=alternate_route(self.map,(s.x,s.y),s.target,self._segment_start,self.route[0],getattr(self,'_reference_waypoints',[]),limits['radius'],include_dynamic=True,optimize=True)
                     if plan:
@@ -650,6 +666,7 @@ class Simulator:
                     retry_wait=0 if self.obstacle_policy=='auto' and self._reroute_failures==0 else self.reroute_wait_s
                     if self.obstacle_policy=='auto':self.avoidance_status=f'자동 다른 경로 탐색 · 재시도 대기 {elapsed:.1f}/{retry_wait:.1f}s · 실패 {self._reroute_failures}/{self.reroute_attempt_limit}'
                     if elapsed>=retry_wait:
+                        if self.prefer_line_rejoin and not self._reroute_forced and self._try_line_bypass(n,limits['radius']):return
                         from .alternate_routes import alternate_route
                         context=self._skipped_context or (self._segment_start,self.route[0],getattr(self,'_reference_waypoints',[]))
                         plan=alternate_route(self.map,(s.x,s.y),s.target,*context,limits['radius'],include_dynamic=True,optimize=True)

@@ -41,3 +41,26 @@ class RejoinTests(unittest.TestCase):
   s.tick(.1)
   self.assertEqual(s._waypoints[0],(4.,0.));self.assertEqual(s._waypoints[-1],(10,0))
   self.assertIn('최단 연결',s.avoidance_status)
+
+ def test_line_priority_preserves_nominal_reference_with_graph_scan(self):
+  s=Simulator(scene());s.obstacle_policy='auto';s.prefer_graph_routes=True;s.prefer_line_rejoin=True
+  s.auto_scenarios={k:'avoid' for k in s.auto_scenarios};s.navigate('B');s.tick(.1)
+  self.assertTrue(s._local_avoidance_active)
+  self.assertEqual(s._reference_waypoints,[(0.,0.),(10.,0.)])
+  join=next(i for i,p in enumerate(s._waypoints) if p[0]>2.7 and abs(p[1])<1e-8)
+  self.assertLess(s._waypoints[join][0],3.1)
+  self.assertTrue(all(abs(y)<1e-8 for x,y in s._waypoints[join:]))
+ def test_line_priority_reroute_rejoins_then_runs_straight(self):
+  s=Simulator(scene());s.obstacle_policy='reroute';s.prefer_graph_routes=False;s.prefer_line_rejoin=True;s.reroute_wait_s=0;s.navigate('B')
+  seen=False
+  for _ in range(1800):
+   s.tick(.05)
+   seen=seen or s._local_avoidance_active
+   if s.state.x>3.1:self.assertAlmostEqual(s.state.y,0,places=5)
+   if s.state.last_node=='B':break
+  self.assertTrue(seen);self.assertEqual(s.state.last_node,'B')
+ def test_line_priority_does_not_override_explicit_wait(self):
+  s=Simulator(scene());s.obstacle_policy='auto';s.prefer_graph_routes=True;s.prefer_line_rejoin=True
+  s.auto_scenarios={k:'wait' for k in s.auto_scenarios};s.navigate('B')
+  for _ in range(200):s.tick(.1)
+  self.assertTrue(s.state.blocked);self.assertFalse(s._local_avoidance_active)

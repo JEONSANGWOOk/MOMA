@@ -50,3 +50,15 @@ class BlockedTests(unittest.TestCase):
   s=scene();r=s.blocked_recovery;r.begin(s,'배치 장애물');start=(s.state.x,s.state.y,s.state.theta)
   s.map.obstacles.append(dict(x=1,y=.3,radius=.05));r.step(s,.1)
   self.assertEqual((s.state.x,s.state.y,s.state.theta),start);self.assertTrue(s.state.blocked)
+
+ def test_rear_first_plan_rejoins_soon_after_obstacle(self):
+  s=scene();s.map.walls=[[-1,-1,10,-1],[10,-1,10,1],[10,1,-1,1],[-1,1,-1,-1]];s.map.nodes['B']['x']=8;s._reference_waypoints=[(1.,0.),(8.,0.)]
+  s.blocked_recovery.begin(s,'배치 장애물')
+  for _ in range(100):
+   s.blocked_recovery.step(s,.1)
+   if not s.blocked_recovery.active:break
+  self.assertFalse(s.blocked_recovery.active)
+  join=next(i for i,p in enumerate(s._waypoints) if p[0]>1.85 and abs(p[1])<1e-8)
+  self.assertLess(s._waypoints[join][0],2.4)
+  self.assertTrue(all(abs(y)<1e-8 for x,y in s._waypoints[join:]))
+  self.assertEqual(s._reference_waypoints,[(1.,0.),(8.,0.)])
