@@ -8,6 +8,7 @@ from .voice_runtime import Recorder,transcribe,interpret,request,speak
 from .voice_setup import install_whisper,install_ollama,start_server,pull,stop_server
 from .fairino_api import validate as validate_fr5
 from .fairino_programs import program_actions
+from .mission_preview import MissionMapPreview
 from .theme import PANEL,INK,MUTED,BLUE,RED
 class VoiceMixin:
  def _voice_build(self):
@@ -18,20 +19,30 @@ class VoiceMixin:
   self.voice_llm=tk.BooleanVar(value=cfg.get('llm',True));self.voice_auto_sim=tk.BooleanVar(value=cfg.get('auto_sim',True));self.voice_talk=tk.BooleanVar(value=cfg.get('talk',True));self.voice_real=tk.BooleanVar(value=False)
   self.voice_url=tk.StringVar(value=cfg.get('url','http://127.0.0.1:12634'));self.voice_model=tk.StringVar(value=cfg.get('model','qwen3:1.7b'))
   page=ttk.Frame(self.tabs);self.tabs.add(page,text='음성 / LLM 명령');self._register_navigation(page,'음성 / LLM 명령','🎙');self._sync_navigation();self.voice_page=page
-  holder,body,_=self._scrollable_frame(page,bg=PANEL);holder.pack(fill='both',expand=True)
+  split=ttk.Panedwindow(page,orient='horizontal');split.pack(fill='both',expand=True)
+  controls=ttk.Frame(split);map_panel=ttk.Frame(split);split.add(controls,weight=1);split.add(map_panel,weight=1)
+  def balance(event):
+   if event.width>500 and not getattr(split,'balanced',False):split.sashpos(0,int(event.width*.53));split.balanced=True
+  split.bind('<Configure>',balance)
+  holder,body,_=self._scrollable_frame(controls,bg=PANEL);holder.pack(fill='both',expand=True)
+  self.voice_map_goals=[];self.voice_map_context=None;self.voice_map_info=tk.StringVar(value='미션 대기')
+  ttk.Label(map_panel,text='미션 실시간 지도 · 파랑: 계획 / 초록: 현재 주행').pack(anchor='w',padx=8,pady=6)
+  self.voice_map=VoiceMissionMap(map_panel,self,width=520,height=400);self.voice_map.pack(fill='both',expand=True,padx=6)
+  ttk.Label(map_panel,textvariable=self.voice_map_info,wraplength=450).pack(fill='x',padx=8,pady=6)
+  self.button(map_panel,'지도 맞춤',self.voice_map.fit).pack(anchor='w',padx=8,pady=4)
   self._studio_note(body,'내장 마이크로 입력 → 명령/노드 확인 → 기존 주행·팔 작업 실행. 스피커로 응답. 상시 녹음하지 않습니다. 마이크 녹음은 최대 10초입니다.')
   row=self._studio_row(body)
   self.voice_record_button=self.button(row,'🎙 녹음 시작 / 인식',lambda:self.guarded(self._voice_record),BLUE);self.voice_record_button.pack(side='left',padx=3)
   self.button(row,'모두 정지',lambda:self.guarded(lambda:self._voice_dispatch({'action':'stop'})),RED).pack(side='left',padx=3)
   self.button(row,'지도 보기',lambda:self.tabs.select(self.operation_page)).pack(side='left',padx=3)
   ttk.Label(body,textvariable=self.voice_status,wraplength=1100).pack(fill='x',padx=14,pady=8)
-  row=self._studio_row(body);ttk.Entry(row,textvariable=self.voice_input,width=65).pack(side='left',fill='x',expand=True)
+  row=self._studio_row(body);ttk.Entry(row,textvariable=self.voice_input,width=22).pack(side='left',fill='x',expand=True)
   self.button(row,'명령 해석',lambda:self.guarded(lambda:self._voice_submit(self.voice_input.get()))).pack(side='left',padx=3)
   self.button(row,'미리보기 명령 실행',lambda:self.guarded(self._voice_execute),BLUE).pack(side='left',padx=3)
   for title,var in [('불분명한 표현은 로컬 LLM으로 해석',self.voice_llm),('SIM 명령 자동 실행',self.voice_auto_sim),('스피커 음성 응답',self.voice_talk),('이번 실행에서 REAL 음성 명령 허용 (미리보기 후 실행 버튼)',self.voice_real)]:
    tk.Checkbutton(body,text=title,variable=var,bg=PANEL,command=self._voice_save).pack(anchor='w',padx=14)
   self._studio_note(body,'예: LM3로 이동해 / LM1에서 LM3로 이동해 / LM2, LM7, LM8 순서로 이동해 / LM1, LM3 세 바퀴 돌아 / 현재 위치 알려줘 / 미션 일시정지 / 미션 재개 / 미션 취소 / 로봇팔 안전 자세로 이동해. 그 밖의 팔 작업은 등록된 작업명으로 요청하세요.')
-  self.voice_preview=tk.Text(body,height=6,wrap='word',bg='#ffffff',fg=INK);self.voice_preview.pack(fill='x',padx=14,pady=5);self.voice_preview.configure(state='disabled')
+  self.voice_preview=tk.Text(body,height=4,wrap='word',bg='#ffffff',fg=INK);self.voice_preview.pack(fill='x',padx=14,pady=5);self.voice_preview.configure(state='disabled')
   row=self._studio_row(body)
   self.button(row,'음성 인식 설치/확인',lambda:self.guarded(lambda:self._voice_install(False))).pack(side='left',padx=3)
   self.button(row,'로컬 LLM 설치/모델 준비',lambda:self.guarded(lambda:self._voice_install(True))).pack(side='left',padx=3)
@@ -168,6 +179,7 @@ class VoiceMixin:
    if action=='loop' and len(nodes)<2:raise ValueError('순환은 노드 두 개 이상을 말하세요.')
    if action=='loop' and nodes[-1]!=nodes[0]:nodes.append(nodes[0])
    actions=[dict(type='Path Nav',goal=n,timeout_s=300) for n in nodes];repeat=command.get('repeats',1);message=' → '.join(nodes)+' 이동 명령을 등록했습니다.'
+  self.voice_map_goals=list(command.get('nodes',[]));self.voice_map_context=self._voice_context()
   self._pad_stop();self.pad_enabled.set(False);self.pad_gate.reset();self.studio_runner.start(actions,repeat);self.task_running=True;self.studio_charge_inhibit=False;self.voice_active_mission=True;self._voice_response(message)
  def _voice_tick(self):
   if self.voice_closed:return
@@ -196,3 +208,34 @@ class VoiceMixin:
   if self.voice_after:self.after_cancel(self.voice_after)
   if self.voice_tts and self.voice_tts.poll() is None:self.voice_tts.terminate()
   stop_server(self.voice_server)
+
+
+class VoiceMissionMap(MissionMapPreview):
+ def __init__(self,parent,app,**kwargs):
+  self.app=app
+  super().__init__(parent,app.map,self.route,lambda:'',app.current_state,lambda key:None,lambda key:None,app._directed_path_exists,**kwargs)
+ def route(self):
+  pending=self.app.voice_pending
+  goals=list(pending[0].get('nodes',[])) if pending and pending[1]==self.app._voice_context() and time.monotonic()<=pending[2] else list(self.app.voice_map_goals) if self.app.voice_map_context==self.app._voice_context() else []
+  goals=[key for key in goals if key in self.model.nodes]
+  if not goals or not self.model.nodes:return []
+  state=self.app.current_state();near=self.model.nearest(state.get('x',0),state.get('y',0))
+  return ([near] if near and near!=goals[0] else [])+goals
+ def redraw(self):
+  self.model=self.app.map
+  super().redraw()
+  state=self.app.current_state()
+  if not self.app.real:
+   points=self.app.sim.navigation_points()
+   if len(points)>1:self.create_line(*[v for p in points for v in self.xy(*p)],fill='#08a86b',width=4,arrow='last',tags='voice_live_route')
+   for obstacle in self.model.obstacles:
+    x,y=self.xy(obstacle.get('x',0),obstacle.get('y',0));radius=max(4,obstacle.get('radius',.3)*self.transform[0])
+    self.create_oval(x-radius,y-radius,x+radius,y+radius,fill='#f3b469',outline='#bc631e',tags='voice_obstacle')
+  pose=self.get_pose()
+  if all(isinstance(pose.get(k),(int,float)) and math.isfinite(pose[k]) for k in ('x','y')):
+   x,y=self.xy(pose['x'],pose['y']);theta=pose.get('theta',0)
+   self.create_oval(x-8,y-8,x+8,y+8,fill='#287de0',outline='white',width=2,tags='voice_robot')
+   self.create_line(x,y,x+18*math.cos(theta),y-18*math.sin(theta),fill='#287de0',width=3,arrow='last')
+  runner=self.app.studio_runner
+  fresh=not self.app.real or self.app.connected and time.monotonic()-self.app.last_state<=3
+  self.app.voice_map_info.set(f"{'REAL' if self.app.real else 'SIM'} · {runner.status} · {state.get('mode','—')}\n직전 {state.get('last_node') or '—'} → 목표 {state.get('target') or '—'}\nX {state.get('x',0):.2f} m / Y {state.get('y',0):.2f} m"+('\n상태 수신 지연 · 위치 확인 필요' if not fresh else '')+('\n'+runner.error if runner.error else ''))

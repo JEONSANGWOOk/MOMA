@@ -20,6 +20,8 @@ with tempfile.TemporaryDirectory() as folder:
   t=time.monotonic();text=transcribe(cache,wav);stt=time.monotonic()-t;print('STT:',text,'seconds',round(stt,2))
   cmd=parse_exact(text,list(app.map.nodes),['safe_pose']);assert cmd and cmd['nodes']==['LM3'],cmd
   app.voice_input.set(text);app._voice_submit(text);assert app.studio_runner.active
+  app._studio_tick(time.monotonic(),.05);app.sim.tick(.05)
+  app.voice_map.redraw();assert app.voice_map.find_withtag('voice_live_route');assert app.voice_map.find_withtag('voice_robot')
   now=time.monotonic()
   for _ in range(1800):
    app.sim.tick(.05);now+=.05;app._studio_tick(now,.05)
