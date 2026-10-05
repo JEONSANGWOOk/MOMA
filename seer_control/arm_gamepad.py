@@ -27,7 +27,7 @@ def sdk_pulse(group,v,w,now,scale=1.):
  return dict(ref=ref,axis=index+1,direction=int(value>0),distance=(.3 if ref==2 and index<3 else .2)*abs(value)*scale,vel=max(.05,5*abs(value)*scale),expires=now+.15)
 
 
-BUTTONS=dict(mode_up=5,mode_down=7,speed_up=11,speed_down=10,gripper=3)
+BUTTONS=dict(mode_up=5,mode_down=7,speed_up=32,speed_down=34,gripper=3)
 SPEEDS=(10,25,50,75,100)
 class ButtonEdges:
  def __init__(self):self.identity=None;self.previous=0

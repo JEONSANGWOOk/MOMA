@@ -23,7 +23,7 @@ with tempfile.TemporaryDirectory() as folder:
   app.pad_arm_group.set('J3 / J4');app._pad_toggle();app._pad_process(sample(),time.monotonic());app._pad_process(sample(.5,0,True),time.monotonic());assert app.arm_dev_sim.q[3]!=q[3]
   app._pad_process(sample(),time.monotonic())
   mode=sample();mode.buttons=32;app._pad_process(mode,time.monotonic());assert app.pad_arm_group.get()=='J5 / J6'
-  app._pad_process(sample(),time.monotonic());speed=sample();speed.buttons=2048;app._pad_process(speed,time.monotonic());assert app.pad_arm_speed.get()==75
+  app._pad_process(sample(),time.monotonic());speed=sample();speed.buttons=1<<32;app._pad_process(speed,time.monotonic());assert app.pad_arm_speed.get()==75
   app._pad_process(sample(),time.monotonic());app.arm_dev_sim.physics.configure(dict(kind='finger'));grip=sample(held=True);grip.buttons|=8;app._pad_process(grip,time.monotonic());assert app.arm_dev_sim.io['ToolDO'][0]==1
   app._pad_process(sample(),time.monotonic());app.update();capture_window(app,Path('artifacts/arm_gamepad_workspace.png'))
   app.pad_target.set('AMR');app._pad_toggle();assert not app.pad_gate.armed

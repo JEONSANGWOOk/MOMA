@@ -53,7 +53,15 @@ class WindowsPad:
             if axis not in supported:continue
             lo,hi=getattr(caps,axis+'min'),getattr(caps,axis+'max')
             if hi>lo:axes[axis]=max(-1.,min(1.,2*(getattr(info,axis)-lo)/(hi-lo)-1))
-        return Sample(axes,info.buttons,time.monotonic(),(index,caps.manufacturer,caps.product,caps.name))
+        return Sample(axes,info.buttons|pov_buttons(info.pov if caps.caps&16 else 65535),time.monotonic(),(index,caps.manufacturer,caps.product,caps.name))
+
+
+def pov_buttons(pov):
+    """WinMM POV hundredths of a degree; diagonal presses include both arrows."""
+    if type(pov) is not int or not 0<=pov<36000:return 0
+    sector=((pov+2250)//4500)%8
+    directions=((0,),(0,1),(1,),(1,2),(2,),(2,3),(3,),(3,0))[sector]
+    return sum(1<<(32+index) for index in directions)
 
 
 def deadzone(value,zone):

@@ -6,7 +6,7 @@ from seer_control.arm_gamepad import sim_jog,sdk_pulse,ButtonEdges,step_group,st
 from seer_control.arm_simulation import ArmSimulator
 from seer_control.geometry3d import RobotDescription
 from seer_control.fairino_api import SDKEngine
-from seer_control.gamepad import PadGate,Sample
+from seer_control.gamepad import PadGate,Sample,pov_buttons
 from seer_control.gamepad_ui import GamepadMixin
 from test_fairino import FakeRobot,config
 ROOT=Path(__file__).resolve().parents[1]
@@ -99,3 +99,12 @@ class ArmPadTests(unittest.TestCase):
   with patch('seer_control.fairino_api.time.monotonic',return_value=11):
    with self.assertRaises(ValueError):e.call('pad_io',dict(operation='grip',expires=10.15))
   r.SetToolDO.assert_not_called()
+
+ def test_pov_arrows_and_diagonals(self):
+  self.assertEqual(pov_buttons(0),1<<32);self.assertEqual(pov_buttons(18000),1<<34)
+  self.assertEqual(pov_buttons(4500),(1<<32)|(1<<33));self.assertEqual(pov_buttons(65535),0)
+ def test_dpad_speed_edge(self):
+  h=Harness();h.pad_arm_speed=Value(50);h._pad_process(h.sample(10),10)
+  s=h.sample(10.05);s.buttons=pov_buttons(0);h._pad_process(s,10.05);self.assertEqual(h.pad_arm_speed.get(),75)
+  h._pad_process(s,10.1);self.assertEqual(h.pad_arm_speed.get(),75)
+  h._pad_process(h.sample(10.15),10.15);s.timestamp=10.2;s.buttons=pov_buttons(18000);h._pad_process(s,10.2);self.assertEqual(h.pad_arm_speed.get(),50)

@@ -25,7 +25,7 @@ class GamepadMixin:
         self.pad_status.pack(fill='x',pady=3)
         row=tk.Frame(body,bg=PANEL);row.pack(fill='x')
         self.button(row,'컨트롤러 검색 / 설정',self._pad_dialog,BLUE).pack(side='left',fill='x',expand=True)
-        self.label(body,'L1: 누르는 동안 조종 · ○: 정지\nAMR: 전후진/회전 · 팔: 선택한 두 축 조절\n팔 R1/R2: 모드 ± · R3/L3: 속도 ±\n△: 그리퍼 ON/OFF (L1 함께 누름)',8,MUTED,justify='left',wraplength=285).pack(fill='x',pady=4)
+        self.label(body,'L1: 누르는 동안 조종 · ○: 정지\nAMR: 전후진/회전 · 팔: 선택한 두 축 조절\n팔 R1/R2: 모드 ± · ↑/↓: 속도 ±\n△: 그리퍼 ON/OFF (L1 함께 누름)',8,MUTED,justify='left',wraplength=285).pack(fill='x',pady=4)
 
     def _pad_mode_controls(self,body):
         row=tk.Frame(body,bg=PANEL);row.pack(fill='x',pady=3)
@@ -133,7 +133,8 @@ class GamepadMixin:
         saved=self.studio_config.get('gamepad',{})
         for key in BUTTONS:
             value=saved.get('arm_'+key)
-            if type(value) is int and 0<=value<32:self.pad_arm_buttons[key]=value
+            if key in ('speed_up','speed_down') and saved.get('arm_buttons_version')!=2:value=None
+            if type(value) is int and 0<=value<36:self.pad_arm_buttons[key]=value
         if isinstance(saved,dict):
             for k in self.pad_config:
                 value=saved.get(k)
@@ -200,7 +201,7 @@ class GamepadMixin:
             else:status='지도 / 제어 화면에서 연결·제어 상태를 확인하세요.'
         identity=self.pad_device[1].name if self.pad_device else '미연결'
         raw=''
-        if sample:raw=' · '.join(f'{k} {value:+.2f}' for k,value in sample.axes.items())+'\n버튼: '+(', '.join(str(i+1) for i in range(32) if sample.buttons&(1<<i)) or '없음')
+        if sample:raw=' · '.join(f'{k} {value:+.2f}' for k,value in sample.axes.items())+'\n버튼: '+(', '.join(str(i+1) for i in range(36) if sample.buttons&(1<<i)) or '없음')
         self.pad_status.configure(text=f'{identity} · {status}\n{raw}')
         if getattr(self,'pad_input_label',None) and self.pad_input_label.winfo_exists():self.pad_input_label.configure(text=self.pad_status.cget('text'))
 
@@ -219,14 +220,14 @@ class GamepadMixin:
         self.button(inner,'선택한 컨트롤러 연결',choose,BLUE).pack(anchor='w',padx=12,pady=5)
         self.pad_input_label=self.label(inner,'장치 선택 후 스틱/버튼의 입력 번호를 확인하세요.',9,MUTED,justify='left');self.pad_input_label.pack(fill='x',padx=12,pady=5)
         variables={}
-        self.label(inner,'팔: R1 다음 모드 / R2 이전 모드 · R3 속도↑ / L3 속도↓ · △ 그리퍼',9,INK).pack(anchor='w',padx=12)
+        self.label(inner,'팔: R1 다음 모드 / R2 이전 모드 · ↑ 속도 증가 / ↓ 속도 감소 · △ 그리퍼',9,INK).pack(anchor='w',padx=12)
         button_vars={}
-        for key,title in [('mode_up','모드 다음 R1'),('mode_down','모드 이전 R2'),('speed_up','속도 증가 R3'),('speed_down','속도 감소 L3'),('gripper','그리퍼 토글')]:
+        for key,title in [('mode_up','모드 다음 R1'),('mode_down','모드 이전 R2'),('speed_up','속도 증가 ↑'),('speed_down','속도 감소 ↓'),('gripper','그리퍼 토글')]:
             row=tk.Frame(inner,bg=PANEL);row.pack(fill='x',padx=12,pady=2)
             self.label(row,title,9,INK,width=25,anchor='w').pack(side='left')
             button_vars[key]=tk.IntVar(value=self.pad_arm_buttons[key]+1)
-            ttk.Combobox(row,textvariable=button_vars[key],values=tuple(range(1,33)),state='readonly',width=8).pack(side='left')
-        self.label(inner,'그리퍼: 기본 △=4번 / ×=2번 / □=1번. 장치 입력 번호 확인 후 변경 가능',8,MUTED).pack(anchor='w',padx=12)
+            ttk.Combobox(row,textvariable=button_vars[key],values=tuple(range(1,37)),state='readonly',width=8).pack(side='left')
+        self.label(inner,'그리퍼: 기본 △=4번 / ×=2번 / □=1번. 33=↑, 34=→, 35=↓, 36=← · 번호 변경 가능',8,MUTED).pack(anchor='w',padx=12)
         tool_vars={}
         operations=self.studio_config.get('arm',{}).get('operations',{})
         for key,status in [('gripper_on',1),('gripper_off',0)]:
@@ -251,7 +252,7 @@ class GamepadMixin:
             used=[config['deadman'],config['stop']]+list(buttons.values())
             if len(set(used))!=len(used):raise ValueError('허용/정지/팔 기능 버튼은 서로 다르게 설정하세요.')
             self._pad_stop();self.pad_gate.reset();self.pad_arm_edges=ButtonEdges();self.pad_config=config;self.pad_arm_buttons=buttons
-            saved=dict(config,**{'arm_'+k:v for k,v in buttons.items()},**{k:v.get() for k,v in tool_vars.items()})
+            saved=dict(config,arm_buttons_version=2,**{'arm_'+k:v for k,v in buttons.items()},**{k:v.get() for k,v in tool_vars.items()})
             self.studio_config['gamepad']=saved;self._studio_save_settings();win.destroy()
         self.label(inner,'설정 중에는 주행하지 않습니다. 창을 닫고 수동 조작 + 조이스틱 사용을 켠 뒤\n스틱 중앙에서 L1을 놓았다가 다시 누르세요. 재연결 시 다시 활성화해야 합니다.',9,MUTED,justify='left').pack(fill='x',padx=12,pady=7)
         tk.Checkbutton(inner,text='이번 실행에서 FR5 실기 조이스틱 JOG 허용 (연결/버전/동작 허용 필요)',variable=self.pad_arm_real,bg=PANEL,command=self._pad_toggle).pack(anchor='w',padx=12)
