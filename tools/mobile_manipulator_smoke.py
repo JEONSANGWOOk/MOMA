@@ -12,13 +12,13 @@ with tempfile.TemporaryDirectory() as folder:
  try:
   app.geometry('1366x768');app.update();app.view_mode.set('3D');app._spatial_switch();v=app.world3d
   assert v.body_asset.name.endswith('Mobile Manipulator')
-  assert v.mount==[.31,0.,.608,0.,0.,0.]
+  assert v.mount==[.34,0.,.626,0.,0.,0.]
   frame=v.body_asset.link_transforms({})['arm_mount_link'];assert all(abs(frame[i][3]-v.mount[i])<1e-9 for i in range(3))
-  for legacy in (.182,.308,.4285):
-   app.studio_config['viewer3d']=dict(mount=[0,0,legacy,0,0,0]);app._spatial_restore();assert v.mount==[.31,0.,.608,0.,0.,0.]
+  for legacy in (.182,.308,.42,.4285):
+   app.studio_config['viewer3d']=dict(mount=[0,0,legacy,0,0,0]);app._spatial_restore();assert v.mount==[.34,0.,.626,0.,0.,0.]
   app.studio_config['viewer3d']=dict(mount=[.25,0,.62,0,0,0]);app._spatial_restore();assert v.mount==[.25,0,.62,0,0,0]
   app.camera_view.set('사진형');app._spatial_camera()
-  v.mount=[.31,0.,.608,0.,0.,0.];v.layers['지도'].set(False);v.layers['좌표축'].set(False)
+  v.mount=[.34,0.,.626,0.,0.,0.];v.layers['지도'].set(False);v.layers['좌표축'].set(False)
   v.camera.target=[app.sim.state.x,app.sim.state.y,.75];v.camera.distance=2.6;v.camera.yaw=135;v.camera.pitch=18
   app._spatial_render();app.update();capture_window(app,Path('artifacts/photo_mobile_manipulator.png'))
   assert not errors,errors

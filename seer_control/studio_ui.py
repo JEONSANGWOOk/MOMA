@@ -47,7 +47,7 @@ class ConsoleAdapter:
         self.motion=(0.,0.)
         if typ=='Path Nav':
             c.studio_command_error=None
-            if not c.studio_arm_safe:raise ValueError('로봇팔 safe_pose 완료 후 AMR를 이동하세요.')
+            if c.real and not c.studio_arm_safe:raise ValueError('로봇팔 safe_pose 완료 후 AMR를 이동하세요.')
             if a['goal'] not in c.map.nodes:raise ValueError('목적지 Point가 없습니다.')
             if c.real:
                 if a['goal'] not in c.robot_stations:raise ValueError('로봇 Station에 없는 목적지입니다.')
@@ -58,7 +58,7 @@ class ConsoleAdapter:
                 c.sim.navigate(a['goal'],route_nodes=None if c.sim.obstacle_policy in ('reroute','auto') else a.get('route_nodes'))
         elif typ in ('Translation','Rotation'):
             c.studio_motion_error=None
-            if not c.studio_arm_safe:raise ValueError('로봇팔 safe_pose 완료 후 AMR를 이동하세요.')
+            if c.real and not c.studio_arm_safe:raise ValueError('로봇팔 safe_pose 완료 후 AMR를 이동하세요.')
             if c.real and (state.get('emergency') or state.get('blocked')):raise ValueError('비상정지/장애물 상태입니다.')
             if typ=='Translation':self.motion=(math.copysign(min(.3,a['speed_mps']),a['distance_m']) if a['distance_m'] else 0.,0.)
             else:self.motion=(0.,math.copysign(min(.6,math.radians(a['speed_dps'])),a['angle_deg']) if a['angle_deg'] else 0.)
@@ -75,7 +75,7 @@ class ConsoleAdapter:
                 elif name=='clear_obstacles':c.map.obstacles=[]
                 else:raise ValueError('SIM Custom Action: set_di / set_battery / clear_obstacles')
         elif typ=='Arm Action':
-            if not standalone and (abs(float(state.get('speed',0)))>.02 or state.get('emergency') or state.get('stopped') or (not c.real and c.sim.route)):
+            if c.real and not standalone and (abs(float(state.get('speed',0)))>.02 or state.get('emergency') or state.get('stopped') or (not c.real and c.sim.route)):
                 raise ValueError('로봇팔 작업 전 AMR 정지 확인이 필요합니다.')
             if c.real:
                 if not standalone and time.monotonic()-c.last_state>3:raise ValueError('AMR 정지 상태 수신이 오래되었습니다.')
@@ -84,19 +84,31 @@ class ConsoleAdapter:
                 config=copy.deepcopy(c.studio_config['arm'])
                 self.context['token']=c._studio_submit(lambda:c._arm_call(config,'execute',a['operation']))
             else:
-                c.sim.arm.update(status='RUNNING',operation=a['operation'],progress=0.)
-                cfg=c.studio_config['arm']
-                if cfg.get('driver')!='fairino':c.sim.arm.pop('joint_positions',None)
-                if cfg.get('driver')=='fairino':
-                    spec=cfg.get('operations',{}).get(a['operation'])
-                    if not spec:raise ValueError('등록되지 않은 FR5 작업: '+a['operation'])
-                    if spec['method']!='MoveJ':raise ValueError('SIM FR5는 MoveJ만 지원합니다. 프로그램의 MoveL/I/O는 실기 개발 화면에서 검증하세요.')
-                    validate_fr5(cfg)
-                    names=[j['name'] for j in c.world3d.arm_asset.movable()]
-                    if len(names)!=6:raise ValueError('SIM FR5는 6축 URDF 모델이 필요합니다.')
-                    current=c.sim.arm.get('joint_positions') or c.world3d.positions['arm']
-                    self.context['joint_start']={n:current.get(n,0.) for n in names}
-                    self.context['joint_target']=dict(zip(names,[math.radians(v) for v in spec['target']]))
+                if hasattr(c,'arm_dev_sim'):
+                    cfg=copy.deepcopy(c.studio_config['arm'] if c.studio_config['arm'].get('driver')=='fairino' else c.arm_dev_config)
+                    if a['operation'] not in cfg.get('operations',{}):
+                        if c.studio_config['arm'].get('driver')=='fairino':raise ValueError('등록되지 않은 FR5 작업: '+a['operation'])
+                        angles=[0,-90,90,-90,-90,0] if a['operation']=='safe_pose' else [40,-57,52,-80,-69,23]
+                        cfg['operations'][a['operation']]=dict(method='MoveJ',target=angles,vel=20,tool=0,user=0)
+                    self.context['arm_config']=cfg;self.context['shared_arm']=c.arm_dev_sim
+                    if c.arm_dev_sim.state in ('RUNNING','PAUSED'):self.context['arm_wait']=True
+                    else:
+                        c.arm_dev_sim.start(cfg,operation=a['operation']);c.arm_sim_owner='mission'
+                    c.sim.arm.update(status='RUNNING',operation=a['operation'],progress=0.)
+                else:
+                    c.sim.arm.update(status='RUNNING',operation=a['operation'],progress=0.)
+                    cfg=c.studio_config['arm']
+                    if cfg.get('driver')!='fairino':c.sim.arm.pop('joint_positions',None)
+                    if cfg.get('driver')=='fairino':
+                        spec=cfg.get('operations',{}).get(a['operation'])
+                        if not spec:raise ValueError('등록되지 않은 FR5 작업: '+a['operation'])
+                        if spec['method']!='MoveJ':raise ValueError('SIM FR5는 MoveJ만 지원합니다. 프로그램의 MoveL/I/O는 실기 개발 화면에서 검증하세요.')
+                        validate_fr5(cfg)
+                        names=[j['name'] for j in c.world3d.arm_asset.movable()]
+                        if len(names)!=6:raise ValueError('SIM FR5는 6축 URDF 모델이 필요합니다.')
+                        current=c.sim.arm.get('joint_positions') or c.world3d.positions['arm']
+                        self.context['joint_start']={n:current.get(n,0.) for n in names}
+                        self.context['joint_target']=dict(zip(names,[math.radians(v) for v in spec['target']]))
             c.studio_arm_safe=False
         c.log('MISSION',f"{c.studio_runner.index+1}단계 시작 · {typ}")
     def _motion(self,active):
@@ -187,6 +199,17 @@ class ConsoleAdapter:
                 if abs(float(current.get('speed',0)))>.02 or current.get('emergency') or current.get('stopped') or current.get('task') in ('RUNNING','WAITING','SUSPENDED'):
                     raise ValueError('FR5 작업 중 AMR 정지 상태가 해제되었습니다.')
             if not c.real:
+                if 'shared_arm' in self.context:
+                    sim=self.context['shared_arm']
+                    if self.context.get('arm_wait'):
+                        if sim.state in ('RUNNING','PAUSED'):return False
+                        sim.start(self.context['arm_config'],operation=a['operation']);c.arm_sim_owner='mission';self.context['arm_wait']=False
+                    sim.tick(dt);c._aw_sync_main()
+                    if sim.state=='FAILED':c.arm_sim_owner='workspace';raise ValueError(sim.error)
+                    if sim.state=='CANCELED':c.arm_sim_owner='workspace';raise ValueError('공유 로봇팔 작업 취소됨')
+                    if sim.state=='COMPLETED':
+                        c.arm_sim_owner='workspace';c.studio_arm_safe=a['operation']=='safe_pose';c.sim.arm['pose']='SAFE' if c.studio_arm_safe else 'WORK';return True
+                    return False
                 progress=min(1.,elapsed/max(.001,a['duration_s']));c.sim.arm['progress']=progress
                 if 'joint_target' in self.context:
                     c.sim.arm['joint_positions']={n:self.context['joint_start'][n]+(v-self.context['joint_start'][n])*progress for n,v in self.context['joint_target'].items()}
@@ -233,12 +256,14 @@ class ConsoleAdapter:
         return a['target'] if value==a['value'] else None
     def pause(self):
         self._motion(False)
+        if not self.c.real and 'shared_arm' in self.context and not self.context.get('arm_wait'):self.context['shared_arm'].state='PAUSED'
         if self.c.real and self.context.get('type')=='Arm Action' and self.c.studio_config['arm'].get('driver')=='fairino':
             cfg=copy.deepcopy(self.c.studio_config['arm'])
             self.c._studio_submit(lambda:self.c._arm_call(cfg,'pause'),lambda r:None)
         if self.c.real and not self.context.get('standalone'):self.c.send_command('pause',{})
         elif not self.c.real:self.c.sim.command('pause')
     def resume(self):
+        if not self.c.real and 'shared_arm' in self.context and not self.context.get('arm_wait'):self.context['shared_arm'].state='RUNNING'
         if self.c.real and self.context.get('type')=='Arm Action' and self.c.studio_config['arm'].get('driver')=='fairino':
             cfg=copy.deepcopy(self.c.studio_config['arm'])
             self.c._studio_submit(lambda:self.c._arm_call(cfg,'resume'),lambda r:None)
@@ -259,6 +284,7 @@ class ConsoleAdapter:
                 if config.get('driver')=='fairino':c._fr5_priority_stop()
                 elif config.get('stop_method'):c._studio_submit(lambda:arm_call(config,'stop'),c._studio_show_device)
         else:
+            if 'shared_arm' in self.context and not self.context.get('arm_wait'):self.context['shared_arm'].stop();c.arm_sim_owner='workspace'
             c.sim.stop();c.sim.arm['status']='CANCELED'
 
 

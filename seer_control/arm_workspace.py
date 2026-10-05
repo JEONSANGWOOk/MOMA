@@ -153,7 +153,7 @@ class ArmWorkspaceMixin(ArmSceneMixin):
   for title,fn in [('프로그램 등록',self._aw_program_save),('SIM 재생',self._aw_play),('일시정지/재개',self._aw_pause),('정지',self._aw_stop)]:self.button(row,title,lambda f=fn:self.guarded(f)).pack(side='left',padx=2)
   row=self._studio_row(inner)
   for title,fn in [('라이브러리 가져오기',self._aw_import),('API 라이브러리 내보내기',self._aw_export),('SIM 실행 이력',self._aw_report)]:self.button(row,title,lambda f=fn:self.guarded(f)).pack(side='left',padx=2)
-  self._aw_refresh_ops();self._aw_program_load();self.arm_dev_time=time.monotonic();self.after(80,self._aw_tick);self.after_idle(self.arm_dev_canvas.fit)
+  self._aw_refresh_ops();self._aw_program_load();self.arm_dev_time=time.monotonic();self.after(80,self._aw_tick);self.after_idle(self.arm_dev_canvas.fit);self._aw_sync_main()
  def _aw_joint_controls(self):
   for w in self.arm_dev_joint_frame.winfo_children():w.destroy()
   self.arm_dev_vars=[]
@@ -164,7 +164,7 @@ class ArmWorkspaceMixin(ArmSceneMixin):
  def _aw_slider(self):
   if getattr(self,'arm_dev_syncing',False) or self.arm_dev_sim.state in ('RUNNING','PAUSED'):return
   self.guarded(self._aw_apply_joints)
- def _aw_apply_joints(self):self.arm_dev_sim.set_joints([v.get() if joint['type']=='prismatic' else math.radians(v.get()) for joint,v in zip(self.arm_dev_sim.kin.joints,self.arm_dev_vars)]);self.arm_dev_canvas.render()
+ def _aw_apply_joints(self):self.arm_dev_sim.set_joints([v.get() if joint['type']=='prismatic' else math.radians(v.get()) for joint,v in zip(self.arm_dev_sim.kin.joints,self.arm_dev_vars)]);self._aw_sync_main();self.arm_dev_canvas.render()
  def _aw_refresh_ops(self):
   self.arm_dev_ops.delete(0,'end')
   for name in self.arm_dev_config['operations']:self.arm_dev_ops.insert('end',name)
@@ -212,11 +212,17 @@ class ArmWorkspaceMixin(ArmSceneMixin):
   self._aw_render_steps()
  def _aw_program_save(self):
   candidate=copy.deepcopy(self.arm_dev_config);candidate['programs'][self.arm_dev_program.get().strip()]=copy.deepcopy(self.arm_dev_steps);validate(candidate);self.arm_dev_config=candidate;self.arm_dev_program_combo.configure(values=list(candidate['programs']))
- def _aw_play(self):self._aw_program_save();self.arm_dev_sim.start(self.arm_dev_config,program=self.arm_dev_program.get().strip())
+ def _aw_play(self):self._aw_program_save();self.arm_dev_sim.start(self.arm_dev_config,program=self.arm_dev_program.get().strip());self.arm_sim_owner='workspace'
  def _aw_pause(self):
+  if getattr(self,'arm_sim_owner','workspace')=='mission' and self.studio_runner.active:
+   if self.studio_runner.status=='PAUSED':self.studio_runner.resume(time.monotonic())
+   else:self.studio_runner.pause(time.monotonic())
+   return
   if self.arm_dev_sim.state=='RUNNING':self.arm_dev_sim.state='PAUSED'
   elif self.arm_dev_sim.state=='PAUSED':self.arm_dev_sim.state='RUNNING'
- def _aw_stop(self):self.arm_dev_sim.stop()
+ def _aw_stop(self):
+  if getattr(self,'arm_sim_owner','workspace')=='mission' and self.studio_runner.active:self.studio_runner.cancel()
+  else:self.arm_dev_sim.stop()
  def _aw_save(self):
   validate(self.arm_dev_config);self.studio_config['arm_workspace']=dict(urdf=self.arm_dev_urdf,joints_rad=self.arm_dev_sim.q,operations=copy.deepcopy(self.arm_dev_config['operations']),programs=copy.deepcopy(self.arm_dev_config['programs']),physics=self.arm_dev_sim.physics.snapshot());self._studio_save_settings();self.log('SIM','로봇팔 개발 설정 저장')
  def _aw_load_urdf(self):
@@ -261,9 +267,27 @@ class ArmWorkspaceMixin(ArmSceneMixin):
    value=library(self.arm_dev_config);value['simulation_model']=self.arm_dev_urdf;value['hardware_verified']=False;Path(path).write_text(json.dumps(value,ensure_ascii=False,indent=2),encoding='utf-8')
  def _aw_report(self):
   win=tk.Toplevel(self);win.title('로봇팔 SIM 실행 이력');self._fit_dialog(win,650,400);box=tk.Text(win,wrap='word');box.pack(fill='both',expand=True);box.insert('1.0',json.dumps(dict(status=self.arm_dev_sim.state,error=self.arm_dev_sim.error,events=self.arm_dev_sim.events,physics_events=self.arm_dev_sim.physics.events),ensure_ascii=False,indent=2));box.configure(state='disabled')
+ def _aw_adopt_loaded_asset(self,asset,path):
+  if self.arm_dev_sim.state in ('RUNNING','PAUSED'):raise ValueError('팔 재생을 정지한 뒤 모델을 변경하세요.')
+  previous=list(self.arm_dev_sim.q);scene=self.arm_dev_sim.physics.snapshot();sim=ArmSimulator(asset)
+  sim.physics.restore(scene);sim.q=sim.kin.clamp(previous if len(previous)==len(sim.kin.joints) else [0]*len(sim.kin.joints))
+  self.arm_dev_sim=sim;self.arm_dev_canvas.sim=sim;self.arm_dev_urdf=str(path);self.arm_dev_display_q=None
+  self._aw_joint_controls();self._aw_sync_main();self.arm_dev_canvas.fit();self._aw_save()
+ def _aw_set_synced_joints(self,q):
+  self.arm_dev_sim.set_joints(q);self._aw_sync_main();self.arm_dev_canvas.render()
+ def _aw_sync_main(self):
+  sim=self.arm_dev_sim;view=self.world3d
+  if view.arm_asset is not sim.kin.asset:view.arm_asset=sim.kin.asset;view.arm_asset.synthetic=True;view.scales['arm']=1.
+  values=sim.kin.positions(sim.q)
+  if not self.real:
+   self.sim.arm['joint_positions']=dict(values);view.positions['arm']=dict(values)
+   self.sim.arm['status']=sim.state;self.sim.arm['progress']=min(1.,sim.index/max(1,len(sim.actions)))
+  if self.view_mode.get()=='3D' and view.winfo_ismapped():self._spatial_render()
  def _aw_tick(self):
   if not self.winfo_exists():return
-  now=time.monotonic();self.arm_dev_sim.tick(min(.15,now-self.arm_dev_time));self.arm_dev_time=now
+  now=time.monotonic()
+  if getattr(self,'arm_sim_owner','workspace')!='mission':self.arm_dev_sim.tick(min(.15,now-self.arm_dev_time))
+  self.arm_dev_time=now;self._aw_sync_main()
   if self.tabs.select()==str(self.arm_workspace_page):
    if tuple(self.arm_dev_sim.q)!=getattr(self,'arm_dev_display_q',None):
     self.arm_dev_syncing=True

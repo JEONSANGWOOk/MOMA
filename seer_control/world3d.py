@@ -61,7 +61,7 @@ class WorldView3D(tk.Canvas):
         self.body_asset=RobotDescription.load(Path(__file__).resolve().parents[1]/'models/seer_sba400eu_description/urdf/mobile_manipulator.urdf');self.cad_asset=None
         self.scales={'arm':1.,'amr':1.,'cad':1.}
         self.positions={'arm':{},'amr':{},'cad':{}}
-        self.mount=[.31,0.,.608,0.,0.,0.];self.cad_origin=[0.,0.,0.,0.,0.,0.]
+        self.mount=[.34,0.,.626,0.,0.,0.];self.cad_origin=[0.,0.,0.,0.,0.,0.]
         self.layers={key:tk.BooleanVar(value=True) for key in ('지도','점군','경로','좌표축','AMR','로봇팔','CAD')}
         self.follow=tk.BooleanVar(value=False);self.arm_follow=tk.BooleanVar(value=True)
         self.chase=False
@@ -135,6 +135,9 @@ class WorldView3D(tk.Canvas):
         asset=self.arm_asset
         if not isinstance(asset,RobotDescription):return {}
         values=self.positions['arm'];joints=asset.movable()
+        dev=getattr(self.app,'arm_dev_sim',None)
+        if not self.app.real and dev is not None:
+            values.clear();values.update(dev.kin.positions(dev.q));self.arm_source='워크스페이스 SIM 동기화';return values
         if self.arm_follow.get() and isinstance(measured,dict) and measured:
             for joint in joints:
                 value=measured.get(joint['name'])
@@ -286,6 +289,12 @@ class WorldView3D(tk.Canvas):
             dev=getattr(self.app,'arm_dev_sim',None)
             if renderer and dev and self.layers['로봇팔'].get():gpu_assets.append((dev.kin.asset,dev.kin.positions(dev.q),multiply(simworld,transform(self.mount[:3],self.mount[3:])),'#319fea',.42))
             texts.append((point(simworld,(0,0,.6)),'SIM 개발 · 파란색','#1687d0'))
+        dev=getattr(self.app,'arm_dev_sim',None)
+        if not self.app.real and dev and self.layers['로봇팔'].get():
+            toolworld=multiply(world,transform(self.mount[:3],self.mount[3:]))
+            for name,matrix,size in dev.physics.tool_boxes(dev.q):
+                color='#35b8cf' if name in ('finger','cup') else '#354153'
+                add_faces(box(size),multiply(toolworld,matrix),color,'world_tool')
         if self.layers['CAD'].get() and self.cad_asset:add_asset(self.cad_asset,'cad',transform(self.cad_origin[:3],self.cad_origin[3:]),'#a5b4c4','world_cad')
         if self.layers['좌표축'].get():
             for matrix in (identity(),world,multiply(world,transform(self.mount[:3],self.mount[3:]))):

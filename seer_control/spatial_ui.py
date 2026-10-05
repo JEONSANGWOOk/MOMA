@@ -78,7 +78,7 @@ class SpatialMixin:
         if not hasattr(self,'studio_config'):return
         view=self.world3d
         self.studio_config['viewer3d']=dict(view=self.view_mode.get(),camera=self.camera_view.get(),projection=self.projection_view.get(),
-            assembly_version='photo-20261005',mount=view.mount,cad_origin=view.cad_origin,wall_height=view.wall_height,layers={k:v.get() for k,v in view.layers.items()},assets=self.spatial_assets)
+            assembly_version='front-sync-20261005',mount=view.mount,cad_origin=view.cad_origin,wall_height=view.wall_height,layers={k:v.get() for k,v in view.layers.items()},assets=self.spatial_assets)
         self._studio_save_settings()
 
     def _spatial_restore(self):
@@ -89,7 +89,10 @@ class SpatialMixin:
             values=config.get(key)
             if isinstance(values,list) and len(values)==6 and all(type(v) in (int,float) and math.isfinite(v) for v in values):setattr(view,key,values)
         height=config.get('wall_height')
-        if not config.get('assembly_version') and view.mount in ([0.,0.,.4285,0.,0.,0.],[0.,0.,.308,0.,0.,0.],[0.,0.,.182,0.,0.,0.]):view.mount=[.31,0.,.608,0.,0.,0.]
+        if config.get('assembly_version')!='front-sync-20261005':
+            central=abs(view.mount[0])<.001 and abs(view.mount[1])<.001 and view.mount[2]<=.65
+            prior_default=view.mount==[.31,0.,.608,0.,0.,0.]
+            if central or prior_default:view.mount=[.34,0.,.626,0.,0.,0.]
         if type(height) in (int,float) and .02<=height<=10:view.wall_height=height
         for key,value in (config.get('layers') if isinstance(config.get('layers'),dict) else {}).items():
             if key in view.layers and type(value) is bool:view.layers[key].set(value)
@@ -118,7 +121,7 @@ class SpatialMixin:
         for key,var in view.layers.items():tk.Checkbutton(row,text=key,variable=var,bg=PANEL,command=view.refresh).pack(side='left')
         row=tk.Frame(body,bg=PANEL);row.pack(fill='x',padx=12,pady=5)
         tk.Checkbutton(row,text='로봇 추적',variable=view.follow,bg=PANEL,command=lambda:view.focus_robot() if view.follow.get() else view.refresh()).pack(side='left')
-        tk.Checkbutton(row,text='미션 / 수신 관절 연동',variable=view.arm_follow,bg=PANEL,command=view.refresh).pack(side='left',padx=10)
+        tk.Checkbutton(row,text='실기 수신 관절 연동 · SIM은 항상 동기화',variable=view.arm_follow,bg=PANEL,command=view.refresh).pack(side='left',padx=10)
         self.button(row,'SIM 팔 동작 보기',lambda:self.guarded(self._studio_test_arm),BLUE).pack(side='left')
         self.button(row,'지도 전체 보기',view.fit).pack(side='left',padx=6)
         row=tk.Frame(body,bg=PANEL);row.pack(fill='x',padx=12,pady=5)
@@ -141,6 +144,10 @@ class SpatialMixin:
                 lower=joint['lower'] if joint['type']!='continuous' else -math.pi;upper=joint['upper'] if joint['type']!='continuous' else math.pi
                 variable=tk.DoubleVar(value=view.positions[role_key].get(name,0)*factor)
                 def changed(value,key=name,part=role_key,scale=factor):
+                    if part=='arm' and not self.real and hasattr(self,'arm_dev_sim'):
+                        q=list(self.arm_dev_sim.q);names=[j['name'] for j in self.arm_dev_sim.kin.joints]
+                        if key in names:q[names.index(key)]=float(value)/scale
+                        self.guarded(lambda:self._aw_set_synced_joints(q));return
                     view.arm_follow.set(False);view.positions[part][key]=float(value)/scale;view.refresh()
                 tk.Scale(row,from_=lower*factor,to=upper*factor,variable=variable,orient='horizontal',resolution=.001 if prismatic else 1,
                          showvalue=True,bg=PANEL,highlightthickness=0,length=420,command=changed).pack(side='left',fill='x',expand=True)
@@ -149,7 +156,9 @@ class SpatialMixin:
             if not path:return
             def apply():
                 key={'AMR':'amr','로봇팔':'arm','장면 CAD':'cad'}[role.get()];scale=1. if kind=='urdf' or units.get()=='m' else .001
+                if key=='arm' and self.arm_dev_sim.state in ('RUNNING','PAUSED'):raise ValueError('팔 재생을 정지한 뒤 모델을 변경하세요.')
                 asset=view.load_asset(key,path,root.get() or None,scale)
+                if key=='arm' and isinstance(asset,RobotDescription):self._aw_adopt_loaded_asset(asset,path)
                 self.spatial_assets[key]=dict(path=path,root=root.get(),scale=scale)
                 refresh_summary();joint_controls();self._spatial_save()
                 warnings=getattr(asset,'warnings',[])
@@ -158,6 +167,8 @@ class SpatialMixin:
         self.button(row,'URDF 가져오기',lambda:load('urdf'),BLUE).pack(side='left',padx=5)
         self.button(row,'STL / OBJ 가져오기',lambda:load('mesh')).pack(side='left',padx=5)
         def restore_demo():
+            if self.arm_dev_sim.state in ('RUNNING','PAUSED'):raise ValueError('팔 재생을 정지한 뒤 모델을 변경하세요.')
+            self._aw_adopt_loaded_asset(RobotDescription.load(self._spatial_demo_path()),self._spatial_demo_path())
             view.arm_asset=RobotDescription.load(self._spatial_demo_path());view.arm_asset.synthetic=True;view.positions['arm']={};view.arm_follow.set(True)
             view.scales['arm']=1.;view.last_arm_operation=None
             self.spatial_assets.pop('arm',None);refresh_summary();joint_controls();view.refresh();self._spatial_save()
@@ -166,7 +177,7 @@ class SpatialMixin:
         self.label(row,'사진형 전장 케이스 + 앞쪽 FR5 · AMR: SBA-400EU · FR5: 설치된 공식 ROS2 모델 / 경량 대체 모델',9,MUTED).pack(side='left')
         def restore_amr():
             view.body_asset=RobotDescription.load(Path(__file__).resolve().parents[1]/'models/seer_sba400eu_description/urdf/mobile_manipulator.urdf')
-            view.positions['amr']={};view.scales['amr']=1.;view.mount=[.31,0.,.608,0.,0.,0.];self.spatial_assets.pop('amr',None)
+            view.positions['amr']={};view.scales['amr']=1.;view.mount=[.34,0.,.626,0.,0.,0.];self.spatial_assets.pop('amr',None)
             for i,var in enumerate(mount_values):var.set(f'{view.mount[i] if i<3 else math.degrees(view.mount[i]):.3f}')
             refresh_summary();joint_controls();view.refresh();self._spatial_save()
         self.button(row,'사진형 MoMa 복원',restore_amr).pack(side='left',padx=5)

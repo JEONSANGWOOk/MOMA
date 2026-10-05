@@ -164,7 +164,8 @@ def main():
  primitive(cabinet,'box',{'size':'.18 .19 .012'},'silver',(.31,0,.420))
  for x in (.245,.375):
   for y in (-.067,.067):primitive(cabinet,'cylinder',{'radius':'.004','length':'.004'},'black',(x,y,.428))
- fixed('arm_mount_joint','electrical_cabinet_link','arm_mount_link',(.31,0,.426))
+ primitive(cabinet,'box',{'size':'.15 .16 .018'},'silver',(.34,0,.435))
+ fixed('arm_mount_joint','electrical_cabinet_link','arm_mount_link',(.34,0,.444))
  # Cabinet mass/COM are estimates, not measured dynamics.
  inertia=ET.SubElement(cabinet,'inertial');ET.SubElement(inertia,'origin',xyz='0 0 .207');ET.SubElement(inertia,'mass',value='25');ET.SubElement(inertia,'inertia',ixx='.99',iyy='1.90',izz='2.17',ixy='0',ixz='0',iyz='0')
  col=ET.SubElement(cabinet,'collision');ET.SubElement(col,'origin',xyz='0 0 .207');ET.SubElement(ET.SubElement(col,'geometry'),'box',size='.89 .55 .414')
@@ -175,7 +176,7 @@ def main():
    xyz=[float(v) for v in origin.get('xyz','0 0 0').split()];rpy=[float(v) for v in origin.get('rpy','0 0 0').split()]
    xyz[1]*=-1;rpy[0]*=-1;rpy[2]*=-1;origin.set('xyz',' '.join(map(str,xyz)));origin.set('rpy',' '.join(map(str,rpy)))
  ET.indent(root);(OUT/'urdf/mobile_manipulator.urdf').write_text(ET.tostring(root,encoding='unicode'),encoding='utf-8')
- (OUT/'config/mobile_manipulator.json').write_text(json.dumps(dict(reference='User photographs KakaoTalk_20261005_101012242*.jpg',estimated=True,cabinet_dimensions_m=[.89,.55,.426],arm_mount_xyz_rpy=[.31,0,.608,0,0,0],arm_forward_axis='+X',console_side='-X',service_side='+Y',mass_estimate_kg=25),indent=2),encoding='utf-8')
+ (OUT/'config/mobile_manipulator.json').write_text(json.dumps(dict(reference='User photographs KakaoTalk_20261005_101012242*.jpg',estimated=True,cabinet_dimensions_m=[.89,.55,.426],arm_mount_xyz_rpy=[.34,0,.626,0,0,0],arm_forward_axis='+X',console_side='-X',service_side='+Y',mass_estimate_kg=25),indent=2),encoding='utf-8')
  root=bare
  (OUT/'config/model.json').write_text(json.dumps(meta,ensure_ascii=False,indent=2),encoding='utf-8')
  (OUT/'package.xml').write_text('<package format="3"><name>seer_sba400eu_description</name><version>1.0.0</version><description>Photo and specification based SBA-400EU visual model; estimated mounts</description><maintainer email="model@example.invalid">MOMA</maintainer><license>MIT</license><buildtool_depend>ament_cmake</buildtool_depend><exec_depend>robot_state_publisher</exec_depend><exec_depend>joint_state_publisher_gui</exec_depend><export><build_type>ament_cmake</build_type></export></package>',encoding='utf-8')
