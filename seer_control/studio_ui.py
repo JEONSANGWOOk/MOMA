@@ -332,6 +332,7 @@ class StudioMixin(FairinoUIMixin,ObstacleUIMixin):
         self._studio_record_page(pages['record']);self._studio_model_page(pages['model'])
         self._studio_calibration_page(pages['calibration']);self._studio_devices_page(pages['arm'])
         self._arm_workspace_build()
+        self._voice_build()
         self.bind('<Control-z>',lambda e:self._studio_undo(False));self.bind('<Control-y>',lambda e:self._studio_undo(True))
 
     def _studio_apply_sim_settings(self):
