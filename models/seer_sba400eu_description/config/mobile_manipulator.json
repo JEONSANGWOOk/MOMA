@@ -1,0 +1,21 @@
+{
+  "reference": "User photographs KakaoTalk_20261005_101012242*.jpg",
+  "estimated": true,
+  "cabinet_dimensions_m": [
+    0.89,
+    0.55,
+    0.426
+  ],
+  "arm_mount_xyz_rpy": [
+    0.31,
+    0,
+    0.608,
+    0,
+    0,
+    0
+  ],
+  "arm_forward_axis": "+X",
+  "console_side": "-X",
+  "service_side": "+Y",
+  "mass_estimate_kg": 25
+}

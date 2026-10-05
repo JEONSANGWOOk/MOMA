@@ -7,7 +7,7 @@ from .smap import path_record_geometry
 from .smooth_renderer import renderer_for
 
 
-PRESETS={'사선':(-135,38),'위':(-90,89.9),'정면':(-90,8),'측면':(0,8),'뒤':(90,8)}
+PRESETS={'사선':(-135,38),'위':(-90,89.9),'정면':(-90,8),'측면':(0,8),'뒤':(90,8),'사진형':(135,18)}
 
 
 def dot(a,b):return sum(x*y for x,y in zip(a,b))
@@ -58,10 +58,10 @@ class WorldView3D(tk.Canvas):
         super().__init__(parent,bg='#dce5ef',highlightthickness=0)
         self.app=app;self.camera=Camera();self.fitted=None;self.drag=None
         self.arm_asset=RobotDescription.load(demo_path);self.arm_asset.synthetic=True
-        self.body_asset=RobotDescription.load(Path(__file__).resolve().parents[1]/'models/seer_sba400eu_description/urdf/sba400eu.urdf');self.cad_asset=None
+        self.body_asset=RobotDescription.load(Path(__file__).resolve().parents[1]/'models/seer_sba400eu_description/urdf/mobile_manipulator.urdf');self.cad_asset=None
         self.scales={'arm':1.,'amr':1.,'cad':1.}
         self.positions={'arm':{},'amr':{},'cad':{}}
-        self.mount=[0.,0.,.182,0.,0.,0.];self.cad_origin=[0.,0.,0.,0.,0.,0.]
+        self.mount=[.31,0.,.608,0.,0.,0.];self.cad_origin=[0.,0.,0.,0.,0.,0.]
         self.layers={key:tk.BooleanVar(value=True) for key in ('지도','점군','경로','좌표축','AMR','로봇팔','CAD')}
         self.follow=tk.BooleanVar(value=False);self.arm_follow=tk.BooleanVar(value=True)
         self.chase=False
@@ -254,7 +254,7 @@ class WorldView3D(tk.Canvas):
                 if frozenset((a,b)) not in represented:lines.append(((model.nodes[a]['x'],model.nodes[a]['y'],.035),(model.nodes[b]['x'],model.nodes[b]['y'],.035),'#6e8ba9',1,'world_path'))
             lines.extend(((a[0],a[1],.07),(b[0],b[1],.07),'#10966e',3,'world_active_route') for a,b in zip(route_points,route_points[1:]))
         overrides=getattr(self.app,'lidar_mount_overrides',[])
-        if self.body_asset and self.body_asset.name=='SEER SBA-400EU':
+        if self.body_asset and self.body_asset.name.startswith('SEER SBA-400EU'):
             for index,values in enumerate(overrides[:2]):
                 if len(values)==3 and all(math.isfinite(float(v)) for v in values):
                     joint=next((j for j in self.body_asset.joints if j['name']==f'lidar_{index+1}_mount'),None)

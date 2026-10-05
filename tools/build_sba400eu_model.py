@@ -1,5 +1,5 @@
 """Generate our photo/spec-based SBA-400EU ROS2 model. No factory CAD claim."""
-import json,math,struct,sys,zipfile
+import copy,json,math,struct,sys,zipfile
 from pathlib import Path
 import xml.etree.ElementTree as ET
 ROOT=Path(__file__).resolve().parents[1]
@@ -111,6 +111,72 @@ def main():
  collision=ET.SubElement(base,'collision');ET.SubElement(collision,'origin',xyz='0 0 .101');ET.SubElement(ET.SubElement(collision,'geometry'),'box',size='.9582 .6314 .162')
  ET.indent(root);(OUT/'urdf/sba400eu.urdf').write_text(ET.tostring(root,encoding='unicode'),encoding='utf-8')
  meta=dict(model='SBA-400EU',source='https://seer-robotics.ai/amr/liftingrobot/SBA-400EU',dimensions_m=[.9582,.6314,.182],rotation_diameter_m=1.004,mass_kg=100,ground_clearance_m=.02,lidar_scan_height_m=.1965,lidar='2 (SICK HV)',extrinsics=[dict(link=f'lidar_{i+1}_link',xyz_rpy=list(p),verified=False,basis='photo estimate for x/y/yaw; published scan height for z') for i,p in enumerate(mounts)],arm_mount_xyz_rpy=[0,0,.182,0,0,0],factory_cad=False)
+ # Separate assembled model keeps the bare manufacturer chassis definition intact.
+ bare=root;root=copy.deepcopy(bare);root.set('name','SEER SBA-400EU + FR5 Mobile Manipulator')
+ root.remove(root.find("joint[@name='arm_mount_joint']"))
+ cabinet=ET.SubElement(root,'link',name='electrical_cabinet_link');fixed('cabinet_mount_joint','base_link','electrical_cabinet_link',(0,0,.182))
+ # Photo proportions: 860 x 550 x 414 mm white enclosure, operator console at -X,
+ # arm support at +X. Open -Y service bay is modelled with rails/modules/wires.
+ primitive(cabinet,'box',{'size':'.84 .54 .018'},'black',(0,0,.022))
+ primitive(cabinet,'box',{'size':'.79 .52 .016'},'white',(.005,0,.407))
+ primitive(cabinet,'box',{'size':'.12 .54 .37'},'white',(.34,0,.214))
+ primitive(cabinet,'box',{'size':'.06 .55 .31'},'white',(-.355,0,.187))
+ primitive(cabinet,'box',{'size':'.69 .014 .37'},'white',(.015,.267,.214))
+ # Shaped rear control console: sloped upper panel and chamfered side outline.
+ outline=[(-.445,.04),(-.445,.276),(-.345,.398),(-.285,.414),(-.285,.04)]
+ sides=[tuple((x,y,z) for x,z in outline) for y in (-.275,.275)]
+ geometry=[tuple(reversed(sides[0])),sides[1]]
+ geometry += [(sides[0][i],sides[0][(i+1)%5],sides[1][(i+1)%5],sides[1][i]) for i in range(5)]
+ mesh(cabinet,'photo_console_shell',geometry,'white')
+ # Service opening frame and recessed electronics backing.
+ primitive(cabinet,'box',{'size':'.53 .016 .32'},'black',(.01,-.202,.207))
+ for x in (-.263,.283):primitive(cabinet,'box',{'size':'.015 .04 .37'},'silver',(x,-.255,.214))
+ for z in (.039,.385):primitive(cabinet,'box',{'size':'.55 .04 .018'},'silver',(.01,-.255,z))
+ for z in (.08,.235,.335):primitive(cabinet,'box',{'size':'.52 .018 .012'},'silver',(.01,-.231,z))
+ for x in (-.21,-.13,-.05,.03,.11,.19):
+  primitive(cabinet,'box',{'size':'.053 .042 .09'},'silver',(x,-.238,.292))
+  primitive(cabinet,'box',{'size':'.039 .004 .056'},'black',(x,-.262,.292))
+  primitive(cabinet,'box',{'size':'.012 .004 .012'},'blue',(x,-.265,.306))
+  primitive(cabinet,'box',{'size':'.035 .035 .072'},'black',(x,-.238,.156))
+  primitive(cabinet,'box',{'size':'.008 .004 .010'},'teal',(x,-.259,.165))
+ # Bottom cable duct, ventilation slots and multicolor cable routes.
+ for i in range(30):primitive(cabinet,'box',{'size':'.008 .015 .033'},'black',(-.24+i*.017,-.274,.063))
+ for x in (-.22,-.12,-.02,.08,.18):
+  for shift,color in [(-.005,'red'),(0,'blue'),(.005,'yellow')]:
+   primitive(cabinet,'cylinder',{'radius':'.0018','length':'.10'},color,(x+shift,-.269,.215))
+   primitive(cabinet,'cylinder',{'radius':'.0018','length':'.037'},color,(x+.016,-.269,.115),(0,math.pi/2,0))
+ for z in (.105,.137,.169,.201,.233,.265):primitive(cabinet,'box',{'size':'.077 .003 .006'},'silver',(.34,-.273,z))
+ # Rear touch screen with recessed bezel and blue GUI bars.
+ primitive(cabinet,'box',{'size':'.010 .31 .175'},'black',(-.451,0,.163))
+ primitive(cabinet,'box',{'size':'.003 .272 .135'},'blue',(-.457,0,.163))
+ for y in (-.085,0,.085):primitive(cabinet,'box',{'size':'.002 .060 .039'},'teal',(-.460,y,.181))
+ primitive(cabinet,'box',{'size':'.002 .225 .011'},'white',(-.460,0,.131))
+ # Buttons and red emergency stop on sloped control panel.
+ for y,color in [(-.17,'black'),(-.105,'black'),(-.04,'yellow'),(.025,'blue'),(.09,'silver')]:
+  primitive(cabinet,'cylinder',{'radius':'.012','length':'.008'},color,(-.408,y,.330),(0,-math.pi/3,0))
+ primitive(cabinet,'cylinder',{'radius':'.025','length':'.008'},'yellow',(-.399,.181,.348),(0,-math.pi/3,0))
+ primitive(cabinet,'cylinder',{'radius':'.019','length':'.016'},'red',(-.405,.181,.352),(0,-math.pi/3,0))
+ # Tower light at the opposite console corner.
+ primitive(cabinet,'cylinder',{'radius':'.014','length':'.036'},'black',(-.33,.223,.43))
+ for z,color in [(.46,'white'),(.49,'white'),(.52,'white')]:primitive(cabinet,'cylinder',{'radius':'.011','length':'.029'},color,(-.33,.223,z))
+ primitive(cabinet,'cylinder',{'radius':'.013','length':'.009'},'black',(-.33,.223,.54))
+ # Forward mounting plate and bolt heads, never centre-mount the FR5.
+ primitive(cabinet,'box',{'size':'.18 .19 .012'},'silver',(.31,0,.420))
+ for x in (.245,.375):
+  for y in (-.067,.067):primitive(cabinet,'cylinder',{'radius':'.004','length':'.004'},'black',(x,y,.428))
+ fixed('arm_mount_joint','electrical_cabinet_link','arm_mount_link',(.31,0,.426))
+ # Cabinet mass/COM are estimates, not measured dynamics.
+ inertia=ET.SubElement(cabinet,'inertial');ET.SubElement(inertia,'origin',xyz='0 0 .207');ET.SubElement(inertia,'mass',value='25');ET.SubElement(inertia,'inertia',ixx='.99',iyy='1.90',izz='2.17',ixy='0',ixz='0',iyz='0')
+ col=ET.SubElement(cabinet,'collision');ET.SubElement(col,'origin',xyz='0 0 .207');ET.SubElement(ET.SubElement(col,'geometry'),'box',size='.89 .55 .414')
+ # Service bay is on +Y, matching the supplied operator-side photo view.
+ for visual in cabinet.findall('visual'):
+  origin=visual.find('origin')
+  if origin is not None:
+   xyz=[float(v) for v in origin.get('xyz','0 0 0').split()];rpy=[float(v) for v in origin.get('rpy','0 0 0').split()]
+   xyz[1]*=-1;rpy[0]*=-1;rpy[2]*=-1;origin.set('xyz',' '.join(map(str,xyz)));origin.set('rpy',' '.join(map(str,rpy)))
+ ET.indent(root);(OUT/'urdf/mobile_manipulator.urdf').write_text(ET.tostring(root,encoding='unicode'),encoding='utf-8')
+ (OUT/'config/mobile_manipulator.json').write_text(json.dumps(dict(reference='User photographs KakaoTalk_20261005_101012242*.jpg',estimated=True,cabinet_dimensions_m=[.89,.55,.426],arm_mount_xyz_rpy=[.31,0,.608,0,0,0],arm_forward_axis='+X',console_side='-X',service_side='+Y',mass_estimate_kg=25),indent=2),encoding='utf-8')
+ root=bare
  (OUT/'config/model.json').write_text(json.dumps(meta,ensure_ascii=False,indent=2),encoding='utf-8')
  (OUT/'package.xml').write_text('<package format="3"><name>seer_sba400eu_description</name><version>1.0.0</version><description>Photo and specification based SBA-400EU visual model; estimated mounts</description><maintainer email="model@example.invalid">MOMA</maintainer><license>MIT</license><buildtool_depend>ament_cmake</buildtool_depend><exec_depend>robot_state_publisher</exec_depend><exec_depend>joint_state_publisher_gui</exec_depend><export><build_type>ament_cmake</build_type></export></package>',encoding='utf-8')
  (OUT/'CMakeLists.txt').write_text('cmake_minimum_required(VERSION 3.8)\nproject(seer_sba400eu_description)\nfind_package(ament_cmake REQUIRED)\ninstall(DIRECTORY urdf meshes config DESTINATION share/${PROJECT_NAME})\nament_package()\n',encoding='utf-8')

@@ -32,3 +32,13 @@ class VisualModels(unittest.TestCase):
   normals=smooth_normals(faces)
   self.assertAlmostEqual(normals[0][0][2],1)
   self.assertAlmostEqual(normals[1][0][1],1)
+
+ def test_photo_mobile_assembly_forward_mount(self):
+  asset=RobotDescription.load(ROOT/'models/seer_sba400eu_description/urdf/mobile_manipulator.urdf')
+  self.assertIn('electrical_cabinet_link',asset.links)
+  poses=asset.link_transforms({})
+  self.assertAlmostEqual(poses['arm_mount_link'][0][3],.31)
+  self.assertAlmostEqual(poses['arm_mount_link'][2][3],.608)
+  self.assertGreater(len(asset.links['electrical_cabinet_link']),100)
+  meta=json.loads((ROOT/'models/seer_sba400eu_description/config/mobile_manipulator.json').read_text())
+  self.assertTrue(meta['estimated']);self.assertEqual(meta['service_side'],'+Y')
