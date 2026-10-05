@@ -77,7 +77,8 @@ class UIScaleMixin:
                     try:widget.configure(**{key:scaled(base[key])})
                     except (tk.TclError,ValueError):pass
             manager,layout=widget._density_layout
-            if layout:
+            # pack/grid configure can remap forgotten widgets. Preserve live visibility.
+            if layout and widget.winfo_manager()==manager:
                 try:
                     values={k:scaled(v) for k,v in layout.items()}
                     if manager=='pack':widget.pack_configure(**values)

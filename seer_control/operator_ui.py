@@ -13,6 +13,7 @@ class OperatorMixin(RecipeMixin):
  def _operator_build(self):
   self.role_active='개발자';self.ui_role=tk.StringVar(value='개발자');self.operator_plan=None;self.operator_pending=None;self.operator_owned=False;self.operator_after=None
   self.operator_templates=copy.deepcopy(self.studio_config.get('operator_templates') or defaults())
+  if not any(t['name']=='현재 노드 왕복 테스트' for t in self.operator_templates):self.operator_templates.append(copy.deepcopy(next(t for t in defaults() if t['name']=='현재 노드 왕복 테스트')))
   self.role_selector=ttk.Combobox(self.role_header,textvariable=self.ui_role,values=['사용자','개발자'],state='readonly',width=9);self.role_selector.pack(side='right',padx=10);self.role_selector.bind('<<ComboboxSelected>>',lambda e:self.guarded(self._role_apply))
   page=ttk.Frame(self.tabs);self.operator_page=page;self.tabs.add(page,text='작업 운영');self._register_navigation(page,'작업 운영','▶')
   split=ttk.Panedwindow(page,orient='horizontal');split.pack(fill='both',expand=True)

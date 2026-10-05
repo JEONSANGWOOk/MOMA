@@ -8,7 +8,8 @@ def defaults():
  return [dict(name='이동만',enabled=True,destinations=[],blocks=[dict(type='이동',value='목적지')]),
   dict(name='순환 운반',enabled=True,destinations=[],blocks=[dict(type='이동',value='픽업'),dict(type='이동',value='목적지'),dict(type='이동',value='픽업')]),
   dict(name='자재 공급',enabled=False,destinations=[],blocks=[dict(type='이동',value='픽업'),dict(type='팔 작업',value=''),dict(type='이동',value='목적지'),dict(type='팔 작업',value=''),dict(type='이동',value='복귀')]),
-  dict(name='완제품 회수',enabled=False,destinations=[],blocks=[dict(type='이동',value='픽업'),dict(type='팔 작업',value=''),dict(type='이동',value='목적지'),dict(type='팔 작업',value=''),dict(type='이동',value='복귀')])]
+  dict(name='완제품 회수',enabled=False,destinations=[],blocks=[dict(type='이동',value='픽업'),dict(type='팔 작업',value=''),dict(type='이동',value='목적지'),dict(type='팔 작업',value=''),dict(type='이동',value='복귀')]),
+  dict(name='현재 노드 왕복 테스트',enabled=True,destinations=[],blocks=[dict(type='이동',value='목적지'),dict(type='이동',value='현재 노드')])]
 
 def validate_template(recipe,nodes,arm,require_enabled=True):
  if not isinstance(recipe,dict) or not isinstance(recipe.get('name'),str) or not 1<=len(recipe['name'].strip())<=60:raise ValueError('미션 이름은 1~60자입니다.')
@@ -23,7 +24,7 @@ def validate_template(recipe,nodes,arm,require_enabled=True):
   if not isinstance(b,dict) or set(b)-{'type','value'}:raise ValueError('블록 형식 오류')
   kind=b.get('type');value=b.get('value')
   if kind=='이동':
-   if value not in ('픽업','목적지','복귀') and value not in nodes:raise ValueError('이동 위치를 지정하세요.')
+   if value not in ('픽업','목적지','복귀','현재 노드') and value not in nodes:raise ValueError('이동 위치를 지정하세요.')
   elif kind=='팔 작업':
    has_arm=True
    if value not in arm.get('operations',{}) and value not in arm.get('programs',{}):raise ValueError('등록된 팔 작업/프로그램을 선택하세요.')
@@ -42,11 +43,15 @@ def compile_mission(recipe,params,model,arm,pose):
  destination=params.get('목적지')
  if destination not in model.nodes:raise ValueError('목적지를 선택하세요.')
  if recipe['destinations'] and destination not in recipe['destinations']:raise ValueError('이 미션에 허용되지 않은 목적지입니다.')
+ current=model.nearest(pose['x'],pose['y']) if model.nodes else None
+ if any(b['type']=='이동' and b['value']=='현재 노드' for b in recipe['blocks']):
+  if not current or math.hypot(pose['x']-model.nodes[current]['x'],pose['y']-model.nodes[current]['y'])>.25:raise ValueError('현재 노드 왕복 테스트는 노드에서 0.25m 이내에 정지한 뒤 미리보기 하세요.')
+  if destination==current:raise ValueError('현재 노드와 다른 방문 목적지를 선택하세요.')
  actions=[];stops=[];labels=[]
  for b in recipe['blocks']:
   value=b['value']
   if b['type']=='이동':
-   goal=params.get(value) if value in ('픽업','목적지','복귀') else value
+   goal=current if value=='현재 노드' else params.get(value) if value in ('픽업','목적지','복귀','현재 노드') else value
    if goal not in model.nodes:raise ValueError(value+' 위치를 선택하세요.')
    actions.append(dict(type='Path Nav',goal=goal,timeout_s=300));stops.append(goal);labels.append('이동 · '+goal)
   elif b['type']=='팔 작업':actions.append(dict(type='Arm Action',operation=value,timeout_s=120));labels.append('팔 작업 · '+value)

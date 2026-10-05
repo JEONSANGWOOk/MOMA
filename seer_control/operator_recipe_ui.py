@@ -33,7 +33,7 @@ class RecipeMixin:
   for i,b in enumerate(self.recipe_blocks):self.recipe_list.insert('end',f"{i+1}. [{b['type']}] {b['value']}")
  def _recipe_value_options(self):
   kind=self.recipe_block_kind.get();cfg=self._operator_arm_config()
-  values=['픽업','목적지','복귀']+list(self.map.nodes) if kind=='이동' else list(cfg.get('operations',{}))+list(cfg.get('programs',{})) if kind=='팔 작업' else ['0','1','2','5','10']
+  values=['픽업','목적지','복귀','현재 노드']+list(self.map.nodes) if kind=='이동' else list(cfg.get('operations',{}))+list(cfg.get('programs',{})) if kind=='팔 작업' else ['0','1','2','5','10']
   self.recipe_value_combo.configure(values=values,state='normal' if kind=='대기' else 'readonly')
   if self.recipe_block_value.get() not in values:self.recipe_block_value.set(values[0] if values else '')
  def _recipe_selected(self,e=None):

@@ -30,3 +30,13 @@ class OperatorMissionTests(unittest.TestCase):
   p=compile_mission(defaults()[1],self.params,self.map,self.arm,self.pose);self.assertEqual([a['goal'] for a in p['actions']],['LM1','LM3','LM1'])
  def test_program_expands_and_retains_template_snapshot(self):
   self.arm['programs']['pick_program']=[dict(operation='pick')];r=dict(name='공급',enabled=True,destinations=['LM3'],blocks=[dict(type='팔 작업',value='pick_program')]);p=compile_mission(r,self.params,self.map,self.arm,self.pose);r['blocks'][0]['value']='changed';self.assertEqual(p['actions'][0]['operation'],'pick');self.assertEqual(p['template']['blocks'][0]['value'],'pick_program')
+
+ def test_current_node_roundtrip(self):
+  recipe=next(r for r in defaults() if r['name']=='현재 노드 왕복 테스트')
+  p=compile_mission(recipe,self.params,self.map,self.arm,self.pose)
+  self.assertEqual([a['goal'] for a in p['actions']],['LM3','LM1'])
+  self.assertEqual(p['route']['nodes'],['LM1','LM2','LM3','LM2','LM1'])
+ def test_current_node_requires_node_and_other_destination(self):
+  recipe=next(r for r in defaults() if r['name']=='현재 노드 왕복 테스트')
+  for pose,params in [({'x':.5,'y':0},self.params),(self.pose,dict(self.params,목적지='LM1'))]:
+   with self.assertRaises(ValueError):compile_mission(recipe,params,self.map,self.arm,pose)
