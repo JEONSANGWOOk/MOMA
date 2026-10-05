@@ -37,11 +37,11 @@ class Recorder:
    self.api.waveInClose(self.handle);self.handle=None
  def done(self):return bool(self.header and self.header.flags&1)
 def transcribe(folder,wav):
- folder=Path(folder);exe=next(iter((folder/'whisper').rglob('whisper-cli.exe')),None);model=folder/'ggml-base-q5_1.bin'
+ folder=Path(folder);exe=next(iter((folder/'whisper').rglob('whisper-cli.exe')),None);model=folder/'ggml-small-q5_1.bin'
  if not exe or not model.is_file():raise ValueError('먼저 음성 인식 설치 버튼을 누르세요.')
  with tempfile.TemporaryDirectory() as tmp:
   prefix=Path(tmp)/'transcript'
-  args=[str(exe),'-m',str(model),'-f',str(wav),'-l','ko','-t','4','-otxt','-of',str(prefix),'-nt','-np','--prompt','AMR 로봇 명령. 노드 LM1 LM2 LM3 LM4 LM5 LM6 LM7 LM8 CP1. 이동, 정지, 미션 취소, 로봇팔 안전 자세.']
+  args=[str(exe),'-m',str(model),'-f',str(wav),'-l','ko','-t','4','-bs','5','-bo','5','-tp','0','-otxt','-of',str(prefix),'-nt','-np','--prompt','AMR 로봇 명령. 노드 LM1 LM2 LM3 LM4 LM5 LM6 LM7 LM8 CP1. 이동, 정지, 미션 취소, 로봇팔 안전 자세.']
   result=subprocess.run(args,capture_output=True,timeout=90,creationflags=NO_WINDOW)
   if result.returncode:raise ValueError('음성 인식 실패: '+result.stderr.decode('utf-8',errors='replace')[-400:])
   target=prefix.with_suffix('.txt');text=target.read_text(encoding='utf-8').strip() if target.is_file() else ''

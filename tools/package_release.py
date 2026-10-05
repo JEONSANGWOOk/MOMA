@@ -18,7 +18,7 @@ def release_files():
 
 def main():
     target=ROOT.parent/'release';target.mkdir(exist_ok=True)
-    archive=target/'MOMA_AMR_Control_Studio_v1.29_2026-10-05_source.zip'
+    archive=target/'MOMA_AMR_Control_Studio_v1.30_2026-10-05_source.zip'
     with zipfile.ZipFile(archive,'w',compression=zipfile.ZIP_DEFLATED,compresslevel=9) as output:
         for path in release_files():
             info=zipfile.ZipInfo('MOMA/'+path.relative_to(ROOT).as_posix(),date_time=(2026,10,5,0,0,0))

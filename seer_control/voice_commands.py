@@ -7,7 +7,8 @@ def normalize(text):
  text=str(text).strip()
  if not text or len(text)>500:raise ValueError('명령은 1~500자입니다.')
  def node(m):return 'LM'+NUM.get(m[1],m[1])
- return re.sub(r'(?:엘\s*엠|엘렘|엘림|lm)\s*([0-9]+|[일이삼사오육칠팔구])',node,text,flags=re.I)
+ text=re.sub(r'(?:엘\s*엠|엘렘|엘림|lm)\s*([0-9]+|[일이삼사오육칠팔구])',node,text,flags=re.I)
+ return re.sub(r'(?:씨\s*피|시\s*피|cp)\s*([0-9]+|[일이삼사오육칠팔구])',lambda m:'CP'+NUM.get(m[1],m[1]),text,flags=re.I)
 def validate_command(value,nodes,operations):
  if not isinstance(value,dict) or set(value)-{'action','nodes','start','repeats','operation'}:raise ValueError('지원하지 않는 명령 항목입니다.')
  out=dict(value);action=out.get('action')

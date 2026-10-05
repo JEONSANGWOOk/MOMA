@@ -37,8 +37,8 @@ class VoiceMixin:
   self.button(row,'로컬 LLM 설치/모델 준비',lambda:self.guarded(lambda:self._voice_install(True))).pack(side='left',padx=3)
   self.button(row,'LLM 연결 확인',lambda:self.guarded(self._voice_check)).pack(side='left',padx=3)
   row=self._studio_row(body);ttk.Label(row,text='로컬 LLM 주소').pack(side='left');ttk.Entry(row,textvariable=self.voice_url,width=30).pack(side='left',padx=4);ttk.Label(row,text='모델').pack(side='left');ttk.Entry(row,textvariable=self.voice_model,width=22).pack(side='left',padx=4);self.button(row,'설정 저장',self._voice_save).pack(side='left',padx=4)
-  self._studio_note(body,'기본: 한국어 Whisper base + Qwen3 1.7B CPU. 설치 시 인터넷 다운로드, 이후 인식/명령 해석은 노트북에서 처리합니다. 음성 파일은 인식 후 삭제합니다. LLM 주소는 로컬만 허용합니다. REAL은 기존 제어권·등록 작업·안전 조건을 유지합니다. 음성 정지는 물리 비상정지 장치를 대신하지 않습니다.')
-  if (self.voice_folder/'ggml-base-q5_1.bin').is_file():self.voice_status.set('한국어 음성 인식 준비됨 · 녹음 버튼을 누르고 말하세요.')
+  self._studio_note(body,'기본: 한국어 Whisper small + Qwen3 1.7B CPU. 설치 시 인터넷 다운로드, 이후 인식/명령 해석은 노트북에서 처리합니다. 음성 파일은 인식 후 삭제합니다. LLM 주소는 로컬만 허용합니다. REAL은 기존 제어권·등록 작업·안전 조건을 유지합니다. 음성 정지는 물리 비상정지 장치를 대신하지 않습니다.')
+  if (self.voice_folder/'ggml-small-q5_1.bin').is_file():self.voice_status.set('한국어 음성 인식 준비됨 · 녹음 버튼을 누르고 말하세요.')
   self.voice_after=self.after(100,self._voice_tick)
  def _voice_save(self):
   self.studio_config['voice']=dict(llm=self.voice_llm.get(),auto_sim=self.voice_auto_sim.get(),talk=self.voice_talk.get(),url=self.voice_url.get(),model=self.voice_model.get());self._studio_save_settings()
@@ -83,7 +83,7 @@ class VoiceMixin:
  def _voice_record(self):
   if self.voice_recorder.handle:return self._voice_finish_record()
   if self.voice_busy:raise ValueError('현재 처리가 끝난 뒤 녹음하세요.')
-  if not next(iter((self.voice_folder/'whisper').rglob('whisper-cli.exe')),None) or not (self.voice_folder/'ggml-base-q5_1.bin').is_file():raise ValueError('음성 인식 설치/확인 버튼을 먼저 누르세요.')
+  if not next(iter((self.voice_folder/'whisper').rglob('whisper-cli.exe')),None) or not (self.voice_folder/'ggml-small-q5_1.bin').is_file():raise ValueError('음성 인식 설치/확인 버튼을 먼저 누르세요.')
   if self.voice_tts and self.voice_tts.poll() is None:self.voice_tts.terminate()
   self.voice_recorder.start();self.voice_record_context=self._voice_context();self.voice_started=time.monotonic();self.voice_status.set('녹음 중 · 명령을 말하고 버튼을 다시 누르세요. 최대 10초.');self.voice_record_button.configure(text='녹음 완료 → 인식')
  def _voice_finish_record(self):

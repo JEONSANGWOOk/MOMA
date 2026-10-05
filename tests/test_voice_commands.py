@@ -35,3 +35,5 @@ class VoiceTests(unittest.TestCase):
    with self.assertRaises(ValueError):local_url(u)
  def test_schema_has_per_action_fields(self):
   branches=command_schema(self.nodes,self.ops)['oneOf'];status=next(x for x in branches if x['properties']['action']['enum']==['status']);self.assertEqual(set(status['properties']),{'action'})
+
+ def test_spoken_charging_node(self):self.assertEqual(self.parse("씨 피 일로 이동해"),dict(action="goto",nodes=["CP1"]))

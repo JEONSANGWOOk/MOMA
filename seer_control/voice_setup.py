@@ -59,7 +59,7 @@ def install_whisper(folder,progress=lambda s:None):
     if entry.is_dir():continue
     target=safe_target(folder/'whisper',entry.filename);target.parent.mkdir(parents=True,exist_ok=True);target.write_bytes(z.read(entry))
   archive.unlink()
- model=folder/'ggml-base-q5_1.bin'
+ model=folder/'ggml-small-q5_1.bin'
  if not model.is_file():
   values=json_url('https://huggingface.co/api/models/ggerganov/whisper.cpp/tree/main')
   entry=next(x for x in values if x.get('path')==model.name);digest=entry.get('lfs',{}).get('oid')

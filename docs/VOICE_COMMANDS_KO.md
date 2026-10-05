@@ -39,7 +39,7 @@
 
 파일은 사용자 폴더 `.seer_amr_console/voice`에 저장합니다. 시스템 설치/자동 시작 등록을 하지 않습니다. 설치 시만 인터넷 다운로드가 필요하고, 이후 음성·LLM 처리 주소는 localhost만 허용합니다. 소스 ZIP에 모델 파일은 포함하지 않습니다.
 
-- whisper.cpp v1.9.2 공식 Windows x64, multilingual ggml-base-q5_1 (~57MB). 모델 LFS SHA256 및 배포 ZIP digest 검증.
+- whisper.cpp v1.9.2 공식 Windows x64, multilingual ggml-small-q5_1 (~181MB). 모델 LFS SHA256 및 배포 ZIP digest 검증.
 - Ollama v0.35.1 공식 ZIP에서 CPU 실행 파일/DLL만 부분 다운로드하고 ZIP CRC 검증. NVIDIA/AMD GPU 라이브러리를 다운로드하지 않습니다.
 - Qwen3 1.7B 모델은 약 1.4GB. Ollama가 모델 SHA256을 검증합니다. Intel Arc GPU/NPU 가속을 검증한 것은 아니며 이번 기본 구성은 CPU입니다.
 - 전용 서버 주소 기본 `http://127.0.0.1:12634`. 외부 Ollama를 사용할 때는 로컬 URL/모델명을 수정하고 연결 확인합니다. 프로그램이 직접 시작한 서버 프로세스만 종료 시 정리합니다.
@@ -48,3 +48,7 @@
 현재 노트북(Core Ultra 5 226V, RAM 약 16GB)에서 합성 한국어 인식 약 1.75초, 소형 LLM 첫 요청(로딩 포함) 약 4.57초, 이어진 요청 약 0.42~0.51초를 측정했습니다. 문장·부하·캐시 상태에 따라 달라집니다.
 
 공식 출처/라이선스: [whisper.cpp MIT](https://github.com/ggml-org/whisper.cpp), [Ollama MIT](https://github.com/ollama/ollama), [Qwen3 1.7B](https://ollama.com/library/qwen3:1.7b). 모델과 런타임은 공식 배포본에서 다운로드하며 프로젝트 ZIP에 재배포하지 않습니다.
+
+## v1.30 음성 인식 개선
+
+한국어 지원 small 모델을 기본으로 사용합니다. beam 5, best-of 5, temperature 0으로 디코딩하며 씨 피 일→CP1 발음 보정도 지원합니다. 알 수 없는 노드를 비슷한 기존 노드로 추측해서 실행하지 않습니다. 기존 base 성능 측정치는 small 속도를 의미하지 않습니다.
