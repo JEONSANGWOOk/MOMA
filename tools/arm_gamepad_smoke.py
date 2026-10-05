@@ -21,6 +21,10 @@ with tempfile.TemporaryDirectory() as folder:
   assert app.sim.arm['joint_positions']==app.arm_dev_sim.kin.positions(app.arm_dev_sim.q)
   q=list(app.arm_dev_sim.q);app._pad_process(sample(1,.3,False),time.monotonic());assert app.arm_dev_sim.q==q and not app.pad_arm_active
   app.pad_arm_group.set('J3 / J4');app._pad_toggle();app._pad_process(sample(),time.monotonic());app._pad_process(sample(.5,0,True),time.monotonic());assert app.arm_dev_sim.q[3]!=q[3]
+  app._pad_process(sample(),time.monotonic())
+  mode=sample();mode.buttons=32;app._pad_process(mode,time.monotonic());assert app.pad_arm_group.get()=='J5 / J6'
+  app._pad_process(sample(),time.monotonic());speed=sample();speed.buttons=2048;app._pad_process(speed,time.monotonic());assert app.pad_arm_speed.get()==75
+  app._pad_process(sample(),time.monotonic());app.arm_dev_sim.physics.configure(dict(kind='finger'));grip=sample(held=True);grip.buttons|=8;app._pad_process(grip,time.monotonic());assert app.arm_dev_sim.io['ToolDO'][0]==1
   app._pad_process(sample(),time.monotonic());app.update();capture_window(app,Path('artifacts/arm_gamepad_workspace.png'))
   app.pad_target.set('AMR');app._pad_toggle();assert not app.pad_gate.armed
   app._arm_call.assert_not_called();assert not errors,errors

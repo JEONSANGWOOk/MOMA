@@ -111,13 +111,15 @@ class SDKEngine:
                     joints_rad=[math.radians(v) for v in joints],tcp_mm_deg=tcp,
                     motion_done=done,emergency=bool(emergency),safety_stop=list(safety),errors=list(errors))
 
-    def execute(self,operation):
+    def execute(self,operation,expires=None):
         validate(self.config,True)
         if operation not in self.config['operations']:raise ValueError('등록되지 않은 FR5 작업: '+str(operation))
         state=self.status()
         if state['status'] in ('ERROR','RUNNING','PAUSED') or state['motion_done']!=1:
             raise ValueError('FR5 정지 및 오류 해제를 먼저 확인하세요.')
         spec=self.config['operations'][operation];method=spec['method']
+        if expires is not None:
+            if method not in ('SetDO','SetToolDO') or not 0<=float(expires)-time.monotonic()<=.25:raise ValueError('그리퍼 입력 유효시간/작업 오류')
         if method in ('SetDO','SetToolDO','WaitDI','WaitToolDI'):
             # DO acceptance is not a grip confirmation: add a WaitDI step for the sensor.
             if method.startswith('Set'):
@@ -156,6 +158,9 @@ class SDKEngine:
         if kind=='status':return self.status()
         if kind=='execute':return self.execute(operation)
         if kind=='jog':return self.jog(operation)
+        if kind=='pad_io':
+            if not isinstance(operation,dict):raise ValueError('그리퍼 입력 오류')
+            return self.execute(operation.get('operation'),operation.get('expires',0))
         if kind in ('pause','resume','stop'):
             checked(getattr(self.robot,{'pause':'PauseMotion','resume':'ResumeMotion','stop':'StopMotion'}[kind])(),kind)
             if kind=='stop':self.canceled=True

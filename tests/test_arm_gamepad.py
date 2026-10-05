@@ -2,7 +2,7 @@ import math,time,unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock,patch
-from seer_control.arm_gamepad import sim_jog,sdk_pulse
+from seer_control.arm_gamepad import sim_jog,sdk_pulse,ButtonEdges,step_group,step_speed
 from seer_control.arm_simulation import ArmSimulator
 from seer_control.geometry3d import RobotDescription
 from seer_control.fairino_api import SDKEngine
@@ -72,3 +72,30 @@ class ArmPadTests(unittest.TestCase):
    self.assertEqual(h.arm_dev_sim.q,before);h._arm_call.assert_not_called()
    if failure:h._fr5_queue.assert_not_called()
    else:h._fr5_queue.assert_called_once()
+
+ def test_mode_wrap_and_speed_clamp(self):
+  self.assertEqual(step_group('J1 / J2',-1),'TCP RX / RY')
+  self.assertEqual(step_speed(100,1),100);self.assertEqual(step_speed(10,-1),10)
+ def test_edges_no_repeat_stale_or_hotplug(self):
+  edges=ButtonEdges();sample=Sample(dict(X=0,Y=0),32,10,('sony',))
+  self.assertEqual(edges.update(sample,10,True),0)
+  sample.buttons=0;edges.update(sample,10,True);sample.buttons=32
+  self.assertEqual(edges.update(sample,10,True),32);self.assertEqual(edges.update(sample,10,True),0)
+  self.assertEqual(edges.update(sample,11,True),0);self.assertEqual(edges.update(sample,10,True),0)
+ def test_mode_button_rearms_before_motion(self):
+  h=Harness();h.pad_arm_speed=Value(50);h._pad_process(h.sample(10),10)
+  s=h.sample(10.05,1,1,True);s.buttons|=32;before=list(h.arm_dev_sim.q);h._pad_process(s,10.05)
+  self.assertEqual(h.pad_arm_group.get(),'J3 / J4');self.assertEqual(h.arm_dev_sim.q,before)
+  h._pad_process(s,10.1);self.assertEqual(h.pad_arm_group.get(),'J3 / J4')
+ def test_speed_scales_real_distance_and_velocity(self):
+  p=sdk_pulse('J1 / J2',1,0,10,.1);self.assertAlmostEqual(p['distance'],.02);self.assertAlmostEqual(p['vel'],.5)
+ def test_sim_gripper_requires_neutral_deadman_and_edge(self):
+  h=Harness();h.pad_arm_speed=Value(50);h.pad_tool_message='';h.arm_dev_sim.physics.configure(dict(kind='finger'));h._aps_io=Mock()
+  h._pad_process(h.sample(10),10);s=h.sample(10.05,held=True);s.buttons|=8;h._pad_process(s,10.05)
+  h._aps_io.assert_called_once_with(1);h._pad_process(s,10.1);h._aps_io.assert_called_once()
+  h._aps_io.reset_mock();s.buttons=0;h._pad_process(s,10.15);s.buttons=8;h._pad_process(s,10.2);h._aps_io.assert_not_called()
+ def test_stale_real_gripper_never_sets_output(self):
+  r=FakeRobot();r.SetToolDO=Mock(return_value=0);cfg=config();cfg['operations']['grip']={'method':'SetToolDO','id':0,'status':1};e=SDKEngine(cfg,r)
+  with patch('seer_control.fairino_api.time.monotonic',return_value=11):
+   with self.assertRaises(ValueError):e.call('pad_io',dict(operation='grip',expires=10.15))
+  r.SetToolDO.assert_not_called()

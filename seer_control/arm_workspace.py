@@ -108,7 +108,7 @@ class ArmWorkspaceMixin(ArmSceneMixin):
   tk.Checkbutton(padrow,text='조이스틱 사용',variable=self.pad_enabled,bg=PANEL,command=self._pad_toggle).pack(side='left')
   self._pad_mode_controls(padrow)
   self.button(padrow,'조이스틱 연결/설정',self._pad_dialog).pack(side='left',padx=3)
-  self.pad_arm_feedback=tk.StringVar(value='L1 누르는 동안 조종 · ○ 정지 · 대상/축 변경 후 스틱 중앙에서 재시작')
+  self.pad_arm_feedback=tk.StringVar(value='L1 조종 · ○ 정지 · R1/R2 모드 ± · R3/L3 속도 ± · △ 그리퍼 (버튼 변경 가능)')
   ttk.Label(page,textvariable=self.pad_arm_feedback,wraplength=1100).pack(fill='x',padx=12)
   for title,fn in [('공식 FR5 모델',self._aw_official_model),('URDF 가져오기',self._aw_load_urdf),('API 작업 가져오기',self._aw_copy_api),('실기 API 개발',self._fr5_development),('설정 저장',self._aw_save)]:self.button(row,title,lambda f=fn:self.guarded(f)).pack(side='left',padx=3)
   self._studio_note(page,'AMR 연결 없이 사용 · 관절 슬라이더/재생/I/O는 SIM 전용 · 조이스틱은 상단 SIM/REAL 모드에 따라 조종 · 설치된 공식 FR5 ROS2 모델 사용 가능 · 실기 TCP 좌표·충돌 검증은 별도입니다.')
