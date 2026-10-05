@@ -179,6 +179,8 @@ class Simulator:
         self._avoid_time=0.;self._avoid_next=0.
         self._progress_pose=None;self._progress_at=0.;self._recovery_next=0.
         self._local_avoidance_active=False;self._rejoin_check_at=0.
+        from .blocked_recovery import BlockedRecovery
+        self.blocked_recovery=BlockedRecovery();self._recovery_narrow=False
         self.applied_limits = dict(DEFAULT_MODEL)
         self.di = {i:False for i in range(64)}
         self.do = {i:False for i in range(64)}
@@ -194,6 +196,7 @@ class Simulator:
         return asdict(self.state)
 
     def navigate(self, goal, route_nodes=None):
+        self.blocked_recovery.new_goal();self._recovery_narrow=False
         self._ready()
         s = self.state
         next_plan=None
@@ -251,9 +254,9 @@ class Simulator:
         s=self.state
         reference=getattr(self,'_reference_waypoints',[])
         if reference and math.dist(reference[-1],(node['x'],node['y']))>1e-5:reference=[]
-        points=rejoin_detour(self.map,(s.x,s.y),reference,radius,risk_aware=True)
+        points=rejoin_detour(self.map,(s.x,s.y),reference,radius,safety_margin=.01 if self._recovery_narrow else .04,risk_aware=True)
         rejoined=bool(points)
-        if not points:points=detour(self.map,(s.x,s.y),(node['x'],node['y']),radius,risk_aware=True)
+        if not points:points=detour(self.map,(s.x,s.y),(node['x'],node['y']),radius,safety_margin=.01 if self._recovery_narrow else .04,risk_aware=True)
         if not points and len(self.route)>1:
             final=self.map.nodes[self.route[-1]]
             points=detour(self.map,(s.x,s.y),(final['x'],final['y']),radius,risk_aware=True)
@@ -426,6 +429,13 @@ class Simulator:
 
     def navigation_points(self):
         pts=[(self.state.x,self.state.y)]
+        recovery=self.blocked_recovery
+        if recovery.active:
+            if recovery.phase=='BACK':pts.append((self.state.x-math.cos(recovery.heading)*recovery.remaining,self.state.y-math.sin(recovery.heading)*recovery.remaining))
+            elif recovery.phase=='TURN' and recovery.rear:
+                from .avoidance import clear_segment
+                if clear_segment(self.map,pts[0],recovery.rear,recovery.radius(self)):pts.append(recovery.rear)
+            return pts
         if not self.route:return pts
         if self._waypoints:pts.extend(self._waypoints)
         else:pts.extend(self.segment_geometry(self._segment_start,self.route[0])[0])
@@ -447,7 +457,7 @@ class Simulator:
         self._arrival_align=False
         s.x,s.y,s.last_node=n['x'],n['y'],n['id']
         self.skipped_goals.pop(n['id'],None)
-        self._local_avoidance_active=False
+        self._local_avoidance_active=False;self._recovery_narrow=False
         self._segment_start=n['id'];self.route.pop(0)
         if not self.route:
             s.mode,s.task,s.target='IDLE','완료','';s.speed=0;self._velocity=0
@@ -490,6 +500,9 @@ class Simulator:
         if self._obstacle_latched:
             s.blocked=True;self._velocity=0.;self.v=self.w=self.lease=0.
             self.avoidance_status='장애물 정지 유지 · 수동 재개 필요';return
+        was_blocked=self._collision_blocked and s.blocked
+        if self.blocked_recovery.active and self.blocked_recovery.step(self,dt):return
+        if was_blocked and self.blocked_recovery.begin(self,self.block_reason) and self.blocked_recovery.step(self,dt):return
         if self._collision_blocked and not self._manual_stop_reason:
             s.blocked=False;self._collision_blocked=False;self.block_reason=''
         self._charge_tick()
@@ -524,7 +537,7 @@ class Simulator:
                     from .avoidance import nearest_clear_rejoin
                     merged=nearest_clear_rejoin(self.map,(s.x,s.y),reference,limits['radius'])
                     if merged:
-                        self._waypoints=merged[1:];self._local_avoidance_active=False
+                        self._waypoints=merged[1:];self._local_avoidance_active=False;self._recovery_narrow=False
                         self._velocity=0.;self.avoidance_status='장애물 통과 · 최단 연결로 기존 경로 복귀'
             # An independent progress watchdog also covers repeated heading /
             # collision returns that never reach the normal reroute branch.
@@ -588,6 +601,8 @@ class Simulator:
                 if predicted:
                     clearance=predicted['distance'];reason='동적 장애물 예상 충돌 · '+str(predicted['obstacle'].get('id','이동체'))
                     desired=min(desired,max(0.,(clearance-stop_dist)/max(.2,predicted['time'])))
+            if reason and clearance<=stop_dist+.025 and self.blocked_recovery.begin(self,reason):
+                self.blocked_recovery.step(self,dt);return
             self.detected_obstacle=reason
             if self._reroute_forced:reason=self.detected_obstacle='기존 연결 경로에 복귀 불가'
             if not reason:

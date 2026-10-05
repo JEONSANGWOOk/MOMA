@@ -55,7 +55,7 @@ def _shape_summary(value, depth=0):
 class Console(UIScaleMixin, GamepadMixin, SpatialMixin, StudioMixin, tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title('AMR Control Studio | MoMa Standalone · v1.25 Workspace')
+        self.title('AMR Control Studio | MoMa Standalone · v1.26 Workspace')
         # Responsive startup size: fit the active monitor instead of assuming one fixed resolution.
         sw=self.winfo_screenwidth(); sh=self.winfo_screenheight()
         start_w=min(1600,int(sw*.94))
@@ -4217,6 +4217,7 @@ class Console(UIScaleMixin, GamepadMixin, SpatialMixin, StudioMixin, tk.Tk):
         self.sim.prefer_graph_routes=self.prefer_graph_routes.get()
         self._auto_apply_settings()
         self.auto_class_label.configure(text='자동 판단: '+self.sim.auto_obstacle_status)
+        self.sim.blocked_recovery.enabled=self.blocked_recovery_enabled.get() if hasattr(self,'blocked_recovery_enabled') else True
         self.sim.obstacle_policy=self._obstacle_policy_key()
         self.sim.reroute_wait_s=float(self.studio_config.get('reroute_wait_s',5))
         self.sim.reroute_attempt_limit=int(self.studio_config.get('reroute_attempts',3))
