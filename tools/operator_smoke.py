@@ -48,7 +48,7 @@ with tempfile.TemporaryDirectory() as folder:
   except ValueError:pass
   # Voice order fills the operator recipe preview, never starts a mission.
   app._voice_submit('LM1에서 LM3로 순환 운반 두 번');assert app.voice_pending[0]['action']=='operator_order';app._voice_execute();assert app.operator_repeat.get()=='2';assert not app.studio_runner.active
-  app.operator_kind.set('현재 노드 왕복 테스트');app.operator_destination.set('LM1');app.operator_repeat.set('2');plan=app._operator_preview();assert plan['actions'][-1]['goal']=='LM3';app._operator_start()
+  app._operator_open_cycle();app.update();assert app.operator_cycle_panel.winfo_ismapped();assert 'LM1' in app.operator_fields[2]['values'];app.operator_destination.set('LM2');app._operator_cycle_add();app.operator_destination.set('LM1');app._operator_cycle_add();assert list(app.operator_cycle_nodes.get(0,'end'))==['LM2','LM1'];app.operator_repeat.set('2');plan=app._operator_preview();assert plan['actions'][-1]['goal']=='LM3';app._operator_start()
   now=time.monotonic()
   for _ in range(3600):
    app.sim.tick(.05);now+=.05;app._studio_tick(now,.05)

@@ -27,6 +27,14 @@ class OperatorMixin(RecipeMixin):
   self.operator_fields=[];self.operator_location_rows={}
   for label,var,values in [('미션 타입',self.operator_kind,[t['name'] for t in self.operator_templates]),('픽업 위치',self.operator_pickup,list(self.map.nodes)),('목적지',self.operator_destination,list(self.map.nodes)),('복귀 위치',self.operator_return,list(self.map.nodes))]:
    row=self._studio_row(body);ttk.Label(row,text=label,width=12).pack(side='left');combo=ttk.Combobox(row,textvariable=var,values=values,state='readonly',width=28);combo.pack(side='left',fill='x',expand=True);combo.bind('<<ComboboxSelected>>',lambda e:self._operator_invalidate());self.operator_fields.append(combo);self.operator_location_rows[label]=row
+  self.operator_cycle_panel=ttk.Frame(body);self.operator_cycle_panel.pack(fill='x',padx=12,pady=4)
+  self.operator_cycle_origin=tk.StringVar(value='출발 / 복귀 노드: 현재 위치에서 자동 확인')
+  ttk.Label(self.operator_cycle_panel,textvariable=self.operator_cycle_origin).pack(anchor='w')
+  self.operator_cycle_nodes=tk.Listbox(self.operator_cycle_panel,height=4,exportselection=False);self.operator_cycle_nodes.pack(fill='x')
+  row=ttk.Frame(self.operator_cycle_panel);row.pack(fill='x')
+  self.button(row,'선택 목적지 추가',lambda:self.guarded(self._operator_cycle_add)).pack(side='left')
+  self.button(row,'선택 삭제',self._operator_cycle_remove).pack(side='left',padx=3)
+  ttk.Label(self.operator_cycle_panel,text='위 목적지 목록 또는 지도에서 노드를 선택해 추가하세요. 마지막에는 출발 노드로 자동 복귀합니다.',wraplength=440).pack(fill='x')
   row=self._studio_row(body);self.operator_repeat_row=row;ttk.Label(row,text='실행 횟수',width=12).pack(side='left');ttk.Spinbox(row,textvariable=self.operator_repeat,from_=1,to=100,width=8,command=self._operator_invalidate).pack(side='left');ttk.Label(row,text='1회에 템플릿 전체 수행').pack(side='left',padx=6)
   row=self._studio_row(body)
   self.button(row,'경로 / 작업 미리보기',lambda:self.guarded(self._operator_preview),BLUE).pack(side='left',padx=3);self.operator_start_button=self.button(row,'시작',lambda:self.guarded(self._operator_start),BLUE);self.operator_start_button.pack(side='left',padx=3)
@@ -40,6 +48,7 @@ class OperatorMixin(RecipeMixin):
   self.operator_live=tk.StringVar();ttk.Label(map_panel,textvariable=self.operator_live,wraplength=550).pack(fill='x',padx=8,pady=6);self.button(map_panel,'지도 맞춤',self.operator_map.fit).pack(anchor='w',padx=8,pady=5)
   self._developer_menu=self.cget('menu');self._developer_bar_pack=[(w,w.pack_info()) for w in self.connection_bar.winfo_children()]
   self.operator_menu=tk.Menu(self,tearoff=False);self.operator_menu.add_command(label='작업 운영',command=lambda:self.tabs.select(self.operator_page));self.operator_menu.add_command(label='작업 이력',command=lambda:self.guarded(self._operator_history))
+  self.button(self.role_header,'사이클 테스트',self._operator_open_cycle).pack(side='right',padx=4)
   self._recipe_build()
   self.ui_role.set(self.studio_config.get('ui_role','개발자'));self._role_apply();self.operator_after=self.after(250,self._operator_tick)
  def _require_developer(self):
@@ -91,10 +100,21 @@ class OperatorMixin(RecipeMixin):
   result['repeat']=int(NUM.get(count[1],count[1])) if count else 1
   return self.voice_gui.validate_order(result)
  def _operator_arm_config(self):return self.studio_config['arm'] if self.real or self.studio_config['arm'].get('driver')=='fairino' else self.arm_dev_config
+ def _operator_open_cycle(self):
+  self.operator_kind.set('현재 노드 왕복 테스트');self.tabs.select(self.operator_page);self._operator_invalidate()
+  if not self.operator_cycle_panel.winfo_manager():self.operator_cycle_panel.pack(fill='x',padx=12,pady=4,before=self.operator_repeat_row)
+ def _operator_cycle_add(self):
+  node=self.operator_destination.get()
+  if node not in self.map.nodes:raise ValueError('지도에 등록된 목적지 노드를 선택하세요.')
+  self.operator_cycle_nodes.insert('end',node);self._operator_invalidate()
+ def _operator_cycle_remove(self):
+  for index in reversed(self.operator_cycle_nodes.curselection()):self.operator_cycle_nodes.delete(index)
+  self._operator_invalidate()
  def _operator_params(self):
   try:repeat=int(self.operator_repeat.get())
   except ValueError:raise ValueError('실행 횟수는 정수입니다.')
-  return dict(픽업=self.operator_pickup.get(),목적지=self.operator_destination.get(),복귀=self.operator_return.get(),repeat=repeat)
+  visits=list(self.operator_cycle_nodes.get(0,'end')) if self.operator_kind.get()=='현재 노드 왕복 테스트' else []
+  return dict(경유=visits,픽업=self.operator_pickup.get(),목적지=self.operator_destination.get(),복귀=self.operator_return.get(),repeat=repeat)
  def _operator_signature(self):return (self._voice_context(),self.operator_kind.get(),json.dumps(self._operator_params(),sort_keys=True),json.dumps(self.operator_templates,sort_keys=True),json.dumps(self._operator_arm_config(),sort_keys=True))
  def _operator_invalidate(self):self.operator_pending=None;self.operator_summary.set('설정이 변경되었습니다. 미리보기를 다시 확인하세요.')
  def _operator_preview(self):
@@ -150,6 +170,13 @@ class OperatorMixin(RecipeMixin):
    allowed={str(self.operator_page),str(self.voice_page)}
    if self.role_active=='사용자' and self.tabs.select() not in allowed:self.tabs.select(self.operator_page)
    nodes=list(self.map.nodes)
+   cycle=self.operator_kind.get()=='현재 노드 왕복 테스트'
+   if cycle:
+    if not self.operator_cycle_panel.winfo_manager():self.operator_cycle_panel.pack(fill='x',padx=12,pady=4,before=self.operator_repeat_row)
+    state=self.current_state();origin=self.map.nearest(state['x'],state['y']) if nodes else None
+    self.operator_cycle_origin.set('출발 / 복귀 노드: '+(origin or '등록된 노드 없음')+' · 미리보기 시 확정')
+   else:self.operator_cycle_panel.pack_forget()
+   if nodes and self.operator_destination.get() not in nodes:self.operator_destination.set(nodes[0])
    for combo in self.operator_fields[1:]:combo.configure(values=nodes)
    self.operator_fields[0].configure(values=[t['name'] for t in self.operator_templates])
    recipe=next((t for t in self.operator_templates if t['name']==self.operator_kind.get()),None)

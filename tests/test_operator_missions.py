@@ -40,3 +40,8 @@ class OperatorMissionTests(unittest.TestCase):
   recipe=next(r for r in defaults() if r['name']=='현재 노드 왕복 테스트')
   for pose,params in [({'x':.5,'y':0},self.params),(self.pose,dict(self.params,목적지='LM1'))]:
    with self.assertRaises(ValueError):compile_mission(recipe,params,self.map,self.arm,pose)
+
+ def test_cycle_multiple_selected_visits(self):
+  recipe=next(r for r in defaults() if r['name']=='현재 노드 왕복 테스트')
+  p=compile_mission(recipe,dict(self.params,경유=['LM2','LM3']),self.map,self.arm,self.pose)
+  self.assertEqual([a['goal'] for a in p['actions']],['LM2','LM3','LM1'])

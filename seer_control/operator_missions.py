@@ -46,7 +46,12 @@ def compile_mission(recipe,params,model,arm,pose):
  current=model.nearest(pose['x'],pose['y']) if model.nodes else None
  if any(b['type']=='이동' and b['value']=='현재 노드' for b in recipe['blocks']):
   if not current or math.hypot(pose['x']-model.nodes[current]['x'],pose['y']-model.nodes[current]['y'])>.25:raise ValueError('현재 노드 왕복 테스트는 노드에서 0.25m 이내에 정지한 뒤 미리보기 하세요.')
-  if destination==current:raise ValueError('현재 노드와 다른 방문 목적지를 선택하세요.')
+  if destination==current and not params.get('경유'):raise ValueError('현재 노드와 다른 방문 목적지를 선택하세요.')
+ if recipe['name']=='현재 노드 왕복 테스트':
+  visits=params.get('경유') or [destination]
+  if not isinstance(visits,list) or not 1<=len(visits)<=100 or any(n not in model.nodes for n in visits):raise ValueError('방문할 노드를 1~100개 선택하세요.')
+  if all(n==current for n in visits):raise ValueError('출발 노드 외 방문할 노드를 추가하세요.')
+  recipe['blocks']=[dict(type='이동',value=n) for n in visits]+[dict(type='이동',value='현재 노드')]
  actions=[];stops=[];labels=[]
  for b in recipe['blocks']:
   value=b['value']
