@@ -447,9 +447,6 @@ class Simulator:
         recovery=self.blocked_recovery
         if recovery.active:
             if recovery.phase=='BACK':pts.append((self.state.x-math.cos(recovery.heading)*recovery.remaining,self.state.y-math.sin(recovery.heading)*recovery.remaining))
-            elif recovery.phase=='TURN' and recovery.rear:
-                from .avoidance import clear_segment
-                if clear_segment(self.map,pts[0],recovery.rear,recovery.radius(self)):pts.append(recovery.rear)
             return pts
         if not self.route:return pts
         if self._waypoints:pts.extend(self._waypoints)
@@ -517,7 +514,9 @@ class Simulator:
             self.avoidance_status='장애물 정지 유지 · 수동 재개 필요';return
         was_blocked=self._collision_blocked and s.blocked
         if self.blocked_recovery.active and self.blocked_recovery.step(self,dt):return
-        if was_blocked and self.blocked_recovery.begin(self,self.block_reason) and self.blocked_recovery.step(self,dt):return
+        if was_blocked and self.blocked_recovery.allowed(self):
+            if not self._reroute_forced and self._try_local_detour(self.map.nodes[self.route[0]],self.blocked_recovery.radius(self)):return
+            if self.blocked_recovery.begin(self,self.block_reason) and self.blocked_recovery.step(self,dt):return
         if self._collision_blocked and not self._manual_stop_reason:
             s.blocked=False;self._collision_blocked=False;self.block_reason=''
         self._charge_tick()
@@ -617,8 +616,6 @@ class Simulator:
                 if predicted:
                     clearance=predicted['distance'];reason='동적 장애물 예상 충돌 · '+str(predicted['obstacle'].get('id','이동체'))
                     desired=min(desired,max(0.,(clearance-stop_dist)/max(.2,predicted['time'])))
-            if reason and clearance<=stop_dist+.025 and self.blocked_recovery.begin(self,reason):
-                self.blocked_recovery.step(self,dt);return
             self.detected_obstacle=reason
             if self._reroute_forced:reason=self.detected_obstacle='기존 연결 경로에 복귀 불가'
             if not reason:

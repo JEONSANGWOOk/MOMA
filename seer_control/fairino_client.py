@@ -60,6 +60,11 @@ class FairinoClient:
             if config!=self.config:raise ValueError('FR5 설정 변경 후 다시 연결하세요.')
             return self._request(kind,operation)
 
+    def jog_stop(self):
+        if not self.config:return
+        with xmlrpc.client.ServerProxy('http://'+self.config['ip']+':20003',transport=TimeoutTransport()) as rpc:
+            checked(rpc.ImmStopJOG(),'ImmStopJOG')
+
     def stop(self):
         # Terminate retry loops first; do not queue a stop behind SDK motion calls.
         config=self.config

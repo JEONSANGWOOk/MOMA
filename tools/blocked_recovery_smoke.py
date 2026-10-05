@@ -16,8 +16,9 @@ with tempfile.TemporaryDirectory() as folder:
   for rear in (False,True):
    app.sim=scene(rear);app.map=app.sim.map;app.sim.collision_radius=.36
    app.sim.state.blocked=True;app.sim._collision_blocked=True;app.sim.block_reason='배치 장애물'
-   app.sim.tick(.05);app.draw_map();app.update()
-   capture_window(app,Path('artifacts')/('blocked_recovery_back.png' if rear else 'blocked_recovery_turn.png'))
+   if rear:app.sim.blocked_recovery.begin(app.sim,'배치 장애물')
+   app.sim.tick(.05);app.last_tick=__import__('time').monotonic();app.tick();app.draw_map();app.update()
+   capture_window(app,Path('artifacts')/('blocked_recovery_back.png' if rear else 'blocked_recovery_current.png'))
    for _ in range(1600):
     app.sim.tick(.05)
     assert not collision_reason(app.map,app.sim.state.x,app.sim.state.y,app.sim.blocked_recovery.radius(app.sim))
@@ -26,5 +27,5 @@ with tempfile.TemporaryDirectory() as folder:
   app.blocked_recovery_enabled.set(False);app._blocked_recovery_save()
   assert not app.sim.blocked_recovery.enabled and app.studio_config['blocked_recovery_enabled'] is False
   assert not errors,errors
-  print('PASS GUI default enabled, turn/back preview, collision-free arrival, persisted toggle; offline SIM only')
+  print('PASS GUI default enabled, current-position bypass/short back preview, collision-free arrival, persisted toggle; offline SIM only')
  finally:app.close()

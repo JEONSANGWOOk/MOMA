@@ -132,9 +132,30 @@ class SDKEngine:
         self.io_task=None;self.paused=False;self.target=(method,target);self.operation=operation;self.command_time=time.monotonic();self.canceled=False
         return dict(accepted=True,operation=operation)
 
+    def jog(self,spec):
+        validate(self.config,True)
+        if not isinstance(spec,dict):raise ValueError('JOG 설정 오류')
+        ref=spec.get('ref');axis=spec.get('axis');direction=spec.get('direction')
+        if type(ref) is not int or ref not in (0,2) or type(axis) is not int or not 1<=axis<=6 or type(direction) is not int or direction not in (0,1):raise ValueError('JOG 축 오류')
+        distance=float(spec.get('distance',0));vel=float(spec.get('vel',0));expires=float(spec.get('expires',0))
+        maximum=.3 if ref==2 and axis<=3 else .2
+        if not all(math.isfinite(x) for x in (distance,vel,expires)) or not 0<distance<=maximum or not 0<vel<=5:raise ValueError('JOG 속도/거리 범위 오류')
+        if not 0<=expires-time.monotonic()<=.25:raise ValueError('JOG 입력 유효시간 초과')
+        state=self.status()
+        if state['status'] in ('ERROR','RUNNING','PAUSED') or state['motion_done']!=1:raise ValueError('FR5 정지 및 안전 상태 확인')
+        # State polling can take time: recheck the lease immediately before motion.
+        if time.monotonic()>expires:raise ValueError('JOG 입력 유효시간 초과')
+        self.target=None;self.io_task=None;self.paused=False;self.canceled=False
+        try:
+            checked(self.robot.StartJOG(ref,axis,direction,distance,vel=vel,acc=20.),'StartJOG')
+            time.sleep(.08)
+        finally:checked(self.robot.ImmStopJOG(),'ImmStopJOG')
+        return self.status()
+
     def call(self,kind,operation=None):
         if kind=='status':return self.status()
         if kind=='execute':return self.execute(operation)
+        if kind=='jog':return self.jog(operation)
         if kind in ('pause','resume','stop'):
             checked(getattr(self.robot,{'pause':'PauseMotion','resume':'ResumeMotion','stop':'StopMotion'}[kind])(),kind)
             if kind=='stop':self.canceled=True

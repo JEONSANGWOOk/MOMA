@@ -15,7 +15,7 @@ class ObstacleUIMixin:
         choice=ttk.Combobox(body,textvariable=self.sim_obstacle_policy,values=list(POLICIES.values()),state='readonly')
         choice.pack(fill='x');choice.bind('<<ComboboxSelected>>',lambda event:self._sim_obstacle_change())
         self.blocked_recovery_enabled=tk.BooleanVar(value=True)
-        tk.Checkbutton(body,text='BLOCKED 회복 · 뒤쪽 우선 / 제한 후진 우회',variable=self.blocked_recovery_enabled,bg=PANEL,command=self._blocked_recovery_save).pack(anchor='w')
+        tk.Checkbutton(body,text='BLOCKED 회복 · 필요할 때만 짧게 후진 후 우회',variable=self.blocked_recovery_enabled,bg=PANEL,command=self._blocked_recovery_save).pack(anchor='w')
         self.prefer_line_rejoin=tk.BooleanVar(value=True)
         tk.Checkbutton(body,text='장애물만 우회 / 원래 경로 최단 복귀 우선',variable=self.prefer_line_rejoin,bg=PANEL,command=self._line_rejoin_save).pack(anchor='w')
         self.prefer_graph_routes=tk.BooleanVar(value=True)

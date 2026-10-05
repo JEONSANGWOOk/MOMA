@@ -1,10 +1,13 @@
 """DualSense manual-control panel; same SIM and SEER jog transports."""
 import math
+import copy
+import threading
 import time
 import tkinter as tk
 from tkinter import ttk
 from .gamepad import WindowsPad,PadGate,AXES
 from .manual_safety import controller_manual_reason
+from .arm_gamepad import GROUPS,sim_jog,sdk_pulse
 from .theme import PANEL,MUTED,INK,BLUE
 
 
@@ -13,13 +16,74 @@ class GamepadMixin:
         self.pad_backend=WindowsPad();self.pad_gate=PadGate();self.pad_device=None;self.pad_after=None
         self.pad_enabled=tk.BooleanVar(value=False)
         self.pad_config=dict(forward='Y',turn='X',deadman=4,stop=2,zone=.15,invert_forward=True,invert_turn=True)
-        self.pad_sample=None
+        self.pad_sample=None;self.pad_arm_active=False;self.pad_arm_active_real=False;self.pad_arm_time=None
+        self.pad_target=tk.StringVar(value='AMR');self.pad_arm_group=tk.StringVar(value='J1 / J2');self.pad_arm_real=tk.BooleanVar(value=False)
         tk.Checkbutton(body,text='DualSense 조이스틱 사용 (CFI-ZCT1G)',variable=self.pad_enabled,bg=PANEL,command=self._pad_toggle).pack(anchor='w',pady=(8,0))
+        self._pad_mode_controls(body)
         self.pad_status=self.label(body,'컨트롤러 검색 후 수동 조작을 활성화하세요.',8,MUTED,justify='left',wraplength=285)
         self.pad_status.pack(fill='x',pady=3)
         row=tk.Frame(body,bg=PANEL);row.pack(fill='x')
         self.button(row,'컨트롤러 검색 / 설정',self._pad_dialog,BLUE).pack(side='left',fill='x',expand=True)
-        self.label(body,'왼쪽 스틱: 전후진/회전 · L1: 주행 허용 · ○: 정지\n속도는 위의 m/s·deg/s 값 이내로 제한됩니다.',8,MUTED,justify='left',wraplength=285).pack(fill='x',pady=4)
+        self.label(body,'L1: 누르는 동안 조종 · ○: 정지\nAMR: 전후진/회전 · 팔: 선택한 두 축 조절\n팔 SIM: 12°/s · TCP 30mm/s, 10°/s',8,MUTED,justify='left',wraplength=285).pack(fill='x',pady=4)
+
+    def _pad_mode_controls(self,body):
+        row=tk.Frame(body,bg=PANEL);row.pack(fill='x',pady=3)
+        self.label(row,'조종 대상',8,MUTED).pack(side='left')
+        target=ttk.Combobox(row,textvariable=self.pad_target,values=['AMR','로봇팔'],state='readonly',width=7);target.pack(side='left',padx=3)
+        target.bind('<<ComboboxSelected>>',lambda e:self._pad_toggle())
+        group=ttk.Combobox(row,textvariable=self.pad_arm_group,values=list(GROUPS),state='readonly',width=13);group.pack(side='left')
+        group.bind('<<ComboboxSelected>>',lambda e:self._pad_toggle())
+
+    def _pad_arm_stop(self):
+        self.pad_arm_time=None
+        if not getattr(self,'pad_arm_active',False):return
+        self.pad_arm_active=False
+        if getattr(self,'pad_arm_active_real',False):
+            def stop():
+                try:self.fr5_client.jog_stop()
+                except Exception as e:self.fr5_events.put((self.fr5_epoch,False,'팔 JOG 정지 확인 실패: '+str(e)))
+            threading.Thread(target=stop,daemon=False,name='pad-arm-stop').start()
+
+    def _pad_arm_process(self,sample,now):
+        focus=self.focus_get();page=self.tabs.select()
+        allowed=(self.pad_enabled.get() and self.manual.get() and focus is not None and focus.winfo_toplevel()==self and
+                 page in (str(self.operation_page),str(self.arm_workspace_page)) and not self.reloc_mode and
+                 not self.task_running and not self.studio_runner.active)
+        if self.real:
+            feedback=self.fr5_feedback;cfg=self.studio_config.get('arm',{});amr=self.current_state();speed=amr.get('speed')
+            allowed=allowed and self.pad_arm_real.get() and self.connected and self.control_enabled and self.fr5_client.connected and cfg.get('verified') is True and cfg.get('version_confirmed') is True and bool(cfg.get('controller_version')) and now-self.fr5_rx<=2 and not controller_manual_reason(self.live,self.last_state,now) and type(speed) in (int,float) and math.isfinite(speed) and abs(speed)<.01 and feedback.get('status') not in ('ERROR','RUNNING','PAUSED') and not feedback.get('emergency') and not any(feedback.get('safety_stop',[])) and not any(feedback.get('errors',[]))
+        else:allowed=allowed and self.sim_powered and not self.sim.route and not self.sim.state.stopped and self.sim.state.motor and self.arm_dev_sim.state not in ('RUNNING','PAUSED')
+        try:v,w,stop,status=self.pad_gate.evaluate(sample,now,allowed,**self.pad_config)
+        except (ValueError,TypeError):self.pad_gate.reset();v=w=0.;stop=False;status='팔 조이스틱 입력 오류'
+        if self.pad_enabled.get() and sample and 0<=now-sample.timestamp<=.25 and focus is not None and focus.winfo_toplevel()==self:
+            stop=stop or bool(sample.buttons&(1<<self.pad_config['stop']))
+        if stop:
+            self.pad_enabled.set(False);self._pad_stop();self.action('stop')
+            if self.real:self._fr5_priority_stop()
+            else:self.arm_dev_sim.stop();self._aw_sync_main()
+        elif not v and not w:self._pad_arm_stop()
+        else:
+            try:
+                if self.held:raise ValueError('AMR 버튼/키보드 조작을 먼저 해제하세요.')
+                if self.real:
+                    if hasattr(self,'arm_dev_display') and self.arm_dev_display.get()=='SIM 개발':self.arm_dev_display.set('실기 자세')
+                    if not self.fr5_pending and feedback.get('motion_done')==1:
+                        self.studio_arm_safe=False
+                        pulse=sdk_pulse(self.pad_arm_group.get(),v,w,now);cfg=copy.deepcopy(self.studio_config['arm'])
+                        self._fr5_queue(lambda:self._arm_call(cfg,'jog',pulse));self.pad_arm_active=True;self.pad_arm_active_real=True
+                    status='FR5 단일 축 제한 JOG · '+self.pad_arm_group.get()
+                else:
+                    dt=.05 if self.pad_arm_time is None else min(.1,max(0,now-self.pad_arm_time))
+                    sim_jog(self.arm_dev_sim,self.pad_arm_group.get(),v,w,dt)
+                    self.pad_arm_time=now;self.pad_arm_active=True;self.pad_arm_active_real=False;self._aw_sync_main();self.arm_dev_canvas.render()
+                    status='팔 SIM 조종 · '+self.pad_arm_group.get()
+            except (ValueError,TypeError) as e:self._pad_arm_stop();self.pad_gate.reset();status=str(e)
+        if not allowed and not stop:status='팔 조종 대기 · 수동/SIM 정지/팔 재생/실기 허용·수신 상태 확인'
+        identity=self.pad_device[1].name if self.pad_device else '미연결'
+        raw=' · '.join(f'{k} {value:+.2f}' for k,value in sample.axes.items()) if sample else ''
+        self.pad_status.configure(text=f'{identity} · {status}\n{raw}')
+        if hasattr(self,'pad_arm_feedback'):self.pad_arm_feedback.set(('REAL · ' if self.real else 'SIM · ')+status)
+        if getattr(self,'pad_input_label',None) and self.pad_input_label.winfo_exists():self.pad_input_label.configure(text=self.pad_status.cget('text'))
 
     def _pad_start(self):
         devices=self.pad_backend.devices()
@@ -36,9 +100,10 @@ class GamepadMixin:
         self.pad_after=self.after(50,self._pad_poll)
 
     def _pad_toggle(self):
-        self.release_drive();self.pad_gate.reset()
+        self._pad_stop();self.release_drive();self.pad_gate.reset()
 
     def _pad_stop(self):
+        self._pad_arm_stop()
         if self.held and self.held[0]=='gamepad':self.release_drive()
 
     def _pad_poll(self):
@@ -54,6 +119,7 @@ class GamepadMixin:
             if self.winfo_exists():self.pad_after=self.after(50,self._pad_poll)
 
     def _pad_process(self,sample,now):
+        if self.pad_target.get()=='로봇팔':return self._pad_arm_process(sample,now)
         focus=self.focus_get()
         allowed=(self.pad_enabled.get() and self.manual.get() and self.connected and
                  self.tabs.select()==str(self.operation_page) and focus is not None and focus.winfo_toplevel()==self and
@@ -95,7 +161,7 @@ class GamepadMixin:
 
     def _pad_dialog(self):
         self._pad_stop();self.pad_gate.reset()
-        win=tk.Toplevel(self);win.title('DualSense CFI-ZCT1G · 입력 / 설정');self._fit_dialog(win,660,490,620,460);win.configure(bg=PANEL)
+        win=tk.Toplevel(self);win.title('DualSense CFI-ZCT1G · 입력 / 설정');self._fit_dialog(win,720,550,620,460);win.configure(bg=PANEL)
         devices=self.pad_backend.devices()
         names=[f'{index}: {caps.name} · VID {caps.manufacturer:04X} / PID {caps.product:04X}' for index,caps in devices]
         selected=tk.StringVar(value=names[0] if names else '')
@@ -123,5 +189,6 @@ class GamepadMixin:
             self._pad_stop();self.pad_gate.reset();self.pad_config=config
             self.studio_config['gamepad']=config;self._studio_save_settings();win.destroy()
         self.label(win,'설정 중에는 주행하지 않습니다. 창을 닫고 수동 조작 + 조이스틱 사용을 켠 뒤\n스틱 중앙에서 L1을 놓았다가 다시 누르세요. 재연결 시 다시 활성화해야 합니다.',9,MUTED,justify='left').pack(fill='x',padx=12,pady=7)
+        tk.Checkbutton(win,text='이번 실행에서 FR5 실기 조이스틱 JOG 허용 (연결/버전/동작 허용 필요)',variable=self.pad_arm_real,bg=PANEL,command=self._pad_toggle).pack(anchor='w',padx=12)
         self.button(win,'적용 / 저장',lambda:self.guarded(apply),BLUE).pack(pady=4)
         return win
