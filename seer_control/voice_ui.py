@@ -8,6 +8,7 @@ from .voice_runtime import Recorder,transcribe,interpret,request,speak
 from .voice_setup import install_whisper,install_ollama,start_server,pull,stop_server
 from .fairino_api import validate as validate_fr5
 from .fairino_programs import program_actions
+from .voice_gui import GuiRegistry
 from .mission_preview import MissionMapPreview
 from .theme import PANEL,INK,MUTED,BLUE,RED
 class VoiceMixin:
@@ -34,6 +35,7 @@ class VoiceMixin:
   row=self._studio_row(body)
   self.voice_record_button=self.button(row,'🎙 녹음 시작 / 인식',lambda:self.guarded(self._voice_record),BLUE);self.voice_record_button.pack(side='left',padx=3)
   self.button(row,'모두 정지',lambda:self.guarded(lambda:self._voice_dispatch({'action':'stop'})),RED).pack(side='left',padx=3)
+  self.button(row,'전체 GUI 기능',self._voice_gui_catalog).pack(side='left',padx=3)
   self.button(row,'지도 보기',lambda:self.tabs.select(self.operation_page)).pack(side='left',padx=3)
   ttk.Label(body,textvariable=self.voice_status,wraplength=1100).pack(fill='x',padx=14,pady=8)
   row=self._studio_row(body);ttk.Entry(row,textvariable=self.voice_input,width=22).pack(side='left',fill='x',expand=True)
@@ -51,6 +53,33 @@ class VoiceMixin:
   self._studio_note(body,'기본: 한국어 Whisper small + Qwen3 1.7B CPU. 설치 시 인터넷 다운로드, 이후 인식/명령 해석은 노트북에서 처리합니다. 음성 파일은 인식 후 삭제합니다. LLM 주소는 로컬만 허용합니다. REAL은 기존 제어권·등록 작업·안전 조건을 유지합니다. 음성 정지는 물리 비상정지 장치를 대신하지 않습니다.')
   if (self.voice_folder/'ggml-small-q5_1.bin').is_file():self.voice_status.set('한국어 음성 인식 준비됨 · 녹음 버튼을 누르고 말하세요.')
   self.voice_after=self.after(100,self._voice_tick)
+ def _voice_gui_catalog(self):
+  self.voice_gui=GuiRegistry(self)
+  win=tk.Toplevel(self);win.title('음성 / LLM · 전체 GUI 기능');self._fit_dialog(win,1000,650)
+  search=tk.StringVar();ttk.Label(win,text='기능 검색 → 항목 선택 → 조작/값 지정 → 명령 미리보기. 버튼은 기존 GUI 조건으로 실행합니다. 파일 선택과 공간 드래그는 해당 편집 화면에서 이어서 진행합니다.').pack(fill='x',padx=10,pady=8)
+  ttk.Entry(win,textvariable=search).pack(fill='x',padx=10)
+  tree=ttk.Treeview(win,columns=('kind','label'),show='headings');tree.heading('kind',text='종류');tree.column('kind',width=90);tree.heading('label',text='화면 / 기능');tree.column('label',width=700);tree.pack(fill='both',expand=True,padx=10,pady=8)
+  ids={};kinds={'button':'버튼','toggle':'체크','radio':'모드','choice':'선택값','entry':'입력','text':'본문','scale':'슬라이더','list':'목록','screen':'화면','menu':'메뉴','map':'지도 좌표','hold':'수동 짧은 조작'}
+  def refresh(*args):
+   tree.delete(*tree.get_children());ids.clear()
+   for row in self.voice_gui.targets.values():
+    if compact_search(search.get()) in compact_search(row['label']):ids[tree.insert('', 'end',values=(kinds[row['kind']],row['label']))]=row['id']
+  def compact_search(text):return ''.join(text.split()).casefold()
+  search.trace_add('write',refresh);refresh()
+  row=ttk.Frame(win);row.pack(fill='x',padx=10,pady=6);operation=tk.StringVar(value='invoke');value=tk.StringVar()
+  ttk.Combobox(row,textvariable=operation,values=['invoke','set','select','read'],state='readonly',width=9).pack(side='left');ttk.Entry(row,textvariable=value).pack(side='left',fill='x',expand=True,padx=5)
+  def selected(event=None):
+   if not tree.selection():return
+   target=self.voice_gui.targets[ids[tree.selection()[0]]];kind=target['kind'];operation.set('select' if kind in ('screen','list') else 'set' if kind in ('entry','text','choice','scale','toggle','map') else 'invoke')
+   value.set('true' if kind=='toggle' else str(target.get('values',[''])[0]) if target.get('values') else '')
+  tree.bind('<<TreeviewSelect>>',selected)
+  def prepare():
+   if not tree.selection():raise ValueError('기능을 선택하세요.')
+   command=dict(action='gui',target=ids[tree.selection()[0]],operation=operation.get())
+   if value.get():command['value']=value.get()
+   self._voice_accept(command,'GUI 기능 선택');self.tabs.select(self.voice_page);win.destroy()
+  self.button(row,'명령 미리보기',lambda:self.guarded(prepare),BLUE).pack(side='left')
+  return win
  def _voice_save(self):
   self.studio_config['voice']=dict(llm=self.voice_llm.get(),auto_sim=self.voice_auto_sim.get(),talk=self.voice_talk.get(),url=self.voice_url.get(),model=self.voice_model.get());self._studio_save_settings()
  def _voice_context(self):return (self.real,self.generation,id(self.map),self.host.get())
@@ -109,7 +138,11 @@ class VoiceMixin:
    finally:folder.cleanup()
   self.voice_status.set('한국어 음성 인식 중…');self._voice_job(work,'speech')
  def _voice_submit(self,text):
-  nodes=list(self.map.nodes);_,operations=self._voice_operations();command=parse_exact(text,nodes,operations)
+  if text.strip() in ('기능 목록','전체 기능','전체 GUI 기능','가능한 기능'):return self._voice_gui_catalog()
+  self.voice_gui=GuiRegistry(self);nodes=list(self.map.nodes);_,operations=self._voice_operations()
+  direct=parse_exact(text,nodes,operations)
+  if direct and direct['action']=='stop':return self._voice_dispatch(direct)
+  command=self.voice_gui.exact(text) or direct
   if command and command['action']=='stop':return self._voice_dispatch(command)
   if self.voice_busy:raise ValueError('이전 명령을 처리 중입니다.')
   self.voice_pending=None
@@ -121,22 +154,29 @@ class VoiceMixin:
    if self.voice_closed:
     stop_server(server);raise ValueError('종료됨')
    if server:self.voice_server=server
-   start=time.monotonic();command=interpret(url,model,text,nodes,operations)
+   start=time.monotonic();command=interpret(url,model,text,nodes,operations,self.voice_gui,self.voice_gui.candidates(text))
    return command,round(time.monotonic()-start,2)
   self._voice_job(work,'command')
  def _voice_accept(self,command,source):
-  _,ops=self._voice_operations();command=validate_command(command,self.map.nodes,ops)
+  _,ops=self._voice_operations();command=validate_command(command,self.map.nodes,ops,getattr(self,'voice_gui',None))
   self.voice_pending=(command,self._voice_context(),time.monotonic()+30)
-  self.voice_preview.configure(state='normal');self.voice_preview.delete('1.0','end');self.voice_preview.insert('1.0',source+'\n'+describe(command,self.real));self.voice_preview.configure(state='disabled')
+  self.voice_preview.configure(state='normal');self.voice_preview.delete('1.0','end');self.voice_preview.insert('1.0',source+'\n'+(self.voice_gui.describe(command) if command['action']=='gui' else describe(command,self.real)));self.voice_preview.configure(state='disabled')
   self.voice_status.set(source+' · 명령 미리보기 준비 (30초 유효)')
   if command['action'] in ('stop','status'):return self._voice_execute()
+  if command['action']=='gui':
+   row=self.voice_gui.targets[command['target']];self.voice_gui_pending_widget=row['widget']
+   if command['operation']=='read':return self._voice_execute()
+   return
   if not self.real and self.voice_auto_sim.get():self._voice_execute()
  def _voice_execute(self):
   if not self.voice_pending:raise ValueError('실행할 명령을 먼저 해석하세요.')
   command,context,expires=self.voice_pending
   if context!=self._voice_context() or time.monotonic()>expires:self.voice_pending=None;raise ValueError('모드/지도/연결 변경 또는 명령 유효시간 초과. 다시 해석하세요.')
-  _,ops=self._voice_operations();command=validate_command(command,self.map.nodes,ops)
-  if self.real and command['action'] not in ('stop','status') and not self.voice_real.get():raise ValueError('REAL 음성 명령 허용을 먼저 켜세요. 명령 미리보기를 확인하고 실행합니다.')
+  _,ops=self._voice_operations();command=validate_command(command,self.map.nodes,ops,getattr(self,'voice_gui',None))
+  if self.real and command['action'] not in ('stop','status') and not (command['action']=='gui' and (command['operation']=='read' or command['operation']=='select' and self.voice_gui.targets[command['target']]['kind']=='screen')) and not self.voice_real.get():raise ValueError('REAL 음성 명령 허용을 먼저 켜세요. 명령 미리보기를 확인하고 실행합니다.')
+  if command['action']=='gui':
+   row=self.voice_gui.targets[command['target']]
+   if row['widget'] is not self.voice_gui_pending_widget or not row['widget'].winfo_exists():raise ValueError('화면이 변경되었습니다. 다시 명령하세요.')
   self._voice_dispatch(command);self.voice_pending=None
  def _voice_response(self,text):
   self.voice_status.set(text)
@@ -144,7 +184,11 @@ class VoiceMixin:
    if self.voice_tts and self.voice_tts.poll() is None:self.voice_tts.terminate()
    self.voice_tts=speak(text);self.voice_tts.stdin.write(text);self.voice_tts.stdin.close()
  def _voice_dispatch(self,command):
-  _,ops=self._voice_operations();command=validate_command(command,self.map.nodes,ops);action=command['action']
+  _,ops=self._voice_operations();command=validate_command(command,self.map.nodes,ops,getattr(self,'voice_gui',None));action=command['action']
+  if action=='gui':
+   result=self.voice_gui.execute(command)
+   if not self.voice_closed:self._voice_response(result)
+   return
   if action=='stop':
    self.voice_epoch+=1;self.voice_pending=None;self.voice_recorder.close();self.voice_record_button.configure(text='🎙 녹음 시작 / 인식');self._pad_stop();self.action('stop')
    if self.real and self.fr5_client.connected:self._fr5_stop()

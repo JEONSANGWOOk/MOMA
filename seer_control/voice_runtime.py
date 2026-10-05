@@ -55,9 +55,9 @@ def request(url,path,data=None,timeout=120):
  body=json.dumps(data).encode() if data is not None else None
  req=urllib.request.Request(local_url(url)+path,data=body,headers={'Content-Type':'application/json'})
  with urllib.request.urlopen(req,timeout=timeout) as r:return json.load(r)
-def interpret(url,model,text,nodes,operations):
- result=request(url,'/api/chat',dict(model=model,messages=llm_messages(text,nodes,operations),stream=False,think=False,format=command_schema(nodes,operations),options=dict(temperature=0,num_predict=180,num_ctx=2048,num_thread=4,num_gpu=0),keep_alive='2m'))
- return ground_command(validate_command(json.loads(result['message']['content']),nodes,operations),text)
+def interpret(url,model,text,nodes,operations,gui=None,gui_targets=None):
+ result=request(url,'/api/chat',dict(model=model,messages=llm_messages(text,nodes,operations,gui_targets),stream=False,think=False,format=command_schema(nodes,operations,gui_targets),options=dict(temperature=0,num_predict=180,num_ctx=2048,num_thread=4,num_gpu=0),keep_alive='2m'))
+ return ground_command(validate_command(json.loads(result['message']['content']),nodes,operations,gui),text)
 def speak(text):
  # Feed plain data on stdin; operator text is never interpolated into PowerShell code.
  code="[Console]::InputEncoding=[System.Text.UTF8Encoding]::new($false); Add-Type -AssemblyName System.Speech; $voiceText=[Console]::In.ReadToEnd(); $s=New-Object System.Speech.Synthesis.SpeechSynthesizer; $v=$s.GetInstalledVoices() | Where-Object {$_.VoiceInfo.Culture.Name -eq 'ko-KR'} | Select-Object -First 1; if($v){$s.SelectVoice($v.VoiceInfo.Name)}; $s.Speak($voiceText); $s.Dispose()"

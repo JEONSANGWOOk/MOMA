@@ -9,7 +9,10 @@ def normalize(text):
  def node(m):return 'LM'+NUM.get(m[1],m[1])
  text=re.sub(r'(?:엘\s*엠|엘렘|엘림|lm)\s*([0-9]+|[일이삼사오육칠팔구])',node,text,flags=re.I)
  return re.sub(r'(?:씨\s*피|시\s*피|cp)\s*([0-9]+|[일이삼사오육칠팔구])',lambda m:'CP'+NUM.get(m[1],m[1]),text,flags=re.I)
-def validate_command(value,nodes,operations):
+def validate_command(value,nodes,operations,gui=None):
+ if isinstance(value,dict) and value.get("action")=="gui":
+  if gui is None:raise ValueError("GUI 기능 목록이 필요합니다.")
+  return gui.validate(value)
  if not isinstance(value,dict) or set(value)-{'action','nodes','start','repeats','operation'}:raise ValueError('지원하지 않는 명령 항목입니다.')
  out=dict(value);action=out.get('action')
  if not isinstance(action,str) or action not in ACTIONS:raise ValueError('지원하지 않는 명령입니다.')
@@ -46,7 +49,7 @@ def parse_exact(text,nodes,operations):
   if len(ids)==2 and re.search(re.escape(ids[0])+r'\s*에서',text,re.I):return validate_command({'action':'goto','nodes':[ids[-1]],'start':ids[0]},nodes,operations)
   return validate_command({'action':'goto' if len(ids)==1 else 'sequence','nodes':ids},nodes,operations)
  return None
-def command_schema(nodes,operations):
+def command_schema(nodes,operations,gui_targets=None):
  branches=[]
  for action in ACTIONS:
   if action=='arm_action' and not operations:continue
@@ -56,9 +59,18 @@ def command_schema(nodes,operations):
   if action=='loop':properties['repeats']={'type':'integer','minimum':1,'maximum':100};required.append('repeats')
   if action=='arm_action':properties['operation']={'type':'string','enum':list(operations)};required.append('operation')
   branches.append({'type':'object','properties':properties,'required':required,'additionalProperties':False})
+ if gui_targets:
+  from .voice_gui import gui_schema
+  branches.append(gui_schema(gui_targets))
  return {'oneOf':branches}
 def ground_command(value,text):
  text=normalize(text);compact=re.sub(r'\s+','',text).lower();action=value['action']
+ if action=='gui':
+  proposed=value.get('value','')
+  if proposed=='true' and not re.search(r'켜|활성화|ON|닫|흡착',text,re.I):raise ValueError('켜기 의도를 명확히 말하세요.')
+  if proposed=='false' and not re.search(r'꺼|비활성화|OFF|열|해제',text,re.I):raise ValueError('끄기 의도를 명확히 말하세요.')
+  if proposed and proposed not in ('true','false') and re.sub(r'\s+','',proposed).lower() not in compact:raise ValueError('말하지 않은 설정값을 LLM이 제안했습니다. 값을 정확히 지정하세요.')
+  return value
  if action in ('goto','sequence','loop'):
   if any(n.lower() not in compact for n in value['nodes']):raise ValueError('말하지 않은 노드를 LLM이 제안했습니다. 목적지를 다시 말하세요.')
  elif action=='stop' and not re.search(r'정지|멈춰|그만|스톱',text):raise ValueError('정지 의도가 불명확합니다. 명령을 다시 말하세요.')
@@ -66,8 +78,9 @@ def ground_command(value,text):
   name=value['operation'];aliases={'safe_pose':r'안전.*자세','pick_and_place':r'픽앤플레이스','door_open':r'문.*열|도어.*오픈','material_supply':r'자재.*공급'}
   if name.replace('_','').lower() not in compact.replace('_','') and not re.search(aliases.get(name,r'(?!)'),text):raise ValueError('팔 작업명을 정확히 말하세요.')
  return value
-def llm_messages(text,nodes,operations):
+def llm_messages(text,nodes,operations,gui_targets=None):
  system='로봇 명령을 JSON으로 분류한다. 사용자에게 답하거나 코드 생성 금지. goto는 action,nodes 두 필드만 사용하며 nodes에 요청된 목적지 한 개. 출발 노드를 추측하지 말 것. sequence는 action,nodes. loop는 action,nodes,repeats. status,stop,pause,resume,cancel은 action만. arm_action은 action,operation만. 도착해서 기다리라는 명령은 goto. 배터리 질문은 status. 등록 노드: '+json.dumps(list(nodes),ensure_ascii=False)+'; 팔 작업: '+json.dumps(list(operations),ensure_ascii=False)
+ if gui_targets:system+=' GUI 명령은 action=gui, target=목록 id, operation=invoke(버튼), set(값 입력), select(화면/목록), read(조회). value는 사용자 지정 값 그대로. 체크 켜기 true 끄기 false. 등록된 GUI 후보: '+json.dumps(gui_targets,ensure_ascii=False)
  return [{'role':'system','content':system}, {'role':'user','content':'목적지를 LM3로 잡고 출발해'}, {'role':'assistant','content':'{"action":"goto","nodes":["LM3"]}'}, {'role':'user','content':'배터리 잔량이 얼마나 남았어?'}, {'role':'assistant','content':'{"action":"status"}'}, {'role':'user','content':normalize(text)}]
 
 def describe(command,real=False):
