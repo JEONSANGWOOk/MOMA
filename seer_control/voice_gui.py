@@ -56,6 +56,7 @@ class GuiRegistry:
   walk(self.app,[])
   for name in ('노드 선택','좌표 클릭','좌표 드래그'):
    self.add('map::'+name,'지도 / '+name,'map',self.app.canvas)
+  if hasattr(self.app,'_role_gui_allowed'):self.targets={key:row for key,row in self.targets.items() if self.app._role_gui_allowed(row)}
  def public(self,targets=None):
   return [{k:v for k,v in row.items() if k in ('id','label','kind','values','alias','minimum','maximum')} for row in (self.targets.values() if targets is None else targets)]
  def candidates(self,text,limit=14):
@@ -69,9 +70,19 @@ class GuiRegistry:
    if score:ranked.append((score,row))
   ranked.sort(key=lambda item:item[0],reverse=True)
   return self.public([row for _,row in ranked[:limit]])
+ def validate_order(self,command):
+  if set(command)-{'action','mission','destination','pickup','return_to','repeat'} or command.get('action')!='operator_order':raise ValueError('운영 미션 명령 형식 오류')
+  if command.get('mission') not in [r['name'] for r in self.app.operator_templates]:raise ValueError('등록되지 않은 운영 미션입니다.')
+  for key in ('destination','pickup','return_to'):
+   if key=='destination' or key in command:
+    if command.get(key) not in self.app.map.nodes:raise ValueError('지도에 없는 위치입니다.')
+  repeat=command.get('repeat',1)
+  if type(repeat) is not int or not 1<=repeat<=100:raise ValueError('실행 횟수는 1~100입니다.')
+  return dict(command,repeat=repeat)
  def validate(self,command):
   if set(command)-{'action','target','operation','value'} or command.get('action')!='gui':raise ValueError('GUI 명령 형식 오류')
   row=self.targets.get(command.get('target'))
+  if row and hasattr(self.app,'_role_gui_allowed') and not self.app._role_gui_allowed(row):raise ValueError('현재 사용자 모드에서 허용되지 않은 기능입니다.')
   if not row:raise ValueError('현재 화면에 없는 기능입니다. 기능 목록에서 다시 선택하세요.')
   op=command.get('operation');kind=row['kind'];value=command.get('value','')
   if op not in ('invoke','set','select','read'):raise ValueError('지원하지 않는 GUI 조작')
@@ -185,7 +196,15 @@ class GuiRegistry:
   return self.describe(command)
 
 def gui_schema(targets):
- return {'type':'object','properties':{'action':{'type':'string','enum':['gui']},'target':{'type':'string','enum':[row['id'] for row in targets]},'operation':{'type':'string','enum':['invoke','set','select','read']},'value':{'type':'string'}},'required':['action','target','operation'],'additionalProperties':False}
+ branches=[]
+ kinds={'invoke':{'button','menu','hold','radio','toggle'},'set':{'entry','text','choice','toggle','scale','map'},'select':{'screen','list'},'read':{row['kind'] for row in targets}}
+ for op,allowed in kinds.items():
+  ids=[row['id'] for row in targets if row['kind'] in allowed]
+  if not ids:continue
+  properties={'action':{'type':'string','enum':['gui']},'target':{'type':'string','enum':ids},'operation':{'type':'string','enum':[op]}}
+  if op!='read':properties['value']={'type':'string'}
+  branches.append({'type':'object','properties':properties,'required':['action','target','operation']+(['value'] if op=='set' else []),'additionalProperties':False})
+ return {'oneOf':branches}
 
 
 @contextmanager

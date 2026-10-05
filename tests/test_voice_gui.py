@@ -42,7 +42,7 @@ class GuiTests(unittest.TestCase):
   for value in ('999','nan','-1'):
    with self.assertRaises(ValueError):self.gui.execute(self.cmd(self.scale,'set',value))
  def test_gui_schema_only_registered_targets(self):
-  schema=command_schema([],[],self.gui.public());self.assertIn(str(self.button),schema['oneOf'][-1]['properties']['target']['enum'])
+  schema=command_schema([],[],self.gui.public());self.assertIn(str(self.button),schema['oneOf'][-1]['oneOf'][0]['properties']['target']['enum'])
  def test_closed_widget_rejected(self):
   self.button.destroy()
   with self.assertRaises(ValueError):self.gui.execute(self.cmd(self.button,'invoke'))

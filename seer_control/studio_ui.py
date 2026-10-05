@@ -574,6 +574,7 @@ class StudioMixin(FairinoUIMixin,ObstacleUIMixin):
             self.map_dirty=True;self.refresh_nodes();self.draw_map()
         return self.guarded(edit)
     def _studio_obstacle_edit(self,fn,label):
+        self._require_developer()
         def edit():
             self.sim_required();before=self.studio_history.capture(self.map);fn()
             self.studio_history.commit(before,self.map,label);self.map_dirty=True;self.draw_map()
@@ -810,6 +811,7 @@ class StudioMixin(FairinoUIMixin,ObstacleUIMixin):
         self._studio_submit(lambda:self._arm_call(cfg,'status'),self._studio_show_device)
 
     def _studio_run_tasks(self):
+        self._require_developer()
         def run():
             chain=self._mission_active_chain()
             if not chain:raise ValueError('Taskchain을 선택하세요.')

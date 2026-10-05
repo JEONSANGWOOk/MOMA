@@ -21,6 +21,7 @@ from .studio_ui import StudioMixin
 from .spatial_ui import SpatialMixin
 from .gamepad_ui import GamepadMixin
 from .voice_ui import VoiceMixin
+from .operator_ui import OperatorMixin
 from .gamepad import jog_packet
 from .manual_safety import controller_manual_reason
 from .studio_core import ACTION_DEFAULTS, validate_actions, point_segment_distance
@@ -53,10 +54,10 @@ def _shape_summary(value, depth=0):
     return type(value).__name__
 
 
-class Console(UIScaleMixin, VoiceMixin, GamepadMixin, SpatialMixin, StudioMixin, tk.Tk):
+class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixin, StudioMixin, tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title('AMR Control Studio | MoMa Standalone · v1.34 Workspace')
+        self.title('AMR Control Studio | MoMa Standalone · v1.35 Workspace')
         # Responsive startup size: fit the active monitor instead of assuming one fixed resolution.
         sw=self.winfo_screenwidth(); sh=self.winfo_screenheight()
         start_w=min(1600,int(sw*.94))
@@ -189,6 +190,7 @@ class Console(UIScaleMixin, VoiceMixin, GamepadMixin, SpatialMixin, StudioMixin,
         self._obstacles_restore()
         self._ui_scale_init()
         self._spatial_restore()
+        self._operator_build()
         self._pad_start()
         self.last_tick = time.monotonic()
         self.after(100, self.tick)
@@ -266,6 +268,8 @@ class Console(UIScaleMixin, VoiceMixin, GamepadMixin, SpatialMixin, StudioMixin,
 
     def _sync_navigation(self, event=None):
         selected = self.tabs.select()
+        if getattr(self,'role_active','개발자')=='사용자' and selected not in (str(self.operator_page),str(self.voice_page)):
+            self.tabs.select(self.operator_page);return
         for page, button in self.navigation_buttons.items():
             button.configure(bg=BLUE if page == selected else CHROME,
                              fg=WHITE if page == selected else '#c4d0df')
@@ -283,13 +287,13 @@ class Console(UIScaleMixin, VoiceMixin, GamepadMixin, SpatialMixin, StudioMixin,
             self.after_idle(self.draw_map)
 
     def _build(self):
-        top = tk.Frame(self, bg=CHROME)
+        top = tk.Frame(self, bg=CHROME);self.role_header=top
         top.pack(fill='x')
         self.label(top, 'AMR STUDIO', 14, WHITE, True, bg=CHROME).pack(side='left', padx=15, pady=9)
         self.label(top, 'ROBOT WORKSPACE', 9, '#98acc5', bg=CHROME).pack(side='left', padx=8)
         self.badge = self.label(top, '● SIMULATION', 9, '#54ddb0', True, bg=CHROME)
         self.badge.pack(side='right', padx=16)
-        bar = tk.Frame(self, bg=PANEL)
+        bar = tk.Frame(self, bg=PANEL);self.connection_bar=bar
         bar.pack(fill='x')
         ttk.Combobox(bar, textvariable=self.mode, values=['시뮬레이터','실기 · 조회 전용','실기 · 제어'],
                      state='readonly', width=18).pack(side='left', padx=(12, 8), pady=6)
@@ -2803,6 +2807,7 @@ class Console(UIScaleMixin, VoiceMixin, GamepadMixin, SpatialMixin, StudioMixin,
         self.map_info.config(text=f'{self.map.name[:28]} · 노드 {len(self.map.nodes)} / 경로 {len(self.map.edges)} · {self.zoom*100:.0f}% · LiDAR {lidar_n}점')
 
     def editable(self):
+        self._require_developer()
         if self.map_push_in_progress:
             raise ValueError('맵 업데이트가 진행 중입니다.')
         if self.task_running or self.held or self.sim.route or self.sim.mapping:
@@ -4649,6 +4654,7 @@ class Console(UIScaleMixin, VoiceMixin, GamepadMixin, SpatialMixin, StudioMixin,
         self.after(100,self.tick)
 
     def close(self):
+        self._operator_close()
         self._voice_close()
         self._pad_stop()
         self.release_drive()

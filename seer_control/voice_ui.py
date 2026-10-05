@@ -82,7 +82,7 @@ class VoiceMixin:
   return win
  def _voice_save(self):
   self.studio_config['voice']=dict(llm=self.voice_llm.get(),auto_sim=self.voice_auto_sim.get(),talk=self.voice_talk.get(),url=self.voice_url.get(),model=self.voice_model.get());self._studio_save_settings()
- def _voice_context(self):return (self.real,self.generation,id(self.map),self.host.get())
+ def _voice_context(self):return (self.real,self.generation,id(self.map),self.host.get(),getattr(self,'role_active','개발자'))
  def _voice_operations(self):
   cfg=self.studio_config['arm'] if self.real or self.studio_config['arm'].get('driver')=='fairino' else self.arm_dev_config
   return cfg,list(cfg.get('operations',{}))+list(cfg.get('programs',{}))
@@ -140,7 +140,8 @@ class VoiceMixin:
  def _voice_submit(self,text):
   if text.strip() in ('기능 목록','전체 기능','전체 GUI 기능','가능한 기능'):return self._voice_gui_catalog()
   self.voice_gui=GuiRegistry(self);nodes=list(self.map.nodes);_,operations=self._voice_operations()
-  direct=parse_exact(text,nodes,operations)
+  order=self._operator_parse_voice(text) if hasattr(self,'operator_templates') else None
+  direct=order or parse_exact(text,nodes,operations)
   if direct and direct['action']=='stop':return self._voice_dispatch(direct)
   command=self.voice_gui.exact(text) or direct
   if command and command['action']=='stop':return self._voice_dispatch(command)
@@ -160,9 +161,10 @@ class VoiceMixin:
  def _voice_accept(self,command,source):
   _,ops=self._voice_operations();command=validate_command(command,self.map.nodes,ops,getattr(self,'voice_gui',None))
   self.voice_pending=(command,self._voice_context(),time.monotonic()+30)
-  self.voice_preview.configure(state='normal');self.voice_preview.delete('1.0','end');self.voice_preview.insert('1.0',source+'\n'+(self.voice_gui.describe(command) if command['action']=='gui' else describe(command,self.real)));self.voice_preview.configure(state='disabled')
+  self.voice_preview.configure(state='normal');self.voice_preview.delete('1.0','end');self.voice_preview.insert('1.0',source+'\n'+(self.voice_gui.describe(command) if command['action']=='gui' else '운영 미션: '+command['mission']+' → '+command['destination']+' · '+str(command['repeat'])+'회' if command['action']=='operator_order' else describe(command,self.real)));self.voice_preview.configure(state='disabled')
   self.voice_status.set(source+' · 명령 미리보기 준비 (30초 유효)')
   if command['action'] in ('stop','status'):return self._voice_execute()
+  if command['action']=='operator_order':return
   if command['action']=='gui':
    row=self.voice_gui.targets[command['target']];self.voice_gui_pending_widget=row['widget']
    if command['operation']=='read':return self._voice_execute()
@@ -185,6 +187,12 @@ class VoiceMixin:
    self.voice_tts=speak(text);self.voice_tts.stdin.write(text);self.voice_tts.stdin.close()
  def _voice_dispatch(self,command):
   _,ops=self._voice_operations();command=validate_command(command,self.map.nodes,ops,getattr(self,'voice_gui',None));action=command['action']
+  if getattr(self,'role_active','개발자')=='사용자' and action=='arm_action':raise ValueError('사용자는 등록된 운영 미션으로 팔 작업을 실행하세요.')
+  if action=='operator_order':
+   self.operator_kind.set(command['mission']);self.operator_destination.set(command['destination']);self.operator_repeat.set(str(command['repeat']))
+   if 'pickup' in command:self.operator_pickup.set(command['pickup'])
+   if 'return_to' in command:self.operator_return.set(command['return_to'])
+   self._operator_preview();self.tabs.select(self.operator_page);self._voice_response('운영 미션을 미리보기했습니다. 시작 버튼으로 실행하세요.');return
   if action=='gui':
    result=self.voice_gui.execute(command)
    if not self.voice_closed:self._voice_response(result)

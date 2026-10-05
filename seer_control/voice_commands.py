@@ -10,6 +10,9 @@ def normalize(text):
  text=re.sub(r'(?:엘\s*엠|엘렘|엘림|lm)\s*([0-9]+|[일이삼사오육칠팔구])',node,text,flags=re.I)
  return re.sub(r'(?:씨\s*피|시\s*피|cp)\s*([0-9]+|[일이삼사오육칠팔구])',lambda m:'CP'+NUM.get(m[1],m[1]),text,flags=re.I)
 def validate_command(value,nodes,operations,gui=None):
+ if isinstance(value,dict) and value.get("action")=="operator_order":
+  if gui is None:raise ValueError("운영 미션 목록이 필요합니다.")
+  return gui.validate_order(value)
  if isinstance(value,dict) and value.get("action")=="gui":
   if gui is None:raise ValueError("GUI 기능 목록이 필요합니다.")
   return gui.validate(value)
@@ -65,6 +68,10 @@ def command_schema(nodes,operations,gui_targets=None):
  return {'oneOf':branches}
 def ground_command(value,text):
  text=normalize(text);compact=re.sub(r'\s+','',text).lower();action=value['action']
+ if action=='operator_order':
+  if re.sub(r'\s+','',value['mission']).lower() not in compact:raise ValueError('미션 타입을 정확히 말하세요.')
+  if any(value[k].lower() not in compact for k in ('destination','pickup','return_to') if k in value):raise ValueError('말하지 않은 위치는 사용하지 않습니다.')
+  return value
  if action=='gui':
   proposed=value.get('value','')
   if proposed=='true' and not re.search(r'켜|활성화|ON|닫|흡착',text,re.I):raise ValueError('켜기 의도를 명확히 말하세요.')
