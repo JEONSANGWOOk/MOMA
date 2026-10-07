@@ -363,7 +363,11 @@ class Simulator:
         self._ready()
         if self.route:
             raise ValueError('Task를 취소한 뒤 수동 조작하세요.')
-        v,w=max(-.3,min(.3,v)),max(-.6,min(.6,w))
+        from .studio_core import zone_limits
+        limits=zone_limits(self.map,self.state.x,self.state.y,dict(self.map.robot_model))
+        self.applied_limits=limits
+        maxv=min(.3,limits['maxspeed']);maxw=min(.6,limits['maxrot'])
+        v,w=max(-maxv,min(maxv,v)),max(-maxw,min(maxw,w))
         radius=max(self.map.robot_model['radius'],self.collision_radius)
         reason=manual_motion_reason(self.map,(self.state.x,self.state.y,self.state.theta),v,w,radius)
         if reason:
@@ -605,10 +609,11 @@ class Simulator:
                     s.theta+=max(-limits['maxrot']*dt,min(limits['maxrot']*dt,delta_heading))
                     self._velocity=0
                     return
-            props=(rec.get('properties') or {}) if rec else {}
+            from .studio_core import zone_obstacle_properties
+            props=zone_obstacle_properties(self.map,s.x,s.y,(rec.get('properties') or {}) if rec else {})
             stop_dist=max(.025,float(props.get('obsStopDist',.05) or .05))
             dec_dist=max(stop_dist,float(props.get('obsDecDist',.5) or .5))
-            clearance,reason=path_clearance(self.map,(s.x,s.y),self._waypoints,limits['radius'],max(dec_dist,self._velocity**2/(2*max(.01,limits['maxdec']))+stop_dist))
+            clearance,reason=path_clearance(self.map,(s.x,s.y),self._waypoints,limits['radius']+max(0,float(props.get('obsExpansion',0) or 0)),max(dec_dist,self._velocity**2/(2*max(.01,limits['maxdec']))+stop_dist))
             from .navigation_quality import projected_conflict
             predicted=None
             if not reason:

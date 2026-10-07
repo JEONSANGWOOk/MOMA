@@ -72,19 +72,30 @@ def deadzone(value,zone):
 class PadGate:
     """Fresh input + neutral/released arming prevents hot-plug motion."""
     def __init__(self):self.reset()
-    def reset(self):self.armed=False;self.identity=None;self.last_time=None
-    def evaluate(self,sample,now,allowed,forward='Y',turn='X',deadman=4,stop=2,zone=.15,invert_forward=True,invert_turn=True):
+    def reset(self):self.armed=False;self.identity=None;self.last_time=None;self.enabled=False;self.previous_held=True
+    def evaluate(self,sample,now,allowed,forward='Y',turn='X',deadman=4,stop=2,zone=.15,invert_forward=True,invert_turn=True,toggle=False):
         if not sample or not allowed or not 0<=now-sample.timestamp<=.25:
             self.reset();return (0.,0.,False,'조종 대기 / 입력 중단')
-        if self.last_time is not None and now-self.last_time>.3:self.armed=False
+        if self.last_time is not None and now-self.last_time>.3:self.armed=False;self.enabled=False;self.previous_held=True
         self.last_time=now
-        if sample.identity!=self.identity:self.armed=False;self.identity=sample.identity
+        if sample.identity!=self.identity:self.armed=False;self.enabled=False;self.previous_held=True;self.identity=sample.identity
         if not 0<=zone<=.5 or forward==turn or forward not in sample.axes or turn not in sample.axes or deadman==stop:
             self.armed=False;return (0.,0.,False,'축 / 버튼 설정 확인')
-        if sample.buttons&(1<<stop):self.armed=False;return (0.,0.,True,'정지 버튼')
+        if sample.buttons&(1<<stop):self.reset();return (0.,0.,True,'정지 버튼')
         v=deadzone(sample.axes[forward],zone)*(-1 if invert_forward else 1)
         w=deadzone(sample.axes[turn],zone)*(-1 if invert_turn else 1)
         held=bool(sample.buttons&(1<<deadman))
+        if toggle:
+            pressed=held and not self.previous_held
+            self.previous_held=held
+            if not held and v==0 and w==0:self.armed=True
+            if not self.armed:return (0.,0.,False,'스틱 중앙 + L1 해제 후 활성화')
+            if pressed:
+                if self.enabled:self.enabled=False
+                elif v==0 and w==0:self.enabled=True
+                else:return (0.,0.,False,'스틱 중앙에서 L1을 눌러 활성화하세요.')
+            if not self.enabled:return (0.,0.,False,'AMR 비활성 · L1 한번 눌러 활성화')
+            return (v,w,False,'AMR 활성 · 주행 중' if v or w else 'AMR 활성 · 스틱 중앙 정지')
         if not held and v==0 and w==0:self.armed=True
         if not self.armed:return (0.,0.,False,'스틱 중앙 + L1 해제 후 시작')
         if not held:return (0.,0.,False,'L1 누르는 동안 조종')

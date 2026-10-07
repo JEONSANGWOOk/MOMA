@@ -70,13 +70,14 @@ class OperatorMixin(RecipeMixin):
     else:button.pack_forget()
   self.config(menu=self._developer_menu if wanted=='개발자' else self.operator_menu)
   for w,info in self._developer_bar_pack:
-   if wanted=='개발자':w.pack(**info)
-   elif w is not self.connection_text:w.pack_forget()
+   if wanted=='개발자' or w is not self.connection_diagnostics_button:w.pack(**info)
+   else:w.pack_forget()
   self.tabs.select(self.operator_page);self._sync_navigation();self.studio_config['ui_role']=wanted;self._studio_save_settings()
  def _role_gui_allowed(self,row):
   w=row['widget']
   if w is self.role_selector:return False
   if self.role_active=='개발자':return True
+  if w in [widget for widget,_ in self._developer_bar_pack] and w is not self.connection_diagnostics_button:return True
   if row['kind'] in ('map','hold'):return False
   if row['kind']=='screen':return row.get('tab') in (str(self.operator_page),str(self.voice_page))
   current=w
@@ -189,7 +190,7 @@ class OperatorMixin(RecipeMixin):
    self.recipe_destination_combo.configure(values=['모든 위치 (이동 미션)']+nodes)
    runner=self.studio_runner;state=self.current_state();result='부분 완료' if runner.status=='COMPLETED' and runner.report and (runner.report.data()['skipped'] or runner.report.data()['omitted']) else runner.status
    step=runner.actions[runner.index] if runner.active else None
-   obstacle=(self.sim.block_reason or self.sim.avoidance_status or self.sim.auto_obstacle_status) if not self.real else ('장애물 정지' if state.get('blocked') else '')
+   obstacle=(self.sim.block_reason or self.sim.avoidance_status or self.sim.auto_obstacle_status) if not self.real else getattr(self,'real_obstacle_status',('장애물 정지' if state.get('blocked') else ''))
    self.operator_live.set(f"{'REAL' if self.real else 'SIM'} · {result}\n직전 {state.get('last_node') or '—'} → 목표 {state.get('target') or '—'}\n현재 단계 {step.get('goal',step.get('operation',step['type'])) if step else '—'} · 반복 {runner.cycle+1 if runner.active else runner.cycle}/{runner.repeat}\n"+obstacle)
    if self.operator_owned:
     for i,a in enumerate(runner.actions):

@@ -57,7 +57,7 @@ def _shape_summary(value, depth=0):
 class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixin, StudioMixin, tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title('AMR Control Studio | MoMa Standalone · v1.37 Workspace')
+        self.title('AMR Control Studio | MoMa Standalone · v1.38 Workspace')
         # Responsive startup size: fit the active monitor instead of assuming one fixed resolution.
         sw=self.winfo_screenwidth(); sh=self.winfo_screenheight()
         start_w=min(1600,int(sw*.94))
@@ -301,7 +301,8 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
         ttk.Entry(bar, textvariable=self.host, width=17).pack(side='left')
         self.button(bar, '연결', self.connect, BLUE).pack(side='left', padx=5)
         self.button(bar, '연결 해제', self.disconnect).pack(side='left')
-        self.button(bar, '연결 설정 / 진단', lambda:self.tabs.select(self.settings_page)).pack(side='right', padx=10)
+        self.connection_diagnostics_button=self.button(bar, '연결 설정 / 진단', lambda:self.tabs.select(self.settings_page));self.connection_diagnostics_button.pack(side='right', padx=10)
+        self.robot_pull_button=self.button(bar,'로봇 지도 받기',self.pull_robot_map,BLUE);self.robot_pull_button.pack(side='left',padx=5)
         self.connection_text = self.label(bar, 'DEMO 연결됨 · TCP 전송 없음', 9, MUTED)
         self.connection_text.pack(side='left', padx=10)
         self.cards = {}
@@ -1095,7 +1096,8 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
                         with self._jog_lock:
                             self._jog_desired=None
                         was_active=True
-                    jog_wakeup.wait(.25); jog_wakeup.clear()
+                    # Include request latency in the 100ms repeat period.
+                    jog_wakeup.wait(max(0.,.1-(time.monotonic()-started))); jog_wakeup.clear()
                 else:
                     if was_active:
                         try:
@@ -2894,7 +2896,9 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
     def open_area_properties(self,rec):
         if not isinstance(rec,dict):return
         win=tk.Toplevel(self);win.title(f"Advanced Area · {rec.get('id')}");self._fit_dialog(win,520,720,460,500);win.configure(bg=PANEL);win.transient(self)
-        frm=tk.Frame(win,bg=PANEL);frm.pack(fill='both',expand=True,padx=16,pady=14)
+        from .area_settings import LIMITS,parse_properties
+        footer=tk.Frame(win,bg=PANEL);footer.pack(side='bottom',fill='x',padx=12,pady=8)
+        holder,frm,_=self._scrollable_frame(win,bg=PANEL);holder.pack(fill='both',expand=True,padx=12,pady=8)
         aid=tk.StringVar(value=str(rec.get('id') or self._next_area_id()))
         props=dict(rec.get('properties') or {})
         fields=['maxspeed','maxacc','maxdec','maxrot','maxrotacc','maxrotdec','obsDecDist','obsStopDist','obsExpansion','weight','collisionPointThreshold']
@@ -2903,7 +2907,10 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
         self.label(frm,'RoboShop Advanced Area',13,INK,True).pack(anchor='w')
         self.label(frm,'영역 내부에서는 Path/전역 설정보다 더 보수적인 속성이 적용됩니다.',9,'#98600a',wraplength=470,justify='left').pack(anchor='w',pady=(3,10))
         def row(label,var):
-            r=tk.Frame(frm,bg=PANEL);r.pack(fill='x',pady=3);self.label(r,label,9,MUTED).pack(side='left');ttk.Entry(r,textvariable=var,width=24).pack(side='right')
+            r=tk.Frame(frm,bg=PANEL);r.pack(fill='x',pady=3);self.label(r,label,9,MUTED).pack(side='left');ttk.Entry(r,textvariable=var,width=14).pack(side='right')
+            key=next((k for k,v in vars_.items() if v is var),None)
+            if key:
+                lo,hi,unit,_=LIMITS[key];self.label(frm,f'허용 {lo}~{hi} {unit} · 빈칸: 상속',8,MUTED).pack(anchor='e')
         row('Area ID',aid)
         sep=tk.Frame(frm,bg='#46505d',height=1);sep.pack(fill='x',pady=7)
         row('maxspeed (m/s)',vars_['maxspeed']);row('maxacc (m/s²)',vars_['maxacc']);row('maxdec (m/s²)',vars_['maxdec'])
@@ -2915,25 +2922,34 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
         for k,label in [('forbidden','진입 금지 (free navigation)'),('ultrasonic','Ultrasonic 사용'),('fallingdown','Falling-down 센서 사용'),('infrared','Infrared 사용')]:
             tk.Checkbutton(frm,text=label,variable=bools[k],bg=PANEL,activebackground=PANEL,fg=INK,selectcolor=BG).pack(anchor='w')
         self.label(frm,'예: 경로 maxspeed=0.4, Area maxspeed=0.1이면 영역 안에서는 0.1 m/s.\nobsStopDist는 더 큰(안전한) 값이 우선 적용됩니다.',9,MUTED,justify='left',wraplength=470).pack(anchor='w',pady=(10,4))
-        def parse(txt):
-            txt=txt.strip()
-            if not txt:return None
-            try:return float(txt)
-            except Exception:return txt
-        def save():
+        def save(to_file=False):
+            try:
+                self.editable();validated=parse_properties({k:v.get() for k,v in vars_.items()})
+            except ValueError as e:messagebox.showerror('영역 설정 오류',str(e),parent=win);return
             new_id=aid.get().strip()
             if not new_id:messagebox.showwarning('Advanced Area','Area ID가 필요합니다.',parent=win);return
             if new_id!=rec.get('id') and any(a.get('id')==new_id for a in getattr(self.map,'area_records',[])):messagebox.showwarning('Advanced Area','같은 Area ID가 있습니다.',parent=win);return
-            rec['id']=new_id; rec['className']='AdvancedArea'
             p2=dict(rec.get('properties') or {})
-            for k,v in vars_.items():
-                val=parse(v.get())
-                if val is None:p2.pop(k,None)
-                else:p2[k]=val
+            for k in vars_:p2.pop(k,None)
+            p2.update(validated)
+            rec['id']=new_id;rec['className']='AdvancedArea'
             for k,v in bools.items():p2[k]=bool(v.get())
             rec['properties']=p2;rec['raw']=make_area_record(new_id,rec.get('points',[]),p2,rec.get('raw'));rec['draft']=True
-            self.selected_area=new_id;self.map_dirty=True;self.refresh_nodes();win.destroy()
-        self.button(frm,'적용',save,ORANGE).pack(fill='x',pady=(14,4))
+            self.selected_area=new_id;self.map_dirty=True;self.refresh_nodes()
+            if to_file:
+                smap=hasattr(self.map,'smap_source')
+                path=filedialog.asksaveasfilename(parent=win,defaultextension='.smap' if smap else '.json',initialfile='edited_map.smap' if smap else 'floor_map.json',filetypes=[('지도 파일','*.smap' if smap else '*.json')])
+                if not path:return
+                try:
+                    if smap:Path(path).write_text(json.dumps(build_smap_from_model(self.map),ensure_ascii=False,indent=2),encoding='utf-8')
+                    else:self.map.save(path)
+                except (OSError,ValueError) as e:messagebox.showerror('저장 실패',str(e),parent=win);return
+                messagebox.showinfo('영역 저장','영역 설정을 포함한 지도를 저장했습니다.',parent=win)
+            win.destroy()
+        self.label(frm,'적용은 로컬 지도/SIM 반영입니다. 실기는 SMAP 저장 → AMR 업로드 → 지도 로드가 필요합니다. 센서 옵션은 제어기 지원에 따릅니다.',8,MUTED,wraplength=430).pack(fill='x',pady=6)
+        self.button(footer,'취소',win.destroy).pack(side='right',padx=3)
+        self.button(footer,'적용',save,ORANGE).pack(side='right',padx=3)
+        self.button(footer,'적용 + 파일 저장',lambda:save(True),BLUE).pack(side='right',padx=3)
 
     def _refresh_area_tree(self):
         if not hasattr(self,'area_tree'):return
@@ -4358,6 +4374,8 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
                     self.log('WIRE',msg)
                     self.command_status.config(text=msg,fg=ORANGE)
                 elif direction=='RX':
+                    if not hasattr(self,'real_command_acks'):self.real_command_acks={}
+                    self.real_command_acks[command]=(time.monotonic(),response)
                     msg=f'RX {command} · api={api} · {elapsed:.0f} ms · {response}'
                     self.log('WIRE',msg)
                     self.command_status.config(text=msg,fg=GREEN)

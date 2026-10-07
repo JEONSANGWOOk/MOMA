@@ -9,8 +9,13 @@ from .theme import PANEL,MUTED,ORANGE
 
 class ObstacleUIMixin:
     def _obstacles_controls(self,right):
-        frame,body=self.card(right,'주행 장애물 대응 · SIM')
+        frame,body=self.card(right,'주행 장애물 대응 · SIM / REAL')
         frame.pack(fill='x',pady=(0,8))
+        self.real_recovery_enabled=tk.BooleanVar(value=False)
+        def real_policy():
+            if self.studio_runner.active: self.real_recovery_enabled.set(bool(self.studio_config.get('real_obstacle_recovery',False)));return
+            self.studio_config['real_obstacle_recovery']=self.real_recovery_enabled.get();self._studio_save_settings()
+        tk.Checkbutton(body,text='실기 미션 장애물 대기 / 자유 경로 재탐색 / 패스',variable=self.real_recovery_enabled,bg=PANEL,command=real_policy).pack(anchor='w')
         self.sim_obstacle_policy=tk.StringVar(value=POLICIES['auto'])
         choice=ttk.Combobox(body,textvariable=self.sim_obstacle_policy,values=list(POLICIES.values()),state='readonly')
         choice.pack(fill='x');choice.bind('<<ComboboxSelected>>',lambda event:self._sim_obstacle_change())
@@ -50,12 +55,13 @@ class ObstacleUIMixin:
         self.button(row,'관리',lambda:self.guarded(self._actors_manage)).pack(side='left',padx=1)
         self.dynamic_paused=tk.BooleanVar(value=False)
         tk.Checkbutton(body,text='동적 장애물 일시정지',variable=self.dynamic_paused,bg=PANEL,command=self._actors_pause).pack(anchor='w')
-        self.label(body,'SIM 전용 · 실기 장애물 정책은 제어기에서 설정',8,MUTED,anchor='w').pack(fill='x')
+        self.label(body,'REAL: 3050 회피는 제어기 수행 · 후진/라인복귀는 SIM 전용',8,MUTED,anchor='w').pack(fill='x')
         row=tk.Frame(body,bg=PANEL);row.pack(fill='x',pady=3)
         for title,mode in [('벽 추가','벽 만들기'),('고정 장애물 추가','SIM 장애물')]:
             self.button(row,title,lambda m=mode:(self.tabs.select(self.nodes_page),self.edit_mode.set(m))).pack(side='left',expand=True,fill='x',padx=1)
 
     def _obstacles_restore(self):
+        self.real_recovery_enabled.set(bool(self.studio_config.get('real_obstacle_recovery',False)))
         self.sim_obstacle_policy.set(POLICIES.get(self.studio_config.get('sim_obstacle_policy'),POLICIES['auto']))
         self.dynamic_paused.set(bool(self.studio_config.get('dynamic_paused',False)))
         self.prefer_graph_routes.set(bool(self.studio_config.get('prefer_graph_routes',True)))

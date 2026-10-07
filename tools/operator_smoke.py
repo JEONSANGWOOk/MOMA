@@ -23,6 +23,7 @@ with tempfile.TemporaryDirectory() as folder:
   app.recipe_selection.set('순환 운반');app._recipe_load();app.recipe_list.selection_set(0);app._recipe_move(1);assert app.recipe_blocks[1]['value']=='픽업';app._recipe_move(-1)
   app.ui_role.set('사용자');app._role_apply();app.update();assert app.tabs.tab(app.nodes_page,'state')=='hidden';assert app.tabs.tab(app.operator_page,'state')=='normal'
   app._ui_scale_last=None;app._ui_scale_apply();app.update();assert not app.navigation_buttons[str(app.nodes_page)].winfo_manager()
+  assert app.robot_pull_button.winfo_ismapped();assert not app.connection_diagnostics_button.winfo_manager()
   gui=GuiRegistry(app);assert 'map::좌표 클릭' not in gui.targets
   try:dev.execute(dict(action='gui',target=target['id'],operation='set',value='J3 / J4'));raise AssertionError('stale developer GUI privilege')
   except ValueError:pass

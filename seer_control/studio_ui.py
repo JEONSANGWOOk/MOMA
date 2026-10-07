@@ -31,7 +31,7 @@ class ConsoleAdapter:
         runner=getattr(self.c,'studio_runner',None)
         if runner and runner.report:
             runner.report.metadata=dict(backend='REAL' if self.c.real else 'SIM',controller=controller_identity(getattr(self.c,'raw',{})) if self.c.real else {},hardware_verified=False,navigation_api=3050 if getattr(self.c,'studio_config',{}).get('real_navigation_mode')=='free' else 3051)
-        if not self.c.real and index==0:
+        if index==0:
             self.c.sim.skipped_goals.clear();self.c.sim.skip_result=None
 
     def begin(self,a):
@@ -51,6 +51,8 @@ class ConsoleAdapter:
             if a['goal'] not in c.map.nodes:raise ValueError('목적지 Point가 없습니다.')
             if c.real:
                 if a['goal'] not in c.robot_stations:raise ValueError('로봇 Station에 없는 목적지입니다.')
+                from .real_obstacle import RealObstacleRecovery
+                self.context['real_recovery']=RealObstacleRecovery(c,a['goal'])
                 c.send_command('navigate',c._station_nav_payload(c.map.nodes[a['goal']]))
             else:
                 if c.sim.obstacle_policy in ('reroute','auto'):
@@ -166,11 +168,17 @@ class ConsoleAdapter:
                     c.log('MISSION','목적지 패스 · '+result['goal']+' · '+result['reason'])
                     return result
                 return not c.sim.route and c.sim.state.task=='완료'
+            recovery=self.context.get('real_recovery')
+            if recovery:
+                result=recovery.poll(state)
+                if result is not None:return result
             task=state.get('task');status=state.get('task_status')
             if task in ('FAILED','CANCELED') or status in (5,6):raise ValueError(f'주행 실패: {task}')
             if task in ('RUNNING','WAITING') or status in (1,2):self.context['seen']=True
             node=c.map.nodes[a['goal']];distance=math.hypot(state['x']-node['x'],state['y']-node['y'])
-            return elapsed>.8 and distance<=.2 and abs(float(state.get('speed',0)))<.02 and (task=='COMPLETED' or status==4)
+            done=elapsed>.8 and distance<=.2 and abs(float(state.get('speed',0)))<.02 and (task=='COMPLETED' or status==4)
+            if done:c.sim.skipped_goals.pop(a['goal'],None)
+            return done
         if typ=='Translation':
             if c.real and getattr(c,'studio_motion_error',None):raise ValueError(c.studio_motion_error)
             traveled=math.dist(self.context['start'],(state['x'],state['y']))

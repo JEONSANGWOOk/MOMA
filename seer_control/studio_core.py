@@ -83,6 +83,17 @@ def zone_limits(model,x,y,limits):
     return out
 
 
+def zone_obstacle_properties(model,x,y,properties):
+    out=dict(properties)
+    for area in getattr(model,'area_records',[]):
+        pts=area.get('points',[])
+        if len(pts)>=3 and in_polygon(x,y,pts):
+            for key in ('obsStopDist','obsDecDist','obsExpansion'):
+                value=(area.get('properties') or {}).get(key)
+                if value is not None:out[key]=max(float(out.get(key,0) or 0),max(0,finite(value,key)))
+    return out
+
+
 def path_clearance(model,start,points,radius,horizon):
     """Sample the swept circular footprint, including between curve samples."""
     traveled=0.;prev=start

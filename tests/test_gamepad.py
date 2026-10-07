@@ -40,3 +40,26 @@ class PadTests(unittest.TestCase):
         self.assertEqual(jog_packet(command,10),dict(vx=.1,vy=0,w=.2))
         self.assertIsNone(jog_packet(command,10.3));self.assertIsNone(jog_packet(None,10))
         self.assertEqual(jog_packet(dict(vx=0,vy=0,w=.2),100),dict(vx=0,vy=0,w=.2))
+
+class TogglePadTests(unittest.TestCase):
+ def test_enable_release_and_disable(self):
+  g=PadGate();neutral=Sample({'X':0.,'Y':0.},0,10,('pad',))
+  g.evaluate(neutral,10,True,toggle=True)
+  g.evaluate(Sample(neutral.axes,16,10,neutral.identity),10,True,toggle=True)
+  self.assertTrue(g.enabled)
+  moving=Sample({'X':0.,'Y':-1.},0,10,neutral.identity)
+  self.assertEqual(g.evaluate(moving,10,True,toggle=True)[0],1.)
+  self.assertEqual(g.evaluate(Sample(moving.axes,16,10,neutral.identity),10,True,toggle=True)[0],0.)
+  self.assertFalse(g.enabled)
+ def test_focus_loss_and_held_reconnect_cannot_move(self):
+  g=PadGate();s=Sample({'X':0.,'Y':-1.},16,10,('pad',))
+  self.assertEqual(g.evaluate(s,10,True,toggle=True)[0],0.)
+  g.enabled=True;g.evaluate(s,10,False,toggle=True);self.assertFalse(g.enabled)
+  self.assertEqual(g.evaluate(s,10,True,toggle=True)[0],0.)
+
+class PadWiringTests(unittest.TestCase):
+ def test_toggle_is_wired_only_to_amr(self):
+  import inspect
+  from seer_control.gamepad_ui import GamepadMixin
+  self.assertIn('allowed,toggle=True',inspect.getsource(GamepadMixin._pad_process))
+  self.assertNotIn('toggle=True',inspect.getsource(GamepadMixin._pad_arm_process))

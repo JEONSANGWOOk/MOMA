@@ -204,17 +204,23 @@ def _set_property(items,key,value):
             target=item; break
     if target is None:
         target={'key':key}; items.append(target)
+    import base64
+    old_type=target.get('type')
+    for field in ('boolValue','int32Value','uint32Value','int64Value','uint64Value','floatValue','doubleValue','stringValue'):
+        target.pop(field,None)
     if isinstance(value,bool):
-        target.update(type='bool',boolValue=value,value='dHJ1ZQ==' if value else 'ZmFsc2U=')
-        for k in ('int32Value','uint32Value','floatValue','doubleValue','stringValue'): target.pop(k,None)
-    elif isinstance(value,int) and not isinstance(value,bool):
-        import base64
-        target.update(type='int32',int32Value=int(value),value=base64.b64encode(str(int(value)).encode()).decode())
-        for k in ('boolValue','floatValue','doubleValue','stringValue'): target.pop(k,None)
+        target.update(type='bool',boolValue=value)
+        text='true' if value else 'false'
     elif isinstance(value,(int,float)):
-        target.update(type='double',doubleValue=float(value))
+        if not math.isfinite(value):raise ValueError(f'{key}: finite value required')
+        if isinstance(value,int) or old_type=='int32' and float(value).is_integer():
+            target.update(type='int32',int32Value=int(value));text=str(int(value))
+        else:
+            kind='float' if old_type=='float' else 'double'
+            target.update(type=kind,**{kind+'Value':float(value)});text=str(float(value))
     else:
-        target.update(type='string',stringValue=str(value))
+        target.update(type='string',stringValue=str(value));text=str(value)
+    target['value']=base64.b64encode(text.encode('utf-8')).decode('ascii')
     return items
 
 

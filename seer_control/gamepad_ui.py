@@ -25,18 +25,35 @@ class GamepadMixin:
         self.pad_status.pack(fill='x',pady=3)
         row=tk.Frame(body,bg=PANEL);row.pack(fill='x')
         self.button(row,'컨트롤러 검색 / 설정',self._pad_dialog,BLUE).pack(side='left',fill='x',expand=True)
-        self.label(body,'L1: 누르는 동안 조종 · ○: 정지\nAMR: 전후진/회전 · 팔: 선택한 두 축 조절\n팔 R1/R2: 모드 ± · ↑/↓: 속도 ±\n△: 그리퍼 ON/OFF (L1 함께 누름)',8,MUTED,justify='left',wraplength=285).pack(fill='x',pady=4)
+        self.label(body,'AMR L1: 활성/해제 · 팔 L1: 누른 동안 조종 · ○: 정지\nAMR: 전후진/회전 · 팔: 선택한 두 축 조절\n팔 R1/R2: 모드 ± · ↑/↓: 속도 ±\n△: 그리퍼 ON/OFF (L1 함께 누름)',8,MUTED,justify='left',wraplength=285).pack(fill='x',pady=4)
 
     def _pad_mode_controls(self,body):
         row=tk.Frame(body,bg=PANEL);row.pack(fill='x',pady=3)
         self.label(row,'조종 대상',8,MUTED).pack(side='left')
         target=ttk.Combobox(row,textvariable=self.pad_target,values=['AMR','로봇팔'],state='readonly',width=7);target.pack(side='left',padx=3)
         target.bind('<<ComboboxSelected>>',lambda e:self._pad_toggle())
-        group=ttk.Combobox(row,textvariable=self.pad_arm_group,values=list(GROUPS),state='readonly',width=13);group.pack(side='left')
+        armrow=tk.Frame(body,bg=PANEL);armrow.pack(fill='x')
+        group=ttk.Combobox(armrow,textvariable=self.pad_arm_group,values=list(GROUPS),state='readonly',width=13);group.pack(side='left')
         group.bind('<<ComboboxSelected>>',lambda e:self._pad_toggle())
         speedrow=tk.Frame(body,bg=PANEL);speedrow.pack(fill='x')
         self.label(speedrow,'팔 속도 %',8,MUTED).pack(side='left')
         speed=ttk.Combobox(speedrow,textvariable=self.pad_arm_speed,values=SPEEDS,state='readonly',width=5);speed.pack(side='left',padx=4);speed.bind('<<ComboboxSelected>>',lambda e:self._pad_toggle())
+        amrrow=tk.Frame(body,bg=PANEL);amrrow.pack(fill='x')
+        self.label(amrrow,'AMR 전후진 m/s',8,MUTED).pack(side='left')
+        ttk.Combobox(amrrow,textvariable=self.speed,values=['0.05','0.10','0.15','0.20','0.30'],width=6,state='readonly').pack(side='left')
+        self.label(amrrow,'회전 °/s',8,MUTED).pack(side='left')
+        ttk.Combobox(amrrow,textvariable=self.angular,values=['5','10','15','20','30'],width=5,state='readonly').pack(side='left')
+        note=self.label(body,'',8,MUTED,wraplength=285,justify='left');note.pack(fill='x')
+        def refresh(*args):
+            arm=self.pad_target.get()=='로봇팔'
+            for widget in (armrow,speedrow):
+                if arm:widget.pack(fill='x',before=amrrow if amrrow.winfo_manager() else note)
+                else:widget.pack_forget()
+            if arm:amrrow.pack_forget()
+            else:amrrow.pack(fill='x',before=note)
+            note.configure(text='팔: 관절 / TCP 모드 선택 · R1/R2 모드 변경' if arm else 'AMR: 왼쪽 스틱 상하 전후진 / 좌우 회전 · L1 한번 눌러 활성/해제 · ○ 정지')
+        self.pad_target.trace_add('write',refresh);refresh()
+
 
     def _pad_arm_stop(self):
         self.pad_arm_time=None
@@ -171,7 +188,7 @@ class GamepadMixin:
                  self.tabs.select()==str(self.operation_page) and focus is not None and focus.winfo_toplevel()==self and
                  not self.reloc_mode and not self.task_running and not self.studio_runner.active and self.studio_arm_safe)
         allowed=allowed and (not self.real and self.sim_powered or self.real and self.control_enabled and now-self.last_state<=3 and not controller_manual_reason(self.live,self.last_state,now))
-        try:v,w,stop,status=self.pad_gate.evaluate(sample,now,allowed,**{k:self.pad_config[k] for k in ('forward','turn','deadman','stop','zone','invert_forward','invert_turn')})
+        try:v,w,stop,status=self.pad_gate.evaluate(sample,now,allowed,toggle=True,**{k:self.pad_config[k] for k in ('forward','turn','deadman','stop','zone','invert_forward','invert_turn')})
         except (ValueError,TypeError):
             self.pad_gate.reset();v,w,stop,status=0.,0.,False,'컨트롤러 입력 오류'
         if self.pad_enabled.get() and sample and 0<=now-sample.timestamp<=.25 and focus is not None and focus.winfo_toplevel()==self:
@@ -187,8 +204,10 @@ class GamepadMixin:
                 # A keyboard/mouse jog owns control until explicitly released.
                 if self.held and self.held[0]!='gamepad':self.pad_gate.reset();status='키보드 / 버튼 조작 중'
                 elif self.real:
+                    starting=not self.held or self.held[0]!='gamepad'
                     self.held=('gamepad',motion)
                     with self._jog_lock:self._jog_desired=dict(vx=motion[0],vy=0.,w=motion[1],_expires=now+.25)
+                    if starting and self._jog_wakeup:self._jog_wakeup.set()
                 else:
                     self.sim.drive(*motion);self.held=('gamepad',motion)
             except (ValueError,TypeError) as e:self._pad_stop();self.pad_gate.reset();status=str(e)
@@ -196,9 +215,18 @@ class GamepadMixin:
             if not self.pad_enabled.get():status='조이스틱 사용을 켜세요.'
             elif not self.manual.get():status='수동 조작 활성화를 켜세요.'
             elif not self.connected:status='SIM 또는 실기에 먼저 연결하세요.'
+            elif self.real and not self.control_enabled:status='조회 전용 연결: 연결 해제 후 실기 · 제어 모드로 다시 연결하세요.'
+            elif self.real and controller_manual_reason(self.live,self.last_state,now):status=controller_manual_reason(self.live,self.last_state,now)
+            elif not self.real and not self.sim_powered:status='SIM 전원이 꺼져 있습니다.'
+            elif self.tabs.select()!=str(self.operation_page):status='지도 / 제어 작업창을 선택하세요. 사용자 모드는 수동 조종을 지원하지 않습니다.'
+            elif focus is None or focus.winfo_toplevel()!=self:status='설정 창을 닫고 메인 지도 화면을 클릭하세요. 창 포커스가 필요합니다.'
+            elif self.reloc_mode:status='재배치 모드를 종료하세요.'
             elif self.studio_runner.active or self.task_running:status='미션 종료 후 조종하세요.'
             elif not self.studio_arm_safe:status='로봇팔 안전 자세 확인'
             else:status='지도 / 제어 화면에서 연결·제어 상태를 확인하세요.'
+        if self.pad_enabled.get() and not allowed and status!=getattr(self,'_pad_block_report',None):
+            self.log('GAMEPAD','AMR 조종 제한: '+status)
+        self._pad_block_report=status if not allowed else None
         identity=self.pad_device[1].name if self.pad_device else '미연결'
         raw=''
         if sample:raw=' · '.join(f'{k} {value:+.2f}' for k,value in sample.axes.items())+'\n버튼: '+(', '.join(str(i+1) for i in range(36) if sample.buttons&(1<<i)) or '없음')
