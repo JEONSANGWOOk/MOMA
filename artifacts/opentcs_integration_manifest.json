@@ -2,12 +2,13 @@
     "continuousSpeedAvailable":  false,
     "virtualOnly":  true,
     "backend":  "openTCS HTTP v1 via localhost SEER facade",
-    "fullSuite":  464,
+    "fullSuite":  471,
     "launcherSmoke":  "passed: auto connect, map pull, AGV selection, repeat start reuses existing window",
-    "unitTests":  9,
+    "unitTests":  16,
     "openTCS":  "7.5.0",
     "liveConsoleSmoke":  "passed: order dispatch, user-mode mission, pose, pause, resume, FINISHED, withdrawal/CANCELED, decision logs",
-    "validatedAt":  "2026-10-09T17:54:46.9811029+09:00",
+    "validatedAt":  "2026-10-09T18:18:36.4025360+09:00",
     "pose":  "ACS precise pose when supplied, otherwise current node; no local motion interpolation",
-    "mapNodes":  59
+    "mapNodes":  59,
+    "fleet":  "ACS count and IDs, full 2D/3D fleet, traffic wait reasons, idle virtual blocker parking, 4 actual MOVE jobs all FINISHED"
 }

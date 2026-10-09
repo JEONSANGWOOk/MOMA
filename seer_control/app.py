@@ -28,6 +28,7 @@ from .decision_log import DecisionJournal, decide, audited, decision_text, snaps
 from .studio_core import ACTION_DEFAULTS, validate_actions, point_segment_distance
 from .location import LocationTracker
 from .mission_preview import MissionMapPreview
+from .fleet_ui import get_fleet,draw_fleet
 from .route_planner import plan_stops, plan_actions
 from .ui_scale import UIScaleMixin
 
@@ -2787,8 +2788,9 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
                 geometry=path_record_geometry(record.get('raw',{}))
                 if len(geometry)>1:
                     c.create_line(*[v for p in geometry for v in self.xy(*p)],fill=BLUE,width=5,arrow='last',tags='selected_editor_path')
-        state = self.current_state()
-        if self.connected and all(isinstance(state.get(k),(float,int)) and math.isfinite(state[k]) for k in ('x','y','theta')):
+        state = self.current_state();fleet=get_fleet(self)
+        if fleet:draw_fleet(c,fleet,self.xy)
+        if not fleet and self.connected and all(isinstance(state.get(k),(float,int)) and math.isfinite(state[k]) for k in ('x','y','theta')):
             sx,sy=float(state['x']),float(state['y']); a=float(state['theta'])
             if self.real:
                 sx,sy=self._lidar_map_xy(sx,sy)
@@ -2816,6 +2818,8 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
         if robot_label:
             x,y,caption=robot_label
             self._draw_map_label(c,x,y,caption,BLUE,'robot_location_caption',[(0,-48),(0,49),(75,-35),(-75,-35),(0,-72),(0,73)])
+        if fleet:
+            c.tag_raise('acs_fleet');c.tag_raise('acs_fleet_label')
         c.create_text(18,h-38,anchor='w',text='2 m',fill='#526a80',font=(self.font,9))
         lidar_n=len(self.real_laser_points) if self.real else len(self.scan_points)
         lidar_age=(time.monotonic()-self.last_laser_rx) if self.real and self.last_laser_rx else None

@@ -1,0 +1,50 @@
+{
+  "fleetCount": 4,
+  "jobs": [
+    {
+      "vehicle": "AGV-01",
+      "goal": "Point-0032",
+      "order": "MOMA-Fleet-b25d5973c65e4126a6fbb5b673934427"
+    },
+    {
+      "vehicle": "AGV-02",
+      "goal": "Point-0014",
+      "order": "MOMA-Fleet-e8461a2d7a394962a9a9e3c67ffeaf8c"
+    },
+    {
+      "vehicle": "AGV-03",
+      "goal": "Point-0039",
+      "order": "MOMA-Fleet-64d4beeec3724f05ab0c6be9155630be"
+    },
+    {
+      "vehicle": "AGV-04",
+      "goal": "Point-0037",
+      "order": "MOMA-Fleet-ffe18eb3cb4341bb87bd590680600600"
+    }
+  ],
+  "states": {
+    "AGV-01": "FINISHED",
+    "AGV-02": "FINISHED",
+    "AGV-03": "FINISHED",
+    "AGV-04": "FINISHED"
+  },
+  "movementObserved": [
+    "AGV-01",
+    "AGV-02",
+    "AGV-03",
+    "AGV-04"
+  ],
+  "initialNodes": {
+    "AGV-01": "Point-0027",
+    "AGV-02": "Point-0002",
+    "AGV-03": "Point-0042",
+    "AGV-04": "Point-0038"
+  },
+  "finalNodes": {
+    "AGV-01": "Point-0032",
+    "AGV-02": "Point-0014",
+    "AGV-03": "Point-0039",
+    "AGV-04": "Point-0037"
+  },
+  "verified": true
+}

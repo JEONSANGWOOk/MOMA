@@ -5,6 +5,7 @@ import tkinter as tk
 from .geometry3d import RobotDescription, MeshAsset, load_mesh, box, cylinder, transform, multiply, point, identity
 from .smap import path_record_geometry
 from .smooth_renderer import renderer_for
+from .fleet_ui import get_fleet,positioned,color
 
 
 PRESETS={'사선':(-135,38),'위':(-90,89.9),'정면':(-90,8),'측면':(0,8),'뒤':(90,8),'사진형':(135,18)}
@@ -277,6 +278,10 @@ class WorldView3D(tk.Canvas):
             for a,b in (((x-.2,y,.09),(x+.2,y,.09)),((x,y-.2,.09),(x,y+.2,.09))):lines.append((a,b,'#eb782c',3,'world_reloc'))
             if angle is not None:lines.append(((x,y,.09),(x+.6*math.cos(angle),y+.6*math.sin(angle),.09),'#eb782c',4,'world_reloc'))
         if self.layers['AMR'].get():
+            for vehicle in positioned(get_fleet(self.app)):
+                texts.append(((vehicle['x'],vehicle['y'],.75),vehicle['id'],color(vehicle)))
+                if not vehicle.get('selected'):
+                    add_faces(box((1.,1.,.4)),transform((vehicle['x'],vehicle['y'],.25)),color(vehicle),'world_acs_fleet')
             if self.body_asset:add_asset(self.body_asset,'amr',world,'#5286bd','world_amr')
             else:
                 cfg=getattr(model,'robot_model',{});length=cfg.get('length',.7);breadth=cfg.get('width',.5)

@@ -1,6 +1,7 @@
 """Launch the existing MOMA Console connected to an openTCS virtual vehicle."""
 import argparse
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -62,8 +63,27 @@ def main():
         banner.pack(side='top',fill='x',before=app.winfo_children()[0])
         tk.Label(banner,text='openTCS 가상 ACS · 노드 도착 위치 표시 · 실제 센서/연속 속도 없음',bg='#fff1ce',fg='#553a00').pack(side='left',padx=10,pady=6)
         selected=tk.StringVar(value=robot.vehicle)
-        selector=ttk.Combobox(banner,textvariable=selected,values=['AGV-01','AGV-02','AGV-03','AGV-04'],state='readonly',width=12)
+        selector=ttk.Combobox(banner,textvariable=selected,values=[v['id'] for v in robot.fleet],state='readonly',width=12)
         selector.pack(side='left',padx=6)
+        auto_park=tk.BooleanVar(value=not args.smoke)
+        tk.Checkbutton(banner,text='통로 막는 유휴 차량 자동 주차',variable=auto_park,bg='#fff1ce').pack(side='left',padx=8)
+        def fleet_demo():
+            if app.studio_runner.active:
+                messagebox.showinfo('차량 주행 시험','현재 MOMA 미션이 끝난 뒤 시험하세요.',parent=app);return
+            demo_button.configure(state='disabled')
+            def work():
+                try:
+                    jobs=robot.start_fleet_demo()
+                    robot.record('전체 차량 시험 결과',dict(jobs=jobs),'이동 작업 '+str(len(jobs))+'건 등록','ACS에서 배차·주행 상태 관찰',force=True)
+                except Exception as error:robot.record('전체 차량 시험 오류',dict(error=str(error)),'시험 요청 실패','작업 상태 확인',force=True)
+            threading.Thread(target=work,daemon=True,name='opentcs-fleet-demo').start()
+            app.after(3000,lambda:demo_button.configure(state='normal'))
+        demo_button=ttk.Button(banner,text='4대 주행 테스트',command=fleet_demo)
+        demo_button.pack(side='left',padx=6)
+        fleet_panel=ttk.Treeview(app,columns=('vehicle','state','node','order','reason'),show='headings',height=4)
+        for name,title,width in [('vehicle','AMR',95),('state','ACS 상태',110),('node','현재 노드',130),('order','현재 작업',330),('reason','대기 이유',250)]:
+            fleet_panel.heading(name,text=title);fleet_panel.column(name,width=width)
+        fleet_panel.pack(side='top',fill='x',before=app.winfo_children()[0])
         def switch_vehicle(event=None):
             previous=robot.vehicle
             try:
@@ -87,12 +107,30 @@ def main():
         stage=0
         switched=False
         failures=[]
+        parking_busy=False
+        parking_last=0.
         def configure_connection():
             nonlocal deadline,stage
             app.host.set('127.0.0.1');app.mode.set('실기 · 제어');app.profile=ROOT/'config'/'api_profile.json'
             app.connect();deadline=time.monotonic()+15;stage=0
         def update():
-            nonlocal stage,switched
+            nonlocal stage,switched,parking_busy,parking_last
+            fleet=list(robot.fleet)
+            selector.configure(values=[v['id'] for v in fleet])
+            for item in fleet:
+                row=(item['id'],item['state'],item['node'] or '위치 미확정',item['order'] or '없음',item['wait_reason'])
+                if fleet_panel.exists(item['id']):fleet_panel.item(item['id'],values=row)
+                else:fleet_panel.insert('', 'end',iid=item['id'],values=row)
+            for key in fleet_panel.get_children():
+                if key not in {v['id'] for v in fleet}:fleet_panel.delete(key)
+            if auto_park.get() and not parking_busy and time.monotonic()-parking_last>2:
+                parking_busy=True;parking_last=time.monotonic()
+                def park():
+                    nonlocal parking_busy
+                    try:robot.clear_idle_blockers()
+                    except Exception as error:robot.record('자동 주차 오류',dict(error=str(error)),'통로 확보 요청 실패','다음 ACS 상태 확인',identity=str(error))
+                    finally:parking_busy=False
+                threading.Thread(target=park,daemon=True,name='opentcs-idle-parking').start()
             if app.connected and app.last_state>0:
                 if stage==0:
                     app.send_command('lock_control',dict(nick_name=app.control_nick));stage=1
@@ -105,7 +143,8 @@ def main():
             else:
                 external=robot.vehicle_data.get('transportOrder')
                 prefix='외부 ACS 작업' if external and external!=robot.order_name else 'ACS'
-                info.set(f'{robot.vehicle} · {prefix} {robot.observed_order.get("state","대기")}')
+                wait_reason=next((v['wait_reason'] for v in fleet if v['selected']),'')
+                info.set(f'전체 {len(fleet)}대 · {robot.vehicle} · {wait_reason or prefix+" "+robot.observed_order.get("state","대기")}')
             if args.smoke and stage==2 and not app.downloading_map and app.map.name=='opentcs_virtual':
                 if not switched:
                     selected.set('AGV-02');switch_vehicle();switched=True

@@ -17,6 +17,28 @@ LOOPBACK = 'org.opentcs.virtualvehicle.LoopbackCommunicationAdapterDescription'
 ACTIVE = {'RAW', 'ACTIVE', 'DISPATCHABLE', 'BEING_PROCESSED', 'WITHDRAWN'}
 
 
+def fleet_states(vehicles, model):
+    """Preserve every ACS vehicle and explain first pending resource conflicts."""
+    owners={}
+    for vehicle in vehicles:
+        for group in vehicle.get('allocatedResources',[]):
+            for resource in group:owners.setdefault(resource,set()).add(vehicle['name'])
+    result=[]
+    for v in vehicles:
+        node=model.nodes.get(v.get('currentPosition'),{})
+        precise=v.get('precisePosition')
+        xy=(precise.get('x')/1000,precise.get('y')/1000) if isinstance(precise,dict) else (node.get('x'),node.get('y'))
+        pending=v.get('claimedResources',[])
+        conflicts={resource:sorted(owners.get(resource,set())-{v['name']}) for resource in (pending[0] if pending else [])}
+        conflicts={k:value for k,value in conflicts.items() if value}
+        waiting=sorted({name for names in conflicts.values() for name in names}) if v.get('state')=='IDLE' and v.get('transportOrder') else []
+        result.append(dict(id=v['name'],x=xy[0],y=xy[1],theta=0.,node=v.get('currentPosition'),state=v.get('state'),
+                    order=v.get('transportOrder'),paused=v.get('paused',False),waiting_for=waiting,conflicts=conflicts,
+                    wait_reason=('통행 대기: '+', '.join(waiting)) if waiting else ('일시정지' if v.get('paused') else ''),
+                    battery=v.get('energyLevel'),selected=False))
+    return result
+
+
 class OpenTCSAPI:
     def __init__(self, url='http://127.0.0.1:55200/v1'):
         parsed = urlsplit(url)
@@ -62,8 +84,9 @@ class OpenTCSRobot:
         self.lock = threading.RLock()
         self.offline_until = 0.; self.delay_s = 0.
         self.control_owner = ''; self.order_name = ''; self.target = ''; self.canceled = False
-        self.vehicle_data = {}; self.order_data = {}; self.observed_order = {}; self.last_error = ''; self.updated_at = 0.
+        self.vehicle_data = {}; self.order_data = {}; self.observed_order = {}; self.fleet = []; self.last_error = ''; self.updated_at = 0.
         self.stop_event = threading.Event()
+        self.parking_orders = {}
         self.decision_journal = DecisionJournal(log_dir)
         self.decision_journal.bind('OPENTCS')
         self.source_map = self.api.call('GET', 'plantModel')
@@ -86,7 +109,9 @@ class OpenTCSRobot:
     def refresh(self):
         # Serialize HTTP state reads with commands so an old sample cannot overwrite a new order.
         with self.lock:
-            vehicle = self.api.call('GET', self.vehicle_path())
+            vehicles = self.api.call('GET', 'vehicles')
+            vehicle = next((v for v in vehicles if v['name']==self.vehicle),None)
+            if vehicle is None:raise ValueError('ACS에 선택한 차량이 없습니다: '+self.vehicle)
             order = self.api.call('GET','transportOrders/'+quote(self.order_name,safe='')) if self.order_name else {}
             external = vehicle.get('transportOrder')
             observed = self.api.call('GET','transportOrders/'+quote(external,safe='')) if external and external!=self.order_name else order
@@ -95,6 +120,13 @@ class OpenTCSRobot:
             if position not in self.map.nodes and not isinstance(precise, dict):
                 raise ValueError('가상 AGV 위치가 아직 초기화되지 않았습니다.')
             self.vehicle_data = vehicle; self.order_data = order; self.observed_order = observed
+            self.fleet=fleet_states(vehicles,self.map)
+            for entry in self.fleet:
+                entry['selected']=entry['id']==self.vehicle
+                if entry['waiting_for']:
+                    decide(self,'openTCS.통행 대기',dict(vehicle=entry['id'],node=entry['node'],order=entry['order']),
+                           dict(conflicting_resources=entry['conflicts']),entry['wait_reason'],'ACS 자원 할당 대기 유지',
+                           key=('acs-wait',entry['id']),identity=(entry['node'],tuple(entry['waiting_for'])))
             self.updated_at = time.monotonic(); self.last_error = ''
             state = observed.get('state', 'NONE')
             self.record('상태 판정',dict(acs_state=state,vehicle_state=vehicle.get('state'),
@@ -140,7 +172,63 @@ class OpenTCSRobot:
                         current_map=self.map.name,reloc_status=1,loadmap_status=1,control_owner=self.control_owner,
                         robot_model='openTCS Virtual AGV',robot_id=self.vehicle,robokit_version='openTCS-7',
                         is_emulator=True,laser_beams=[],path=[],unfinished_path=[],errors=[],fatals=[],warnings=warnings,
-                        acs_order=current_order or self.order_name,acs_state=state,pose_source='precise' if precise else 'node',speed_available=False)
+                        acs_order=current_order or self.order_name,acs_state=state,pose_source='precise' if precise else 'node',speed_available=False,
+                        fleet=self.fleet,acs_wait_reason=next((f['wait_reason'] for f in self.fleet if f['selected']),''))
+
+    def clear_idle_blockers(self):
+        """Park only idle virtual vehicles actually holding another job's next resource."""
+        with self.lock:
+            self.refresh()
+            blockers={name for v in self.fleet for name in v['waiting_for']}
+            occupied={v['node'] for v in self.fleet}
+            parking_vehicles=set()
+            for name,entry in list(self.parking_orders.items()):
+                state=self.api.call('GET','transportOrders/'+name).get('state')
+                if state not in ACTIVE:del self.parking_orders[name]
+                else:occupied.add(entry['goal']);parking_vehicles.add(entry['vehicle'])
+            submitted=[]
+            for entry in self.fleet:
+                if entry['id'] not in blockers or entry['id'] in parking_vehicles or entry['order'] or entry['paused'] or entry['state']!='IDLE':continue
+                options=[]
+                for key,node in self.map.nodes.items():
+                    if node.get('kind')!='dock' or key in occupied:continue
+                    try:route=self.map.route(entry['node'],key)
+                    except ValueError:continue
+                    options.append((sum(self.map.distance(a,b) for a,b in zip(route,route[1:])),key))
+                if not options:continue
+                path='vehicles/'+quote(entry['id'],safe='')
+                attachment=self.api.call('GET',path+'/commAdapter/attachmentInformation')
+                current=self.api.call('GET',path)
+                if attachment.get('attachedCommAdapter')!=LOOPBACK or current.get('transportOrder') or current.get('paused') or current.get('state')!='IDLE':continue
+                goal=min(options)[1];name='MOMA-Park-'+uuid.uuid4().hex
+                self.api.call('POST','transportOrders/'+name,dict(intendedVehicle=entry['id'],type='Park',destinations=[dict(locationName=goal,operation='MOVE')]))
+                reservation=dict(vehicle=entry['id'],goal=goal,order=name)
+                self.parking_orders[name]=reservation
+                occupied.add(goal);submitted.append(reservation)
+                decide(self,'openTCS.통로 확보',dict(vehicle=entry['id'],node=entry['node']),
+                       dict(blocked_vehicles=[v['id'] for v in self.fleet if entry['id'] in v['waiting_for']],goal=goal,acs_order=name),
+                       '실행 작업 없는 Loopback 차량이 통행 자원을 점유','ACS에 주차 작업 등록 · 완료는 ACS 상태로 확인',force=True)
+            return submitted
+
+    def start_fleet_demo(self):
+        """Submit one short real ACS MOVE order per available virtual vehicle."""
+        with self.lock:
+            self.refresh();goals=set();submitted=[]
+            occupied={v['node'] for v in self.fleet}
+            for entry in self.fleet:
+                if entry['order'] or entry['state']!='IDLE' or entry['paused']:continue
+                choices=[r['b'] for r in self.map.path_records if r['a']==entry['node'] and r['b'] not in occupied|goals]
+                if not choices:continue
+                path='vehicles/'+quote(entry['id'],safe='')
+                if self.api.call('GET',path+'/commAdapter/attachmentInformation').get('attachedCommAdapter')!=LOOPBACK:continue
+                current=self.api.call('GET',path)
+                if current.get('transportOrder') or current.get('state')!='IDLE' or current.get('paused'):continue
+                goal=min(choices,key=lambda node:self.map.distance(entry['node'],node));name='MOMA-Fleet-'+uuid.uuid4().hex
+                self.api.call('POST','transportOrders/'+name,dict(intendedVehicle=entry['id'],destinations=[dict(locationName=goal,operation='MOVE')]))
+                goals.add(goal);submitted.append(dict(vehicle=entry['id'],goal=goal,order=name))
+                decide(self,'openTCS.차량 주행 시험',dict(vehicle=entry['id'],node=entry['node']),
+                       dict(goal=goal,acs_order=name),'유휴 Loopback 차량과 비점유 목적지 확인','ACS에 이동 작업 등록 · 실제 완료는 상태로 확인',force=True)
+            return submitted
 
     def request(self, api, payload=None, port=None):
         with self.lock:

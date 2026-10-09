@@ -11,6 +11,7 @@ from .fairino_api import validate as validate_fr5
 from .fairino_programs import program_actions
 from .voice_gui import GuiRegistry
 from .mission_preview import MissionMapPreview
+from .fleet_ui import get_fleet,draw_fleet
 from .theme import PANEL,INK,MUTED,BLUE,RED
 class VoiceMixin:
  def _voice_build(self):
@@ -287,8 +288,10 @@ class VoiceMissionMap(MissionMapPreview):
    for obstacle in self.model.obstacles:
     x,y=self.xy(obstacle.get('x',0),obstacle.get('y',0));radius=max(4,obstacle.get('radius',.3)*self.transform[0])
     self.create_oval(x-radius,y-radius,x+radius,y+radius,fill='#f3b469',outline='#bc631e',tags='voice_obstacle')
-  pose=self.get_pose()
-  if all(isinstance(pose.get(k),(int,float)) and math.isfinite(pose[k]) for k in ('x','y')):
+  pose=self.get_pose();fleet=get_fleet(self.app)
+  if fleet:
+   self.delete('preview_robot');draw_fleet(self,fleet,self.xy)
+  if not fleet and all(isinstance(pose.get(k),(int,float)) and math.isfinite(pose[k]) for k in ('x','y')):
    x,y=self.xy(pose['x'],pose['y']);theta=pose.get('theta',0)
    self.create_oval(x-8,y-8,x+8,y+8,fill='#287de0',outline='white',width=2,tags='voice_robot')
    self.create_line(x,y,x+18*math.cos(theta),y-18*math.sin(theta),fill='#287de0',width=3,arrow='last')

@@ -1,7 +1,7 @@
 import copy
 import unittest
 
-from seer_control.opentcs_bridge import OpenTCSRobot, convert_map, LOOPBACK
+from seer_control.opentcs_bridge import OpenTCSRobot, convert_map, fleet_states, LOOPBACK
 
 
 class FakeAPI:
@@ -17,11 +17,14 @@ class FakeAPI:
         if path=='plantModel':return copy.deepcopy(self.model)
         if path.endswith('/attachmentInformation'):return dict(attachedCommAdapter=self.adapter)
         if path=='vehicles/AGV-01':return copy.deepcopy(self.vehicle)
+        if path=='vehicles':return copy.deepcopy(getattr(self,'vehicles',[self.vehicle]))
         if '/paused?' in path:self.vehicle['paused']=path.endswith('true');return None
         if '/withdrawal?' in path:self.order['state']='FAILED';self.vehicle['transportOrder']=None;return None
         if path.startswith('transportOrders/'):
             if method=='POST':self.order=dict(state='RAW',processingVehicle=None);return copy.deepcopy(self.order)
             return copy.deepcopy(self.order)
+        if path.startswith('vehicles/') and '/commAdapter/' not in path:
+            return copy.deepcopy(next(v for v in self.vehicles if v['name']==path.split('/')[1]))
         raise AssertionError(path)
 
 
@@ -79,6 +82,52 @@ class OpenTCSBridgeTests(unittest.TestCase):
         self.assertFalse(self.robot.request(1101)['sensor_available'])
         self.assertFalse(self.robot.status()['speed_available'])
         self.assertEqual(self.robot.status()['pose_source'],'node')
+
+    def traffic_setup(self):
+        self.api.model['points'].append(dict(name='C',position=dict(x=5000,y=0),type='PARK_POSITION'))
+        self.api.model['paths'].append(dict(name='BC',srcPointName='B',destPointName='C',maxVelocity=1000,maxReverseVelocity=0,locked=False))
+        self.robot.map=convert_map(self.api.model)
+        self.api.vehicle.update(state='IDLE',transportOrder='external',claimedResources=[['B']])
+        blocker=dict(name='AGV-02',currentPosition='B',state='IDLE',paused=False,transportOrder=None,allocatedResources=[['B']])
+        self.api.vehicles=[self.api.vehicle,blocker]
+        self.robot.refresh()
+        return blocker
+    def test_full_fleet_with_waiting_owner(self):
+        self.traffic_setup()
+        fleet=self.robot.status()['fleet']
+        self.assertEqual([v['id'] for v in fleet],['AGV-01','AGV-02'])
+        self.assertEqual(fleet[0]['waiting_for'],['AGV-02'])
+        self.assertEqual(fleet[0]['conflicts'],{'B':['AGV-02']})
+        self.assertTrue(fleet[0]['selected']);self.assertFalse(fleet[1]['selected'])
+    def test_idle_blocker_is_parked_without_canceling_jobs(self):
+        self.traffic_setup()
+        result=self.robot.clear_idle_blockers()
+        self.assertEqual(result[0]['vehicle'],'AGV-02');self.assertEqual(result[0]['goal'],'C')
+        post=next(c for c in self.api.calls if c[0]=='POST')
+        self.assertEqual(post[2]['intendedVehicle'],'AGV-02')
+        self.assertFalse(any('withdrawal' in c[1] for c in self.api.calls))
+        self.assertEqual(self.robot.clear_idle_blockers(),[])
+    def test_busy_or_paused_blocker_not_moved(self):
+        blocker=self.traffic_setup();blocker['transportOrder']='existing'
+        self.assertEqual(self.robot.clear_idle_blockers(),[])
+        blocker['transportOrder']=None;blocker['paused']=True
+        self.assertEqual(self.robot.clear_idle_blockers(),[])
+    def test_non_virtual_blocker_not_moved(self):
+        self.traffic_setup();self.api.adapter='real-driver'
+        self.assertEqual(self.robot.clear_idle_blockers(),[])
+        self.assertFalse(any(c[0]=='POST' for c in self.api.calls))
+    def test_unlocalized_vehicle_is_counted_without_fake_pose(self):
+        fleet=fleet_states([dict(name='AGV-03',state='IDLE',currentPosition=None)],self.robot.map)
+        self.assertEqual(len(fleet),1);self.assertIsNone(fleet[0]['x']);self.assertIsNone(fleet[0]['y'])
+    def test_fleet_demo_creates_actual_order_for_idle_vehicle(self):
+        result=self.robot.start_fleet_demo()
+        self.assertEqual(result[0]['vehicle'],'AGV-01');self.assertEqual(result[0]['goal'],'B')
+        post=next(c for c in self.api.calls if c[0]=='POST')
+        self.assertEqual(post[2]['destinations'],[dict(locationName='B',operation='MOVE')])
+    def test_fleet_demo_skips_vehicles_with_existing_jobs(self):
+        self.api.vehicle['transportOrder']='external'
+        self.assertEqual(self.robot.start_fleet_demo(),[])
+        self.assertFalse(any(c[0]=='POST' for c in self.api.calls))
 
 
 if __name__=='__main__':unittest.main()

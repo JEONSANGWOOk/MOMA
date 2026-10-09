@@ -31,9 +31,13 @@ with tempfile.TemporaryDirectory() as folder,patch.object(Path,'home',return_val
         app.send_command('lock_control',dict(nick_name=app.control_nick));wait(lambda:robot.control_owner==app.control_nick)
         app.pull_robot_map();wait(lambda:'Point-0011' in app.map.nodes and not app.downloading_map)
         assert len(app.map.nodes)==59
+        assert len(robot.fleet)==4
         start=robot.vehicle_data['currentPosition']
         goal=min((r['b'] for r in robot.map.path_records if r['a']==start),key=lambda node:robot.map.distance(start,node))
         app.ui_role.set('사용자');app._role_apply();app._operator_open_route();app._operator_map_add(goal)
+        app.operator_map.redraw()
+        assert len(app.operator_map.find_withtag('acs_fleet_label'))==4
+        initial=(robot.status()['x'],robot.status()['y'])
         app._operator_preview();app._operator_start()
         wait(lambda:robot.order_data.get('state')=='BEING_PROCESSED')
         order=robot.order_name
@@ -45,8 +49,11 @@ with tempfile.TemporaryDirectory() as folder,patch.object(Path,'home',return_val
         assert robot.vehicle_data['currentPosition']==goal
         assert abs(app.live['x']-robot.map.nodes[goal]['x'])<.05
         assert abs(app.live['y']-robot.map.nodes[goal]['y'])<.05
+        assert (app.live['x'],app.live['y'])!=initial
+        app.operator_map.redraw()
+        assert len(app.operator_map.find_withtag('acs_fleet_label'))==4
         assert any(e['source']=='REAL.주행 완료 판정' for e in app.decision_journal.records)
-        print('PASS: actual ACS order '+order+' / AGV-04 / 59 nodes / user-mode mission / pause-resume / FINISHED / decision logs')
+        print('PASS: actual ACS order '+order+' / 4 fleet markers / changed real node position / AGV-04 / 59 nodes / user-mode mission / pause-resume / FINISHED / decision logs')
         next_goal=next(r['b'] for r in robot.map.path_records if r['a']==goal)
         app.send_command('navigate',dict(id=next_goal))
         wait(lambda:robot.order_name!=order and robot.order_data.get('state')=='BEING_PROCESSED')
