@@ -1,6 +1,7 @@
 """FR5 connection, taught tasks, feedback and mission hooks."""
 import copy
 import json
+from .decision_log import decide, audited, snapshot
 import math
 import queue
 import threading
@@ -35,6 +36,7 @@ class FairinoUIMixin(FairinoProgramMixin,ArmWorkspaceMixin):
             and all(abs(a-b)<=.5 for a,b in zip(result.get('joints_deg',[]),safe['target']))
             and len(result.get('joints_deg',[]))==6)
         if result.get('status')=='ERROR':self.studio_arm_safe=False
+        decide(self,'REAL.팔 안전 자세',snapshot(self),dict(feedback=result,safe_target=safe.get('target'),method=safe.get('method'),tolerance_deg=.5,required_joint_count=6,required_motion_done=1),'팔 안전 자세 확인' if self.studio_arm_safe else '팔 안전 자세 조건 미충족','AMR 이동 인터록 해제' if self.studio_arm_safe else 'AMR 이동 인터록 유지',identity=(self.studio_arm_safe,result.get('status')))
 
     def _fr5_queue(self,fn,connect=False):
         if self.fr5_pending:raise ValueError('FR5 요청 처리 중입니다.')
@@ -44,6 +46,7 @@ class FairinoUIMixin(FairinoProgramMixin,ArmWorkspaceMixin):
             except Exception as e:self.fr5_events.put((epoch,False,str(e)))
         threading.Thread(target=work,daemon=True,name='fairino-ui-request').start()
 
+    @audited('REAL.FR5 연결', '검증된 설정으로 FR5 연결 요청')
     def _fr5_connect(self):
         if not self.real:raise ValueError('REAL 모드로 전환한 뒤 FR5를 연결하세요. SIM에서는 실기로 전송하지 않습니다.')
         if self.studio_runner.active:raise ValueError('미션 종료 후 연결하세요.')
@@ -83,7 +86,9 @@ class FairinoUIMixin(FairinoProgramMixin,ArmWorkspaceMixin):
             if self.fr5_client.connected:
                 self._fr5_priority_stop()
             return
-        if now-self.fr5_rx>2 or not self.fr5_client.connected:self.studio_arm_safe=False
+        if now-self.fr5_rx>2 or not self.fr5_client.connected:
+            self.studio_arm_safe=False
+            decide(self,'REAL.팔 상태 최신성',snapshot(self),dict(connected=self.fr5_client.connected,feedback_age_s=now-self.fr5_rx,max_age_s=2),'팔 연결/최신 피드백 조건 미충족','AMR 이동 인터록 유지',identity=self.fr5_client.connected)
         # Mission polls its own feedback; idle refresh is 5 Hz and never blocks Tk.
         if self.fr5_client.connected and not self.fr5_pending and (self.studio_runner.status!='RUNNING' or self.studio_runner.actions[self.studio_runner.index]['type']=='Wait') and now-self.fr5_poll_at>=.2:
             self.fr5_poll_at=now

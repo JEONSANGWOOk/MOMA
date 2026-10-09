@@ -2,6 +2,7 @@
 import copy
 import bisect
 import json
+from .decision_log import decide, audited, snapshot
 import math
 import queue
 import time
@@ -28,6 +29,8 @@ SETTINGS=Path.home()/'.seer_amr_console'/'studio_settings.json'
 class ConsoleAdapter:
     def __init__(self,console):self.c=console;self.context={};self.motion=(0.,0.)
     def mission_started(self,index):
+        journal=getattr(self.c,'__dict__',{}).get('decision_journal')
+        if journal:journal.bind('REAL' if self.c.real else 'SIM',getattr(self.c.studio_runner,'report',None),1,index+1)
         runner=getattr(self.c,'studio_runner',None)
         if runner and runner.report:
             runner.report.metadata=dict(backend='REAL' if self.c.real else 'SIM',controller=controller_identity(getattr(self.c,'raw',{})) if self.c.real else {},hardware_verified=False,navigation_api=3050 if getattr(self.c,'studio_config',{}).get('real_navigation_mode')=='free' else 3051)
@@ -35,6 +38,7 @@ class ConsoleAdapter:
         if index==0 and sim is not None and hasattr(sim,'skipped_goals'):
             sim.skipped_goals.clear();sim.skip_result=None
 
+    @audited('미션.단계 진입', '안전/연결/장치 조건 확인 후 단계 실행 요청')
     def begin(self,a):
         c=self.c;state=c.current_state();typ=a['type']
         standalone=c.real and a.get('_fr5_standalone') is True and typ in ('Arm Action','Wait')
@@ -143,6 +147,7 @@ class ConsoleAdapter:
             return self.poll(a,0,0)
         if not c.sim.route and s.task=='완료':return True
         if s.target!=a['goal']:return None
+        decide(self,'미션.주행 시간 초과',c.current_state(),dict(goal=a['goal'],timeout_s=a['timeout_s'],elapsed_s=self.context.get('nav_elapsed'),inactive_s=max(0.,self.context.get('nav_elapsed',0.)-self.context.get('nav_progress_elapsed',0.))),'실제 이동 진전 없이 제한 시간 초과','목적지 패스 전 자율 우회 시도',force=True)
         if c.sim.try_recovery_detour():
             self.context['nav_progress_elapsed']=self.context.get('nav_elapsed',0.)
             self.context['nav_progress_pose']=(s.x,s.y)
@@ -151,6 +156,7 @@ class ConsoleAdapter:
         c.sim.skip_destination('장애물 대응 중 실제 이동 진전 없이 주행 시간 제한 초과 · 자율 우회 통로 없음')
         return self.poll(a,0,0)
 
+    @audited('미션.실행 감시')
     def poll(self,a,dt,elapsed):
         c=self.c;typ=a['type'];state=c.current_state()
         if self.context.get('standalone'):
@@ -178,12 +184,14 @@ class ConsoleAdapter:
             if task in ('RUNNING','WAITING') or status in (1,2):self.context['seen']=True
             node=c.map.nodes[a['goal']];distance=math.hypot(state['x']-node['x'],state['y']-node['y'])
             done=elapsed>.8 and distance<=.2 and abs(float(state.get('speed',0)))<.02 and (task=='COMPLETED' or status==4)
+            decide(self,'REAL.주행 완료 판정',state,dict(goal=a['goal'],distance_m=distance,max_distance_m=.2,speed=state.get('speed'),max_speed=.02,elapsed_s=elapsed,min_elapsed_s=.8,task=task,task_status=status),'목표 위치·정지·제어기 완료 모두 확인' if done else '주행 완료 조건 미충족','단계 완료' if done else '제어기 상태 계속 관측',identity=(done,task,status))
             if done:c.sim.skipped_goals.pop(a['goal'],None)
             return done
         if typ=='Translation':
             if c.real and getattr(c,'studio_motion_error',None):raise ValueError(c.studio_motion_error)
             traveled=math.dist(self.context['start'],(state['x'],state['y']))
             done=traveled>=abs(a['distance_m'])-.005
+            decide(self,'미션.직선 이동',state,dict(traveled_m=traveled,target_m=abs(a['distance_m']),tolerance_m=.005,blocked=state.get('blocked')),'목표 거리 도달' if done else ('장애물 차단' if state.get('blocked') else '목표 거리 미도달'),'조종 해제 · 단계 완료' if done else ('조종 해제 · 대기' if state.get('blocked') else '검증된 조종 유지'),identity=(done,bool(state.get('blocked'))))
             if done:self._motion(False)
             elif not state.get('blocked'):self._motion(True)
             else:self._motion(False)
@@ -193,12 +201,16 @@ class ConsoleAdapter:
             angle=state['theta'];prev=self.context['theta']
             self.context['turn']+=math.atan2(math.sin(angle-prev),math.cos(angle-prev));self.context['theta']=angle
             done=abs(self.context['turn'])>=abs(math.radians(a['angle_deg']))-.005
+            decide(self,'미션.회전 이동',state,dict(turned_rad=self.context['turn'],target_deg=a['angle_deg'],tolerance_rad=.005,blocked=state.get('blocked')),'목표 회전 도달' if done else ('장애물 차단' if state.get('blocked') else '목표 회전 미도달'),'조종 해제 · 단계 완료' if done else ('조종 해제 · 대기' if state.get('blocked') else '검증된 회전 조종 유지'),identity=(done,bool(state.get('blocked'))))
             if done:self._motion(False)
             elif not state.get('blocked'):self._motion(True)
             else:self._motion(False)
             return done
         if typ=='Wait':return elapsed>=a['duration_s']
-        if typ=='Wait DI Trigger':return c._studio_io_value('di',a['channel'])==a['value']
+        if typ=='Wait DI Trigger':
+            value=c._studio_io_value('di',a['channel']);done=value==a['value']
+            decide(self,'미션.DI 대기',state,dict(channel=a['channel'],observed=value,expected=a['value']),'입력 조건 일치' if done else '입력 조건 불일치','단계 완료' if done else '입력 대기 유지',identity=(a['channel'],value,a['value']))
+            return done
         if typ=='Branch DI':return True
         if typ=='Arm Action':
             if c.real and not self.context.get('standalone'):
@@ -262,7 +274,9 @@ class ConsoleAdapter:
     def branch_target(self,a):
         value=self.c._studio_io_value('di',a['channel'])
         if value is None:raise ValueError('분기에 필요한 DI 상태가 없습니다.')
-        return a['target'] if value==a['value'] else None
+        target=a['target'] if value==a['value'] else None
+        decide(self,'미션.DI 분기',snapshot(self),dict(channel=a['channel'],observed=value,expected=a['value'],target=a['target']),'분기 조건 일치' if target is not None else '분기 조건 불일치','지정 단계 '+str(target)+'로 이동' if target is not None else '다음 단계로 진행',force=True)
+        return target
     def pause(self):
         self._motion(False)
         if not self.c.real and 'shared_arm' in self.context and not self.context.get('arm_wait'):self.context['shared_arm'].state='PAUSED'
@@ -904,6 +918,9 @@ class StudioMixin(FairinoUIMixin,ObstacleUIMixin):
     def _studio_charge_tick(self,now):
         runner=self.studio_runner;cfg=self.studio_config['auto_charge'];state=self.current_state()
         phase=self._studio_real_charge_phase
+        if phase=='IDLE' and cfg['enabled']:
+            eligible=not getattr(self,'studio_charge_inhibit',False) and self.connected and self.control_enabled and runner.status=='RUNNING' and not runner.entered and float(state.get('battery',100))<=cfg['low'] and abs(float(state.get('speed',0)))<=.02
+            decide(self,'REAL.충전 시작 조건',state,dict(enabled=cfg['enabled'],inhibit=getattr(self,'studio_charge_inhibit',False),connected=self.connected,control_enabled=self.control_enabled,mission_status=runner.status,step_entered=runner.entered,battery=state.get('battery'),low=cfg['low'],max_speed=.02),'충전 시작 조건 충족' if eligible else '충전 시작 조건 미충족','충전 노드 선택 검토' if eligible else '충전 개입 보류',identity=(eligible,runner.status,runner.entered,getattr(self,'studio_charge_inhibit',False)))
         if phase=='IDLE':
             if not cfg['enabled'] or getattr(self,'studio_charge_inhibit',False) or not self.connected or not self.control_enabled:return False
             if not runner.active or runner.status!='RUNNING' or runner.entered:return False
@@ -912,21 +929,28 @@ class StudioMixin(FairinoUIMixin,ObstacleUIMixin):
             docks=[(math.hypot(n['x']-state['x'],n['y']-state['y']),key) for key,n in self.map.nodes.items()
                    if key in self.robot_stations and (n.get('kind')=='dock' or 'charge' in str(n.get('className','')).lower() or key.upper().startswith('CP'))]
             if not docks:
+                decide(self,'REAL.자동 충전',state,dict(battery=state.get('battery'),low=cfg['low'],docks=docks),'실기 Stations에 충전 노드 없음','충전 미션 실패 처리',force=True)
                 runner.error='자동 충전: 로봇에서 조회된 충전 노드가 없습니다.';runner.status='FAILED';return False
             goal=min(docks)[1];self._studio_real_charge_saved=goal
+            decide(self,'REAL.자동 충전',state,dict(battery=state.get('battery'),low=cfg['low'],candidates=docks,selected=goal,max_speed=.02),'저전압 · 정지 상태 · 조회된 가까운 충전소 선택','충전소 이동 요청',force=True)
             self.send_command('navigate',self._station_nav_payload(self.map.nodes[goal]))
             self._studio_real_charge_phase='TO_DOCK';self._studio_real_charge_at=now
             self.log('CHARGE','자동 충전 이동 → '+goal);return True
         if not self.connected or not self.control_enabled or now-self.last_state>3:
+            decide(self,'REAL.자동 충전',state,dict(connected=self.connected,control_enabled=self.control_enabled,state_age_s=now-self.last_state,max_age_s=3),'충전 중 연결/제어권/상태 최신성 상실','충전 실패 처리',force=True)
             runner.error='자동 충전 중 연결/제어권 소실';runner.status='FAILED';self._studio_real_charge_phase='IDLE';return False
         if state.get('task') in ('FAILED','CANCELED'):
+            decide(self,'REAL.자동 충전',state,dict(task=state.get('task')),'제어기 충전 주행 실패/취소','충전 실패 처리',force=True)
             runner.error='충전 이동 실패: '+str(state.get('task'));runner.status='FAILED';self._studio_real_charge_phase='IDLE';return False
         if phase=='TO_DOCK' and state.get('charging') is True:
             self._studio_real_charge_phase='CHARGING';self._studio_real_charge_at=now
+            decide(self,'REAL.자동 충전',state,dict(charging=state.get('charging')),'제어기 charging 확인','충전 단계 전환',force=True)
             self.log('CHARGE','실기 charging 확인')
         elif phase=='CHARGING' and float(state.get('battery',0))>=cfg['high']:
+            decide(self,'REAL.자동 충전',state,dict(battery=state.get('battery'),high=cfg['high']),'충전 상한 도달','충전 단계 종료 · 다음 미션 재개',force=True)
             self._studio_real_charge_phase='IDLE';self.log('CHARGE','충전 완료 · 다음 미션 단계 재개');return False
         if now-self._studio_real_charge_at>(180 if phase=='TO_DOCK' else 3600):
+            decide(self,'REAL.자동 충전',state,dict(phase=phase,elapsed_s=now-self._studio_real_charge_at,timeout_s=180 if phase=='TO_DOCK' else 3600),'충전 이동/충전 제한 시간 초과','실패 처리 · 취소/정지 요청',force=True)
             runner.error='충전 이동/충전 확인 시간 초과';runner.status='FAILED';runner.adapter.cancel()
             self._studio_real_charge_phase='IDLE';return False
         return True

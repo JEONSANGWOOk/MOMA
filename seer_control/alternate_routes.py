@@ -105,5 +105,5 @@ def alternate_route(model,start,goal,a,b,reference,radius,include_dynamic=False,
                         options.append((score,anchor,prefix,result['nodes']))
                 if options:break
     if not options:return None
-    _,anchor,prefix,nodes=min(options)
-    return dict(anchor=anchor,prefix=prefix,nodes=nodes,reduced_margin=not clear(prefix),checked_edges=sum(len(edges) for edges in original.values()),anchor_candidates=len(anchors))
+    selected_score,anchor,prefix,nodes=min(options)
+    return dict(anchor=anchor,prefix=prefix,nodes=nodes,selection_policy='risk_adjusted_time' if optimize else 'distance',score=selected_score,candidate_count=len(options),reduced_margin=not clear(prefix),checked_edges=sum(len(edges) for edges in original.values()),anchor_candidates=len(anchors))

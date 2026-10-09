@@ -1,4 +1,5 @@
 """World-position temporal classification; SIM observations, no type-flag shortcut."""
+from .decision_log import decide, audited, snapshot
 import math
 from collections import deque
 from types import SimpleNamespace
@@ -47,6 +48,8 @@ class ObstacleTracker:
   for key,record in list(self.detections.items()):
    if now-record['last_seen']>self.retain_s:del self.detections[key]
    elif now-record['last_seen']>=self.lost_s:record['state']='미관측'
+   if key in self.detections:
+    decide(self,'SIM.장애물 추적',dict(track=key,position=[record['x'],record['y']]),dict(last_seen_age=now-record['last_seen'],lost_s=self.lost_s,retain_s=self.retain_s),'추적 상태: '+record['state'],'관측 유지' if record['state']=='추적 중' else '미관측 표시 · 보관 시간까지 유지',key=key,identity=record['state'])
  def records(self):return list(self.detections.values())
 
  def update(self,obstacles,dt,moving_speed=.08,static_s=2.):
@@ -64,6 +67,7 @@ class ObstacleTracker:
     t['still_since']=self.time;t['origin']=p
    elif self.time-t['still_since']>=static_s:t['kind']='static'
    if self.is_known(obs):t['kind']='static';t['speed']=0.;speed=0.
+   decide(self,'SIM.관측 분류',dict(obstacle=obs.get('id',obs.get('_track_id',str(key))),position=p,map_fixed=self.is_known(obs)),dict(sample_s=elapsed,displacement_m=distance,observed_speed=speed,moving_threshold=moving_speed,min_move_m=.025,min_sample_s=.3,stationary_s=self.time-t['still_since'],static_threshold_s=static_s),'분류: '+t['kind'],'분류 결과를 장애물 대응 정책에 제공',key=str(key),identity=t['kind'])
    obs['_classification']=t['kind'];obs['_observed_speed']=round(speed,3)
    origin=samples[0][1]
    obs['_observed_velocity']=((p[0]-origin[0])/elapsed,(p[1]-origin[1])/elapsed) if elapsed>=.3 and not self.is_known(obs) else (0.,0.)

@@ -1,3 +1,4 @@
+from .decision_log import decide, audited, snapshot
 """Push-to-talk / text commands: validated plans feed existing mission adapters."""
 import copy,json,math,queue,tempfile,threading,time
 from pathlib import Path
@@ -160,6 +161,7 @@ class VoiceMixin:
   self._voice_job(work,'command')
  def _voice_accept(self,command,source):
   _,ops=self._voice_operations();command=validate_command(command,self.map.nodes,ops,getattr(self,'voice_gui',None))
+  decide(self,'음성.명령 해석',snapshot(self),dict(source=source,command=command,valid_s=30,real=self.real),'등록 명령/대상 검증 통과','명령 미리보기 생성 · 실행 허용 조건 별도 확인',force=True)
   self.voice_pending=(command,self._voice_context(),time.monotonic()+30)
   self.voice_preview.configure(state='normal');self.voice_preview.delete('1.0','end');self.voice_preview.insert('1.0',source+'\n'+(self.voice_gui.describe(command) if command['action']=='gui' else '운영 미션: '+command['mission']+' → '+command['destination']+' · '+str(command['repeat'])+'회' if command['action']=='operator_order' else describe(command,self.real)));self.voice_preview.configure(state='disabled')
   self.voice_status.set(source+' · 명령 미리보기 준비 (30초 유효)')
@@ -170,6 +172,7 @@ class VoiceMixin:
    if command['operation']=='read':return self._voice_execute()
    return
   if not self.real and self.voice_auto_sim.get():self._voice_execute()
+ @audited('음성.실행 검증', '유효시간·모드·권한 검증 후 명령 전달')
  def _voice_execute(self):
   if not self.voice_pending:raise ValueError('실행할 명령을 먼저 해석하세요.')
   command,context,expires=self.voice_pending
@@ -185,6 +188,7 @@ class VoiceMixin:
   if self.voice_talk.get() and not self.voice_recorder.handle:
    if self.voice_tts and self.voice_tts.poll() is None:self.voice_tts.terminate()
    self.voice_tts=speak(text);self.voice_tts.stdin.write(text);self.voice_tts.stdin.close()
+ @audited('음성.명령 검증')
  def _voice_dispatch(self,command):
   _,ops=self._voice_operations();command=validate_command(command,self.map.nodes,ops,getattr(self,'voice_gui',None));action=command['action']
   if getattr(self,'role_active','개발자')=='사용자' and action=='arm_action':raise ValueError('사용자는 등록된 운영 미션으로 팔 작업을 실행하세요.')

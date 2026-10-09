@@ -1,5 +1,6 @@
 """UI-independent editing, geometry, calibration, recording and action execution."""
 from .mission_report import MissionReport
+from .decision_log import decide, snapshot, journal_for
 import copy
 import json
 import math
@@ -216,6 +217,8 @@ class MissionRunner:
     def tick(self,now,dt):
         if self.status!='RUNNING':return
         a=self.actions[self.index]
+        journal=journal_for(self.adapter)
+        if journal:journal.bind(journal.context['backend'],self.report,self.cycle+1,self.index+1)
         if self.report:self.report.seconds+=max(0.,dt)
         try:
             if not self.entered:
@@ -232,6 +235,7 @@ class MissionRunner:
                     timeout_elapsed=0. if self.dwell_until is not None else measured
                     self.inactive_elapsed=timeout_elapsed
             if timeout_elapsed>a['timeout_s']:
+                decide(self.adapter,'미션.제한 시간',snapshot(self.adapter),dict(type=a['type'],elapsed_s=self.elapsed,timeout_elapsed_s=timeout_elapsed,timeout_s=a['timeout_s']),'제한 시간 초과','복구 처리 검토 · 불가 시 단계 실패',force=True)
                 handler=getattr(type(self.adapter),'navigation_timeout_result',None)
                 if handler:timed_result=handler(self.adapter,a)
                 if not timed_result:raise TimeoutError(f"{self.index+1}단계 {a['type']} 시간 초과")
@@ -243,7 +247,10 @@ class MissionRunner:
             else:
                 done=self.adapter.poll(a,dt,self.elapsed)
             skipped=isinstance(done,dict) and done.get('skip') is True
-            if done and not skipped and self.dwell_until is None and a.get('delay_ms',0):self.dwell_until=now+a['delay_ms']/1000.;return
+            if done and not skipped and self.dwell_until is None and a.get('delay_ms',0):
+                decide(self.adapter,'미션.완료 후 대기',snapshot(self.adapter),dict(delay_ms=a['delay_ms']),'완료 후 설정 지연 필요','다음 단계 전환 보류',force=True)
+                self.dwell_until=now+a['delay_ms']/1000.;return
+            decide(self.adapter,'미션.단계 완료',snapshot(self.adapter),dict(type=a['type'],target=a.get('goal',a.get('operation')),elapsed_s=self.elapsed,timeout_s=a['timeout_s'],result=done),'목적지 패스' if skipped else ('완료 조건 충족' if done else '완료 조건 대기'),'후속 작업 생략' if skipped else ('다음 단계 진행' if done else '현 단계 유지'),identity=(a['type'],bool(done),skipped))
             if not done:return
             skipped=isinstance(done,dict) and done.get('skip') is True
             a['status']='패스' if skipped else '완료'
@@ -255,6 +262,7 @@ class MissionRunner:
             self.index=target-1 if target is not None else self.index+1
             if skipped:
                 while self.index<len(self.actions) and self.actions[self.index]['type']!='Path Nav':
+                    decide(self.adapter,'미션.후속 작업 생략',snapshot(self.adapter),dict(goal=done['goal'],reason=done['reason'],omitted_type=self.actions[self.index]['type'],omitted_step=self.index+1),'작업 장소에 도달하지 못함','해당 후속 작업 실행 생략',force=True)
                     self.actions[self.index]['status']='목적지 미도착으로 생략'
                     self.report.add(self.cycle,self.index,'생략',self.actions[self.index].get('operation',self.actions[self.index]['type']),'목적지 미도착')
                     self.index+=1
@@ -262,10 +270,12 @@ class MissionRunner:
             if self.index>=len(self.actions):
                 self.report.add(self.cycle,self.index-1,'루프 완료')
                 self.cycle+=1;self.report.completed_loops=self.cycle
+                decide(self.adapter,'미션.반복 판단',snapshot(self.adapter),dict(completed_loops=self.cycle,repeat=self.repeat),'반복 횟수 충족' if self.repeat and self.cycle>=self.repeat else '반복 실행 필요','미션 종료' if self.repeat and self.cycle>=self.repeat else '첫 단계로 돌아가 다음 루프 실행',force=True)
                 if self.repeat and self.cycle>=self.repeat:self.status='COMPLETED';self.report.finish(self.status);return
                 self.index=0
                 for item in self.actions:item['status']='대기'
         except Exception as e:
+            decide(self.adapter,'미션.실패 처리',snapshot(self.adapter),dict(type=a['type'],error=str(e),elapsed_s=self.elapsed),'미션 실행 조건/장치 응답 실패','미션 실패 기록 · 취소/정지 요청',force=True)
             self.error=str(e);a['status']='실패';self.status='FAILED'
             self.report.add(self.cycle,self.index,'실패',a.get('goal',a.get('operation',a['type'])),self.error,self.elapsed)
             self.report.finish(self.status)

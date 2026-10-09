@@ -1,4 +1,5 @@
 """Offline engineering gripper/contact model (SI units), never hardware I/O."""
+from .decision_log import decide, audited, snapshot
 import copy,math
 from .geometry3d import box,cylinder,transform,multiply,point,identity
 
@@ -99,12 +100,16 @@ class ArmPhysics:
   for i in range(1,count+1):
    q=[a+(b-a)*i/count for a,b in zip(source,target)];risks,near=self.contacts(q)
    if risks:
+    decide(self,'SIM.팔 연속 충돌 검사',dict(source=source,target=target,sample_q=q),dict(contacts=risks,stop_on_collision=self.config['stop_on_collision']),'이동 중간 자세에서 충돌 예상','이동 차단' if self.config['stop_on_collision'] else '설정에 따라 경고 후 이동 허용',identity=risks)
     self.risk=risks;self.blocked=risks;self.forecast_q=list(q);self.future_risk=risks;self.events.append(dict(event='충돌 차단',detail=str(risks)))
     if self.config['stop_on_collision']:raise ValueError('충돌 예상: '+', '.join(a+' ↔ '+b for a,b in risks)+' · 이동 차단')
     return
+  decide(self,'SIM.팔 연속 충돌 검사',dict(source=source,target=target),dict(samples=count),'중간 자세 충돌 없음','검증된 관절 이동 허용')
   self.blocked=[]
  def forecast(self,q):
-  self.future_risk,_=self.contacts(q);self.forecast_q=list(q) if self.future_risk else None
+  self.future_risk,_=self.contacts(q);
+  decide(self,'SIM.팔 미래 충돌',dict(forecast_q=q),dict(contacts=self.future_risk),'예상 자세 충돌 위험' if self.future_risk else '예상 자세 충돌 없음','위험 표시 · 실제 이동은 연속 충돌 검사로 결정' if self.future_risk else '주행 예측 계속',identity=self.future_risk)
+  self.forecast_q=list(q) if self.future_risk else None
  def _candidate(self,q):
   inv=inverse(self.tcp(q));c=self.config;tip=.125 if c['kind']=='vacuum' else .095
   for o in self.objects:
@@ -121,6 +126,7 @@ class ArmPhysics:
   return None,None
  def release(self,reason='해제'):
   if self.held:
+   decide(self,'SIM.그리퍼 해제',dict(object=self.held['name']),dict(reason=reason,force_n=self.force,pressure_pa=self.pressure),'파지 해제 조건 발생','물체 해제 · 낙하 모델 적용',force=True)
    self.held['state']='해제 / 낙하';self.held['velocity']=list(self.last_velocity);self.events.append(dict(event=reason,object=self.held['name']));self.held=None;self.relative=None
  def advance(self,q,io,dt):
   dt=max(0,min(float(dt),.15));self.time+=dt;c=self.config;kind=c['kind'];on=bool(io[c['do_bank']].get(c['do_channel'],0));t=self.tcp(q);pos=point(t,(0,0,0))
@@ -143,6 +149,8 @@ class ArmPhysics:
    self.force=self.pressure*math.pi*(c['cup_diameter_m']/2)**2;ready=on and self.pressure>target*.7 and seal
   else:self.force=0;ready=False
   if not on and kind!='vacuum':self.release('I/O OFF 해제')
+  if kind!='none':
+   decide(self,'SIM.그리퍼 파지',dict(kind=kind,io_on=on,candidate=candidate['name'] if candidate else None,held=self.held['name'] if self.held else None),dict(ready=ready,force_n=self.force,pressure_pa=self.pressure,opening_m=self.opening),'파지 조건 충족' if candidate and ready else '파지 조건 미충족','물체 파지' if self.held is None and candidate and ready else ('파지 유지' if self.held else '파지 대기'),identity=(on,candidate['name'] if candidate else None,ready,self.held is not None))
   if self.held is None and candidate and ready:
    self.held=candidate;self.relative=multiply(inverse(t),candidate['matrix']);candidate['state']='파지';self.events.append(dict(event='파지',object=candidate['name']))
   if self.held:
@@ -152,6 +160,7 @@ class ArmPhysics:
    if kind=='vacuum':
     load=[o['mass']*(self.acceleration[i]+(9.81 if i==2 else 0))*c['safety_factor'] for i in range(3)];axis=tuple(t[i][2] for i in range(3));normal=abs(dot(load,axis));shear=math.sqrt(max(0,dot(load,load)-normal*normal))
     overload=normal>self.force or shear>self.force*min(c['friction'],o['friction'])
+   decide(self,'SIM.그리퍼 하중',dict(object=o['name'],mass_kg=o['mass']),dict(required_n=required,capacity_n=capacity,overload=overload,tool_mass_kg=c['tool_mass_kg'],payload_limit_kg=c['payload_limit_kg'],acceleration=self.acceleration),'파지력/허용하중 초과' if overload or o['mass']+c['tool_mass_kg']>c['payload_limit_kg'] else '파지력/하중 조건 충족','물체 해제' if overload or o['mass']+c['tool_mass_kg']>c['payload_limit_kg'] else '파지 유지',identity=(o['name'],overload,o['mass']+c['tool_mass_kg']>c['payload_limit_kg']))
    if overload or o['mass']+c['tool_mass_kg']>c['payload_limit_kg']:self.release('I/O OFF 해제' if not on else '파지력/가속도/허용하중 초과')
    else:o['matrix']=multiply(t,self.relative)
   if kind!='none':io[c['di_bank']][c['di_channel']]=int(self.held is not None)

@@ -1,4 +1,5 @@
 """Observed-state-only BLOCKED recovery. Physical footprint is never reduced."""
+from .decision_log import decide, audited, snapshot
 import math
 from .studio_core import collision_reason,path_clearance,zone_limits
 from .avoidance import detour,rejoin_detour,clear_segment
@@ -13,6 +14,7 @@ class BlockedRecovery:
   return self.enabled and sim.obstacle_policy in ('avoid','adaptive','auto','reroute') and not sim._obstacle_latched and not sim._manual_stop_reason and bool(sim.route) and not(sim.obstacle_policy=='auto' and sim._auto_block and (sim._auto_block[-1] in ('wait','stop') or sim._auto_block[-1].startswith('wait_') and sim._avoid_time-sim._auto_block_at<sim.auto_wait_s))
  def radius(self,sim):return max(sim.collision_radius,sim.map.robot_model['radius'],sim.applied_limits.get('radius',0))
  def log(self,sim,event):
+  decide(sim,'SIM.BLOCKED 복구',sim.status(),dict(phase=self.phase,reason=self.reason,remaining_reverse_m=self.remaining,back_limit_m=self.back_limit,radius=self.radius(sim),attempts=self.attempts,priority=self.priority),'복구 단계 판단',event,force=True)
   self.events.append(dict(time_s=round(sim._avoid_time,2),priority=self.priority,event=event));self.events=self.events[-200:];sim.avoidance_status=event
  def begin(self,sim,reason):
   if self.active:return True

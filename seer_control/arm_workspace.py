@@ -98,7 +98,7 @@ class ArmWorkspaceMixin(ArmSceneMixin):
    asset=RobotDescription.load(selected)
   except Exception as e:
    self.log('ERROR','로봇팔 개발 설정 복원 실패: '+str(e));asset=RobotDescription.load(self._spatial_demo_path());cfg=profile()
-  self.arm_dev_config=cfg;self.arm_dev_urdf=selected;self.arm_dev_sim=ArmSimulator(asset)
+  self.arm_dev_config=cfg;self.arm_dev_urdf=selected;self.arm_dev_sim=ArmSimulator(asset,decision_journal=getattr(self,'__dict__',{}).get('decision_journal'))
   try:self.arm_dev_sim.physics.restore(saved.get('physics',{}))
   except Exception as e:self.log('WARN','물리 장면 복원 실패: '+str(e))
   initial=saved.get('joints_rad',[math.radians(v) for v in [0,-90,90,-90,-90,0]] if len(asset.movable())==6 else [0]*len(asset.movable()))
@@ -239,12 +239,12 @@ class ArmWorkspaceMixin(ArmSceneMixin):
   if self.arm_dev_sim.state in ('RUNNING','PAUSED'):raise ValueError('재생 정지 후 모델을 변경하세요.')
   path=filedialog.askopenfilename(filetypes=[('URDF','*.urdf')])
   if not path:return
-  asset=RobotDescription.load(path);scene=self.arm_dev_sim.physics.snapshot();self.arm_dev_sim=ArmSimulator(asset);self.arm_dev_sim.physics.restore(scene);self.arm_dev_canvas.sim=self.arm_dev_sim;self.arm_dev_urdf=path;self._aw_joint_controls();self.arm_dev_canvas.fit()
+  asset=RobotDescription.load(path);scene=self.arm_dev_sim.physics.snapshot();self.arm_dev_sim=ArmSimulator(asset,decision_journal=getattr(self,'__dict__',{}).get('decision_journal'));self.arm_dev_sim.physics.restore(scene);self.arm_dev_canvas.sim=self.arm_dev_sim;self.arm_dev_urdf=path;self._aw_joint_controls();self.arm_dev_canvas.fit()
   if asset.warnings:self.log('WARN','URDF: '+'; '.join(asset.warnings))
  def _aw_use_official(self,path):
   if self.arm_dev_sim.state in ('RUNNING','PAUSED') or self.studio_runner.active:raise ValueError('현재 작업을 정지한 뒤 공식 모델을 적용하세요.')
   asset=RobotDescription.load(path);previous=list(self.arm_dev_sim.q);scene=self.arm_dev_sim.physics.snapshot()
-  self.arm_dev_sim=ArmSimulator(asset);self.arm_dev_sim.physics.restore(scene);self.arm_dev_sim.q=self.arm_dev_sim.kin.clamp(previous if len(previous)==6 else [0]*6)
+  self.arm_dev_sim=ArmSimulator(asset,decision_journal=getattr(self,'__dict__',{}).get('decision_journal'));self.arm_dev_sim.physics.restore(scene);self.arm_dev_sim.q=self.arm_dev_sim.kin.clamp(previous if len(previous)==6 else [0]*6)
   self.arm_dev_canvas.sim=self.arm_dev_sim;self.arm_dev_urdf=str(path);self._aw_joint_controls();self.arm_dev_display_q=None;self.arm_dev_canvas.fit();self._aw_save()
   # Apply the same model in the AMR + arm viewer without transmitting hardware commands.
   old_joints=self.world3d.arm_asset.movable();old_values=self.sim.arm.get('joint_positions',{})
@@ -279,7 +279,7 @@ class ArmWorkspaceMixin(ArmSceneMixin):
   win=tk.Toplevel(self);win.title('로봇팔 SIM 실행 이력');self._fit_dialog(win,650,400);box=tk.Text(win,wrap='word');box.pack(fill='both',expand=True);box.insert('1.0',json.dumps(dict(status=self.arm_dev_sim.state,error=self.arm_dev_sim.error,events=self.arm_dev_sim.events,physics_events=self.arm_dev_sim.physics.events),ensure_ascii=False,indent=2));box.configure(state='disabled')
  def _aw_adopt_loaded_asset(self,asset,path):
   if self.arm_dev_sim.state in ('RUNNING','PAUSED'):raise ValueError('팔 재생을 정지한 뒤 모델을 변경하세요.')
-  previous=list(self.arm_dev_sim.q);scene=self.arm_dev_sim.physics.snapshot();sim=ArmSimulator(asset)
+  previous=list(self.arm_dev_sim.q);scene=self.arm_dev_sim.physics.snapshot();sim=ArmSimulator(asset,decision_journal=getattr(self,'__dict__',{}).get('decision_journal'))
   sim.physics.restore(scene);sim.q=sim.kin.clamp(previous if len(previous)==len(sim.kin.joints) else [0]*len(sim.kin.joints))
   self.arm_dev_sim=sim;self.arm_dev_canvas.sim=sim;self.arm_dev_urdf=str(path);self.arm_dev_display_q=None
   self._aw_joint_controls();self._aw_sync_main();self.arm_dev_canvas.fit();self._aw_save()

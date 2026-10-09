@@ -1,5 +1,6 @@
 """Independent kinematic arm simulator. No network or hardware calls."""
 import copy
+from .decision_log import decide, audited, snapshot
 import math
 from .geometry3d import transform
 from .fairino_api import vector
@@ -70,17 +71,20 @@ class ArmKinematics:
   raise ValueError('TCP 목표의 역기구학을 찾지 못했습니다. 도달 범위·자세·관절 한계를 확인하세요.')
 
 class ArmSimulator:
- def __init__(self,asset):
+ def __init__(self,asset,decision_journal=None):
+  self.decision_journal=decision_journal
   self.kin=ArmKinematics(asset);self.q=self.kin.clamp([0.]*len(self.kin.joints));self.state='IDLE'
   self.actions=[];self.index=0;self.elapsed=0.;self.entered=False;self.path=[];self.path_time=0.
-  self.physics=ArmPhysics(self.kin)
+  self.physics=ArmPhysics(self.kin);self.physics.decision_journal=decision_journal
   self.io={'DO':{},'ToolDO':{},'DI':{},'ToolDI':{}};self.events=[];self.error='';self.trail=[]
+ @audited('SIM.팔 관절 입력', '관절 범위 및 연속 경로 충돌 검증 후 관절 적용')
  def set_joints(self,q):
   if self.state in ('RUNNING','PAUSED'):raise ValueError('재생을 정지한 뒤 관절을 조절하세요.')
   checked=self.kin.clamp(q)
   if any(abs(a-b)>1e-7 for a,b in zip(q,checked)):raise ValueError('URDF 관절 범위를 벗어났습니다.')
   self.physics.check_motion(self.q,checked)
   self.q=checked
+ @audited('SIM.팔 실행 요청', '등록 작업 검증 후 팔 프로그램 시작')
  def start(self,config,program=None,operation=None):
   from .fairino_api import validate
   validate(config)
@@ -95,6 +99,7 @@ class ArmSimulator:
  def stop(self):
   if self.state in ('RUNNING','PAUSED'):self.events.append(dict(step=self.index+1,result='취소'))
   self.state='CANCELED';self.path=[];self.entered=False
+ @audited('SIM.팔 단계 진입', '작업 종류·좌표계·관절 한계·역기구학 검증 후 단계 실행')
  def _enter(self,a):
   self.elapsed=0.;self.entered=True;self.path=[];self.path_time=0.
   if a['type']=='Wait':return
@@ -139,12 +144,16 @@ class ArmSimulator:
      self.q=target;done=self.elapsed>=self.path_time
      p=tuple(v/1000 for v in self.kin.pose(self.q)[:3])
      if not self.trail or math.dist(p,self.trail[-1])>.002:self.trail.append(p);self.trail=self.trail[-800:]
-    elif method.startswith('Wait'):done=self.io['ToolDI' if method=='WaitToolDI' else 'DI'].get(spec['id'],0)==spec['status']
+    elif method.startswith('Wait'):
+     value=self.io['ToolDI' if method=='WaitToolDI' else 'DI'].get(spec['id'],0);done=value==spec['status']
+     decide(self,'SIM.팔 IO 판단',snapshot(self),dict(method=method,channel=spec['id'],observed=value,expected=spec['status']),'입력 일치' if done else '입력 불일치','팔 단계 완료' if done else '입력 대기 유지',identity=(method,spec['id'],value,spec['status']))
     else:done=True
+   decide(self,'SIM.팔 완료 판정',snapshot(self),dict(type=a['type'],operation=a.get('operation'),elapsed_s=self.elapsed,path_time_s=self.path_time,timeout_s=a.get('timeout_s',60)),'완료 조건 충족' if done else '실행 중','다음 팔 단계 진행' if done else '현재 팔 단계 유지',identity=(self.index,done))
    if done:
     self.events.append(dict(step=self.index+1,operation=a.get('operation','대기'),result='성공',seconds=round(self.elapsed,3)))
     self.index+=1;self.entered=False
     if self.index>=len(self.actions):self.state='COMPLETED'
   except Exception as error:
+   decide(self,'SIM.팔 실패 처리',snapshot(self),dict(error=str(error),operation=a.get('operation'),timeout_s=a.get('timeout_s',60)),'충돌/시간/장치 조건 실패','팔 실행 실패 · 추가 관절 이동 중단',force=True)
    self.error=str(error);self.state='FAILED';self.events.append(dict(step=self.index+1,operation=a.get('operation','대기'),result='실패',detail=self.error))
   finally:self.physics.advance(self.q,self.io,dt)

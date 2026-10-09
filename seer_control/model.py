@@ -1,6 +1,7 @@
 """UI-independent map and deterministic simulated robot. Units: m, rad, s."""
 import heapq
 import json
+from .decision_log import decide, audited, snapshot
 import math
 from dataclasses import dataclass, asdict
 from pathlib import Path
@@ -152,8 +153,10 @@ class State:
 
 
 class Simulator:
-    def __init__(self, map_model):
+    def __init__(self, map_model, decision_journal=None):
+        self.decision_journal=decision_journal
         self.map = map_model
+        self.map.decision_journal=decision_journal
         first = next(iter(map_model.nodes.values()))
         self.state = State(x=first['x'], y=first['y'], last_node=first['id'])
         self.route = []
@@ -166,7 +169,7 @@ class Simulator:
         self.detected_obstacle=''
         self.obstacle_policy='wait'
         from .obstacle_tracking import ObstacleTracker,DEFAULTS
-        self.obstacle_tracker=ObstacleTracker();self.obstacle_tracker.register_map(self.map.obstacles);self.auto_scenarios=dict(DEFAULTS)
+        self.obstacle_tracker=ObstacleTracker();self.obstacle_tracker.decision_journal=decision_journal;self.obstacle_tracker.register_map(self.map.obstacles);self.auto_scenarios=dict(DEFAULTS)
         self.auto_wait_s=5.;self.auto_moving_speed=.08;self.auto_static_s=2.
         self.auto_obstacle_status='관측 대기';self._auto_block=None;self._auto_block_at=0.
         self.prefer_graph_routes=True;self._route_scan_next=0.
@@ -195,6 +198,7 @@ class Simulator:
     def status(self):
         return asdict(self.state)
 
+    @audited('SIM.주행 요청', '계획 경로로 주행 시작')
     def navigate(self, goal, route_nodes=None):
         self.blocked_recovery.new_goal();self._recovery_narrow=False
         self._ready()
@@ -221,6 +225,7 @@ class Simulator:
             if any(a not in graph or not any(nxt==b for nxt,_,_ in graph[a]) for a,b in zip(planned,planned[1:])):
                 raise ValueError('계획 경로에 연결되지 않은 구간이 있습니다.')
         at_start=len(planned)>1 and math.hypot(s.x-self.map.nodes[start]['x'],s.y-self.map.nodes[start]['y'])<1e-6
+        decide(self,'SIM.경로 선택',self.status(),dict(start=start,goal=goal,nodes=planned,provided=route_nodes is not None,nominal_connected=not no_nominal,policy=self.obstacle_policy),'연결 경로 선택' if not no_nominal else '연결 경로 없음','경로 적용' if not no_nominal else '대체 경로 탐색 대기',force=True)
         self.route = planned[1:] if at_start else planned
         self._waypoints = []
         self._segment_start = start if at_start else None
@@ -248,6 +253,7 @@ class Simulator:
         self._reroute_forced=False;self._skipped_context=None
         self._reroute_block_at=None;self._reroute_failures=0
         self.avoidance_status='다른 연결 경로 탐색 완료 · '+ ' → '.join(plan['nodes'])
+        decide(self,'SIM.대체 경로',self.status(),dict(plan=plan,reason=self.detected_obstacle,radius=self.applied_limits.get('radius')),'연결 가능한 대체 경로 발견','대체 경로 적용 · 주행 재개',force=True)
 
     def _try_line_bypass(self,node,radius):
         """Keep the nominal line; replace only its currently obstructed interval."""
@@ -256,12 +262,15 @@ class Simulator:
         if len(reference)<2 or math.dist(reference[-1],(node['x'],node['y']))>1e-5:return False
         points=rejoin_detour(self.map,(self.state.x,self.state.y),reference,radius,
                             safety_margin=.01 if self._recovery_narrow else .04,risk_aware=True)
-        if not points:return False
+        if not points:
+            decide(self,'SIM.국소 우회',self.status(),dict(goal=node['id'],radius=radius,reason=self.block_reason or self.detected_obstacle),'충돌 없는 국소 경로 없음','대기 또는 다음 복구 전략 검토',key='search')
+            return False
         self._waypoints=points[1:];self._local_avoidance_active=True;self._segment_reverse=False
         self._velocity=0.;self._arrival_align=False
         self.state.blocked=False;self._collision_blocked=False;self.block_reason=''
         self._reroute_block_at=None;self._reroute_failures=0
         self.avoidance_status='장애물 구간만 우회 → 원래 경로 복귀'
+        decide(self,'SIM.국소 우회',self.status(),dict(points=points,radius=radius),'원래 경로 재합류 가능한 우회 발견','장애물 구간 우회 후 경로 복귀',force=True)
         return True
 
     def _try_local_detour(self,node,radius):
@@ -282,13 +291,17 @@ class Simulator:
             points=rejoin_detour(self.map,(s.x,s.y),reference,radius,safety_margin=0,risk_aware=True)
             rejoined=bool(points)
             if not points:points=detour(self.map,(s.x,s.y),(node['x'],node['y']),radius,safety_margin=0,risk_aware=True)
-        if not points:return False
+        if not points:
+            decide(self,'SIM.국소 우회',self.status(),dict(goal=node['id'],radius=radius,reason=self.block_reason or self.detected_obstacle),'충돌 없는 국소 경로 없음','대기 또는 다음 복구 전략 검토',key='search')
+            return False
         self._local_avoidance_active=True
         self._waypoints=points[1:];self._segment_reverse=False;self._velocity=0.
         self.avoidance_status='우회 후 기존 경로 복귀' if rejoined else '우회 주행'
+        decide(self,'SIM.국소 우회',self.status(),dict(points=points,radius=radius,rejoined=rejoined),'충돌 없는 우회 발견',self.avoidance_status,force=True)
         s.blocked=False;self._collision_blocked=False;self._reroute_block_at=None;self._reroute_failures=0
         return True
 
+    @audited('SIM.최종 복구 탐색')
     def try_recovery_detour(self):
         """Last SIM recovery: search free space before abandoning a graph goal."""
         from .avoidance import detour,rejoin_detour
@@ -332,13 +345,16 @@ class Simulator:
             s.blocked=False;self._collision_blocked=False;self.block_reason=''
             self.avoidance_status='패스 전 자율 우회 · '+('기존 경로 복귀' if rejoined else '자유 공간 탐색 → '+destination)
             self._avoid_next=self._avoid_time+1.
+            decide(self,'SIM.최종 복구 탐색',self.status(),dict(radius=radius,margin=margin,destination=destination,points=points),'자유 공간 경로 발견',self.avoidance_status,force=True)
             return True
         self.avoidance_status='패스 전 자율 우회 탐색 실패 · 충돌 없는 통로 없음'
+        decide(self,'SIM.최종 복구 탐색',self.status(),dict(radius=radius,margins=margins),'연결/국소/자유 공간 우회 실패','안전 정지 · 목적지 패스 검토',force=True)
         return False
 
     def skip_destination(self,reason):
         goal=self.state.target
         if not goal:return
+        decide(self,'SIM.목적지 패스',self.status(),dict(reason=reason,attempts=self._reroute_failures,limit=self.reroute_attempt_limit),'목적지 도달 불가','현재 목표 패스 · 후속 작업 생략 요청',force=True)
         self.skip_result=dict(goal=goal,reason=reason,time_s=round(self._avoid_time,1))
         self.skipped_goals[goal]=dict(self.skip_result)
         self._skipped_context=self._skipped_context or (self._segment_start,self.route[0] if self.route else goal,
@@ -348,6 +364,7 @@ class Simulator:
         self.state.mode='IDLE';self.state.task='도달 불가 · 패스 '+goal
         self.avoidance_status='목적지 패스 · '+goal+' · '+reason
 
+    @audited('SIM.이동 인터록')
     def _ready(self):
         if self.arm['status']=='RUNNING' or self.arm.get('pose')!='SAFE':
             raise ValueError('로봇팔 작업 완료 후 safe_pose가 필요합니다.')
@@ -355,7 +372,9 @@ class Simulator:
             raise ValueError('정지 해제 및 모터 ON이 필요합니다.')
         if self.state.blocked:
             raise ValueError('장애물을 해제하세요.')
+        decide(self,'SIM.이동 인터록',self.status(),dict(arm=self.arm,stopped=self.state.stopped,motor=self.state.motor,blocked=self.state.blocked),'팔 안전 자세·모터·정지·장애물 조건 충족','이동 요청의 경로/속도 검증 진행')
 
+    @audited('SIM.수동 조종')
     def drive(self, v, w):
         from .manual_safety import manual_motion_reason
         # A rejected forward jog must not prevent a checked retreat.
@@ -376,6 +395,7 @@ class Simulator:
             self.avoidance_status='수동 조작 차단 · '+reason
             raise ValueError('수동 조작 차단 · '+reason)
         self.state.blocked=False;self._collision_blocked=False;self.block_reason='';self._manual_stop_reason=''
+        decide(self,'SIM.수동 조종',self.status(),dict(v=v,w=w,max_v=maxv,max_w=maxw,radius=radius,lease_s=.3),'예상 이동 구간 충돌 없음','검증된 수동 속도 적용',identity=(v,w,maxv,maxw))
         self.v, self.w, self.lease = v,w,.3
         self.state.charging = False
         self.state.mode = 'MANUAL'
@@ -396,6 +416,7 @@ class Simulator:
         s.speed, s.target, s.mode, s.task = 0, '', 'STOPPED' if latch else 'IDLE', '취소됨'
         s.stopped = s.stopped or latch
 
+    @audited('SIM.명령', 'SIM 명령 적용')
     def command(self, name):
         s = self.state
         if name == 'stop':
@@ -466,10 +487,12 @@ class Simulator:
             delta=math.atan2(math.sin(heading-s.theta),math.cos(heading-s.theta))
             if enabled(n.get('spin')) and abs(delta)>1e-4:
                 step=self.applied_limits['maxrot']*dt
+                decide(self,'SIM.도착 자세',self.status(),dict(target_heading=heading,delta=delta,maxrot=self.applied_limits['maxrot']),'목표 자세와 차이 있음','제자리 회전으로 정렬')
                 s.theta+=max(-step,min(step,delta));self._arrival_align=True
                 s.speed=0;self._velocity=0
                 return
             s.theta=heading
+        decide(self,'SIM.도착',self.status(),dict(node=n['id'],remaining_nodes=len(self.route),heading=heading),'경유점 도달','다음 구간 진행' if len(self.route)>1 else ('충전 시작' if n['kind']=='dock' else '주행 완료'),force=True)
         self._arrival_align=False
         s.x,s.y,s.last_node=n['x'],n['y'],n['id']
         self.skipped_goals.pop(n['id'],None)
@@ -492,9 +515,14 @@ class Simulator:
                 except ValueError:pass
             if reachable:
                 self._auto_charge_goal=s.target
+                decide(self,'SIM.자동 충전',self.status(),dict(battery=s.battery,low=policy['low'],reachable=reachable),'저전압 · 도달 가능한 최단 충전소 선택','충전소 이동 · 기존 목표 보관',force=True)
                 self.navigate(min(reachable)[1]);policy['phase']='TO_DOCK'
-        elif policy['phase']=='TO_DOCK' and s.charging:policy['phase']='CHARGING'
+            else:decide(self,'SIM.자동 충전',self.status(),dict(battery=s.battery,low=policy['low'],docks=docks),'도달 가능한 충전소 없음','충전 이동 보류')
+        elif policy['phase']=='TO_DOCK' and s.charging:
+            decide(self,'SIM.자동 충전',self.status(),dict(phase=policy['phase']),'충전소 도착 확인','충전 상태 전환',force=True)
+            policy['phase']='CHARGING'
         elif policy['phase']=='CHARGING' and s.battery>=policy['high']:
+            decide(self,'SIM.자동 충전',self.status(),dict(battery=s.battery,high=policy['high']),'충전 상한 도달','충전 종료 · 보관 목표 재개 검토',force=True)
             policy['phase']='IDLE';s.charging=False
             goal=self._auto_charge_goal;self._auto_charge_goal=None
             if goal and goal in self.map.nodes:self.navigate(goal)
@@ -515,8 +543,14 @@ class Simulator:
         self.detected_obstacle=''
         if self._obstacle_latched:
             s.blocked=True;self._velocity=0.;self.v=self.w=self.lease=0.
-            self.avoidance_status='장애물 정지 유지 · 수동 재개 필요';return
+            self.avoidance_status='장애물 정지 유지 · 수동 재개 필요'
+            decide(self,'SIM.정지 유지',self.status(),dict(reason=self.block_reason,policy=self.obstacle_policy),'장애물 정지 래치 활성','정지 유지 · 수동 재개 필요')
+            return
         was_blocked=self._collision_blocked and s.blocked
+        if was_blocked:
+            recovery=self.blocked_recovery
+            allowed=recovery.allowed(self)
+            decide(self,'SIM.BLOCKED 복구 허용',self.status(),dict(enabled=recovery.enabled,policy=self.obstacle_policy,latched=self._obstacle_latched,manual_stop=self._manual_stop_reason,route_available=bool(self.route),auto_scenario=self._auto_block[-1] if self._auto_block else None,auto_elapsed_s=self._avoid_time-self._auto_block_at,auto_wait_s=self.auto_wait_s),'BLOCKED 복구 허용' if allowed else 'BLOCKED 복구 조건 미충족','국소 우회/제한 후진 검토' if allowed else '현재 장애물 정책 유지',identity=(allowed,recovery.enabled,self.obstacle_policy,self._auto_block))
         if self.blocked_recovery.active and self.blocked_recovery.step(self,dt):return
         if was_blocked and self.blocked_recovery.allowed(self):
             if not self._reroute_forced and self._try_local_detour(self.map.nodes[self.route[0]],self.blocked_recovery.radius(self)):return
@@ -525,6 +559,7 @@ class Simulator:
             s.blocked=False;self._collision_blocked=False;self.block_reason=''
         self._charge_tick()
         if s.stopped or not s.motor or s.blocked:
+            decide(self,'SIM.주행 안전',self.status(),dict(stopped=s.stopped,motor=s.motor,blocked=s.blocked,reason=self.block_reason),'이동 허용 조건 불충족','속도/조종 lease 해제 · 안전 정지',identity=(s.stopped,s.motor,s.blocked,self.block_reason))
             self.v = self.w = self.lease = 0
             self._velocity=0
             return
@@ -548,6 +583,7 @@ class Simulator:
                     if key=='maxrot':value=math.radians(value)
                     limits[key]=min(limits[key],value)
             limits=zone_limits(self.map,s.x,s.y,limits);self.applied_limits=limits
+            decide(self,'SIM.주행 제한',self.status(),dict(segment=[self._segment_start,self.route[0]],limits=limits,path_properties=(rec.get('properties') or {}) if rec else {}),'모델·경로·영역 제한 중 안전한 값 선택','속도/가감속/회전/충돌 반경 적용',identity=limits)
             if self._local_avoidance_active and self._avoid_time>=self._rejoin_check_at:
                 self._rejoin_check_at=self._avoid_time+.5
                 reference=getattr(self,'_reference_waypoints',[])
@@ -557,6 +593,7 @@ class Simulator:
                     if merged:
                         self._waypoints=merged[1:];self._local_avoidance_active=False;self._recovery_narrow=False
                         self._velocity=0.;self.avoidance_status='장애물 통과 · 최단 연결로 기존 경로 복귀'
+                        decide(self,'SIM.경로 재합류',self.status(),dict(radius=limits['radius'],points=merged),'기존 경로까지 충돌 없는 연결 발견','최단 연결로 기존 경로 복귀',force=True)
             # An independent progress watchdog also covers repeated heading /
             # collision returns that never reach the normal reroute branch.
             pose=(s.x,s.y,s.theta)
@@ -566,6 +603,7 @@ class Simulator:
                 self._progress_pose=pose;self._progress_at=self._avoid_time
             stall_limit=max(6.,self.auto_wait_s+2.)
             if self.obstacle_policy in ('auto','reroute') and self._avoid_time-self._progress_at>=stall_limit and self._avoid_time>=self._recovery_next:
+                decide(self,'SIM.무진행 감시',self.status(),dict(stalled_s=self._avoid_time-self._progress_at,limit_s=stall_limit,distance_threshold_m=.08,rotation_threshold_rad=.25),'시간 내 이동/회전 진전 부족','자유 공간 복구 경로 재탐색',force=True)
                 self._recovery_next=self._avoid_time+3.
                 if self.try_recovery_detour():
                     self._progress_at=self._avoid_time
@@ -594,6 +632,7 @@ class Simulator:
                     _,kind,_,obs=self.obstacle_tracker.blocker(self.map,(s.x,s.y),remaining,limits['radius'],horizon,ahead_reason)
                     scenario=(obs or {}).get('auto_scenarios',{}).get(kind,self.auto_scenarios[kind])
                     permit=scenario not in ('wait','stop')
+                decide(self,'SIM.전방 전체 경로 검사',self.status(),dict(reason=ahead_reason,horizon=horizon,radius=limits['radius'],policy=self.obstacle_policy,permit=permit),'장애물 감지' if ahead_reason else '전방 경로 통과 가능','대체 경로 탐색' if ahead_reason and permit else ('분류 정책에 따라 대기' if ahead_reason else '기존 경로 유지'),identity=(ahead_reason,permit))
                 if ahead_reason and permit:
                     if self.prefer_line_rejoin and not self._local_avoidance_active and not self._reroute_forced and self._try_line_bypass(n,limits['radius']):return
                     from .alternate_routes import alternate_route
@@ -606,6 +645,7 @@ class Simulator:
                 p=preview[1];heading=math.atan2(p[1]-s.y,p[0]-s.x)+(math.pi if self._segment_reverse else 0)
                 delta_heading=math.atan2(math.sin(heading-s.theta),math.cos(heading-s.theta))
                 if self._velocity<=1e-6 and abs(delta_heading)>limits['maxrot']*dt+.08:
+                    decide(self,'SIM.진행 방향',self.status(),dict(delta_heading=delta_heading,maxrot=limits['maxrot'],reverse=self._segment_reverse),'출발 방향 정렬 필요','정지 상태에서 진행 방향으로 회전')
                     s.theta+=max(-limits['maxrot']*dt,min(limits['maxrot']*dt,delta_heading))
                     self._velocity=0
                     return
@@ -619,11 +659,13 @@ class Simulator:
             if not reason:
                 predicted=projected_conflict(self.map,(s.x,s.y),self._waypoints,limits['radius'],max(self._velocity,desired))
                 if predicted:
+                    decide(self,'SIM.동적 충돌 예측',self.status(),dict(prediction=predicted,radius=limits['radius'],requested_speed=desired),'관측 속도로 예상한 경로 충돌','예상 충돌까지 거리/시간을 반영해 감속',identity=predicted['obstacle'].get('id'))
                     clearance=predicted['distance'];reason='동적 장애물 예상 충돌 · '+str(predicted['obstacle'].get('id','이동체'))
                     desired=min(desired,max(0.,(clearance-stop_dist)/max(.2,predicted['time'])))
             self.detected_obstacle=reason
             if self._reroute_forced:reason=self.detected_obstacle='기존 연결 경로에 복귀 불가'
             if not reason:
+                decide(self,'SIM.장애물 대응',self.status(),dict(clearance=clearance,stop_distance=stop_dist,deceleration_distance=dec_dist),'경로 장애물 없음','기존 경로 주행 · 장애물 대기/재시도 초기화')
                 self._reroute_block_at=None;self._reroute_failures=0;self._auto_block=None;self.auto_obstacle_status='경로 장애물 없음'
             if reason:
                 dynamic=reason.startswith('동적 장애물')
@@ -646,15 +688,19 @@ class Simulator:
                     self.auto_obstacle_status=f'{CLASSES[classification]} · 관측 {speed:.2f} m/s · '+SCENARIOS.get(scenario,'대기')
                     dynamic=classification=='dynamic'
                     policy=scenario
+                    decide(self,'SIM.장애물 분류',self.status(),dict(obstacle=key,classification=classification,observed_speed=speed,moving_speed_threshold=self.auto_moving_speed,static_time_threshold=self.auto_static_s,scenario=scenario,elapsed_s=elapsed,wait_s=self.auto_wait_s,clearance=clearance,reason=reason),'관측 분류에 맞는 시나리오 선택',SCENARIOS.get(scenario,'대기'),identity=token)
                     if scenario.startswith('wait_'):
                         if elapsed<self.auto_wait_s:
+                            decide(self,'SIM.장애물 대응',self.status(),dict(reason=reason,classification=classification,elapsed_s=elapsed,threshold_s=self.auto_wait_s,scenario=scenario),'설정 대기 시간 미도달','정지 상태로 장애물 관측 유지',identity=token)
                             self._velocity=0.;s.blocked=True;self._collision_blocked=True;self.block_reason=reason
                             self.avoidance_status=f'자동 {CLASSES[classification]} 대기 {elapsed:.1f}/{self.auto_wait_s:.1f}s';return
                         policy=scenario[5:]
+                        decide(self,'SIM.장애물 대응',self.status(),dict(reason=reason,elapsed_s=elapsed,threshold_s=self.auto_wait_s,policy=policy),'설정 대기 시간 경과','대기 종료 · '+policy+' 전략 적용',identity=token)
                     # User-selected graph rerouting also applies to a moving blocker.
                     if policy=='reroute':dynamic=False
 
                 if policy=='recover':
+                    decide(self,'SIM.장애물 대응',self.status(),dict(reason=reason,clearance=clearance,policy=policy),'단계적 복구 정책','안전 정지 · 국소 우회 우선 탐색')
                     self._velocity=0.;s.blocked=True;self._collision_blocked=True;self.block_reason=reason
                     if self._avoid_time<self._avoid_next:return
                     self._avoid_next=self._avoid_time+1.
@@ -667,6 +713,7 @@ class Simulator:
                     self.avoidance_status=f'정적 장애물 대기 {elapsed:.1f}/{self.reroute_wait_s:.1f}s · 다른 경로 탐색 {self._reroute_failures}/{self.reroute_attempt_limit}'
                     retry_wait=0 if self.obstacle_policy=='auto' and self._reroute_failures==0 else self.reroute_wait_s
                     if self.obstacle_policy=='auto':self.avoidance_status=f'자동 다른 경로 탐색 · 재시도 대기 {elapsed:.1f}/{retry_wait:.1f}s · 실패 {self._reroute_failures}/{self.reroute_attempt_limit}'
+                    decide(self,'SIM.재탐색 대기',self.status(),dict(reason=reason,elapsed_s=elapsed,wait_s=retry_wait,failures=self._reroute_failures,limit=self.reroute_attempt_limit),'재시도 시간 도달' if elapsed>=retry_wait else '재시도 대기 중','연결 경로 탐색' if elapsed>=retry_wait else '정지 유지',identity=self._reroute_failures)
                     if elapsed>=retry_wait:
                         if self.prefer_line_rejoin and not self._reroute_forced and self._try_line_bypass(n,limits['radius']):return
                         from .alternate_routes import alternate_route
@@ -676,13 +723,16 @@ class Simulator:
                             s.blocked=False;self._collision_blocked=False;self._apply_alternate(plan)
                         else:
                             self._reroute_failures+=1;self._reroute_block_at=self._avoid_time
+                            decide(self,'SIM.재탐색 결과',self.status(),dict(reason=reason,failures=self._reroute_failures,limit=self.reroute_attempt_limit),'충돌 없는 연결 경로 없음','최종 복구 탐색' if self._reroute_failures>=self.reroute_attempt_limit else '다음 재시도까지 대기',force=True)
                             if self._reroute_failures>=self.reroute_attempt_limit:
                                 if not self.try_recovery_detour():self.skip_destination(reason+' · 연결 경로 및 자율 우회 통로 없음')
                     return
                 if policy=='stop':
+                    decide(self,'SIM.장애물 대응',self.status(),dict(reason=reason,policy=policy,clearance=clearance),'정지 정책 선택','정지 래치 · 수동 재개 필요',force=True)
                     self._obstacle_latched=True;s.blocked=True;self.block_reason=reason
                     self._velocity=0.;self.avoidance_status='장애물 정지 유지 · 수동 재개 필요';return
                 avoid=policy=='avoid' or policy=='adaptive' and not dynamic
+                decide(self,'SIM.장애물 대응',self.status(),dict(reason=reason,policy=policy,dynamic=dynamic,clearance=clearance,stop_distance=stop_dist),'국소 우회 선택' if avoid else '장애물 해제 대기 선택','우회 탐색' if avoid else '거리 기반 감속/정지',identity=(reason,policy,dynamic))
                 if avoid and self._avoid_time>=self._avoid_next:
                     self._avoid_next=self._avoid_time+1.
                     if self._try_local_detour(n,limits['radius']):return
@@ -690,8 +740,10 @@ class Simulator:
                 elif not avoid:self.avoidance_status='동적 장애물 통과 대기' if dynamic else '장애물 해제 대기'
                 desired=min(desired,math.sqrt(2*limits['maxdec']*max(0,clearance-stop_dist)))
                 if clearance<=stop_dist+.025:
+                    decide(self,'SIM.충돌 정지',self.status(),dict(clearance=clearance,stop_distance=stop_dist,tolerance=.025,reason=reason),'장애물이 정지 거리 이내','이동 차단 · 속도 0',identity=reason)
                     self._collision_blocked=True;s.blocked=True;self.block_reason=reason;self._velocity=0
                     return
+            decide(self,'SIM.속도 결정',self.status(),dict(desired_speed=desired,remaining_distance=distance_to_goal,limits=limits,obstacle=reason),'주행 제한·곡률·제동 거리·장애물 조건 반영','가감속 제한으로 목표 속도 적용',identity=(bool(reason),round(desired,1),limits['maxspeed']))
             old_velocity=self._velocity
             delta=desired-old_velocity
             self._velocity=old_velocity+max(-limits['maxdec']*dt,min(limits['maxacc']*dt,delta))
@@ -716,12 +768,14 @@ class Simulator:
                     break
                 reason=collision_reason(self.map,s.x,s.y,limits['radius'])
                 if reason:
+                    decide(self,'SIM.이동 구간 충돌',dict(pose=old_pose,proposed_pose=[s.x,s.y,s.theta]),dict(reason=reason,radius=limits['radius']),'이동 후 충돌 검출','직전 위치 복원 · 안전 정지',identity=reason)
                     s.x,s.y,s.theta=old_pose;self._waypoints=old_points
                     self._collision_blocked=True;s.blocked=True;self.block_reason=reason
                     self._velocity=0;s.speed=0
                     return
             _,reason=path_clearance(self.map,old_pose[:2],swept,limits['radius'],sum(math.dist(a,b) for a,b in zip([old_pose[:2]]+swept,swept)))
             if reason:
+                decide(self,'SIM.이동 구간 충돌',dict(pose=old_pose,swept=swept),dict(reason=reason,radius=limits['radius']),'연속 이동 구간 충돌 검출','직전 위치 복원 · 안전 정지',identity=reason)
                 s.x,s.y,s.theta=old_pose;self._waypoints=old_points
                 self._collision_blocked=True;s.blocked=True;self.block_reason=reason
                 self._velocity=0;s.speed=0;return
@@ -734,12 +788,14 @@ class Simulator:
             radius=max(self.map.robot_model['radius'],self.collision_radius)
             reason=manual_motion_reason(self.map,(s.x,s.y,s.theta),self.v,self.w,radius)
             if reason:
+                decide(self,'SIM.수동 조종 감시',self.status(),dict(reason=reason,v=self.v,w=self.w,radius=radius),'예상 조종 구간 위험','조종 lease 해제 · 안전 정지',identity=reason)
                 self.v=self.w=self.lease=0.;s.speed=0.;s.blocked=True
                 self._collision_blocked=True;self.block_reason=reason;self._manual_stop_reason=reason
                 self.avoidance_status='수동 조작 차단 · '+reason
                 return
             self.lease -= dt
             if self.lease <= 0:
+                decide(self,'SIM.수동 조종 감시',self.status(),dict(lease_s=self.lease),'조종 갱신 기한 만료','수동 속도 해제 · IDLE',force=True)
                 self.v = self.w = 0
                 s.mode = 'IDLE'
             old_xy=(s.x,s.y)
@@ -750,6 +806,7 @@ class Simulator:
             s.speed = self.v
             _,reason=path_clearance(self.map,old_xy,[(s.x,s.y)],max(getattr(self.map,'robot_model',DEFAULT_MODEL)['radius'],self.collision_radius),math.dist(old_xy,(s.x,s.y)))
             if reason:
+                decide(self,'SIM.수동 이동 구간',dict(start=old_xy,end=[s.x,s.y]),dict(reason=reason),'연속 수동 이동 충돌','직전 위치 복원 · 안전 정지',identity=reason)
                 s.x,s.y=old_xy
                 self.v=self.w=self.lease=0.
                 self._collision_blocked=True;s.blocked=True;self.block_reason=reason;s.speed=0

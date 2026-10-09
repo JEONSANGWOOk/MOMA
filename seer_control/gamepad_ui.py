@@ -1,3 +1,4 @@
+from .decision_log import decide, audited, snapshot
 """DualSense manual-control panel; same SIM and SEER jog transports."""
 import math
 import copy
@@ -117,6 +118,7 @@ class GamepadMixin:
         if not allowed and not stop:status='팔 조종 대기 · 수동/SIM 정지/팔 재생/실기 허용·수신 상태 확인'
         status=self.pad_arm_group.get()+f" · 속도 {self.pad_arm_speed.get() if hasattr(self,'pad_arm_speed') else 100}% · "+status
         if getattr(self,'pad_tool_message',''):status+=' · '+self.pad_tool_message
+        decide(self,'입력.게임패드 팔',snapshot(self),dict(allowed=allowed,status=status,input_age_s=now-sample.timestamp if sample else None,max_input_age_s=.25,stop=stop,motion=[v,w],real_feedback_age_s=now-self.fr5_rx if self.real else None,max_real_feedback_age_s=2,amr_speed=snapshot(self).get('speed'),max_real_amr_speed=.01),'정지 입력' if stop else ('팔 조종 조건 통과' if allowed else '팔 조종 조건 불충족'),'정지 요청' if stop else ('검증된 팔 입력 처리' if allowed else '팔 조종 해제'),identity=(allowed,status,stop,bool(v or w)))
         identity=self.pad_device[1].name if self.pad_device else '미연결'
         raw=' · '.join(f'{k} {value:+.2f}' for k,value in sample.axes.items()) if sample else ''
         self.pad_status.configure(text=f'{identity} · {status}\n{raw}')
@@ -226,6 +228,7 @@ class GamepadMixin:
             else:status='지도 / 제어 화면에서 연결·제어 상태를 확인하세요.'
         if self.pad_enabled.get() and not allowed and status!=getattr(self,'_pad_block_report',None):
             self.log('GAMEPAD','AMR 조종 제한: '+status)
+        decide(self,'입력.게임패드 AMR',self.current_state(),dict(allowed=allowed,status=status,stop=stop,motion=[v,w],input_age_s=now-sample.timestamp if sample else None,enabled=self.pad_enabled.get(),arm_safe=self.studio_arm_safe),'정지 입력' if stop else ('조종 허용' if allowed else '조종 조건 미충족'),'정지 요청' if stop else ('검증된 조종 입력 적용' if allowed and (v or w) else '조종 해제/대기'),identity=(allowed,status,stop,bool(v or w)))
         self._pad_block_report=status if not allowed else None
         identity=self.pad_device[1].name if self.pad_device else '미연결'
         raw=''

@@ -1,3 +1,4 @@
+from .decision_log import decide, audited, snapshot
 """Role-aware operator orders and developer recipe blocks on the shared engine."""
 import copy,json,math,time,re
 from pathlib import Path
@@ -51,6 +52,7 @@ class OperatorMixin(RecipeMixin):
   self.button(self.role_header,'사이클 테스트',self._operator_open_cycle).pack(side='right',padx=4)
   self._recipe_build()
   self.ui_role.set(self.studio_config.get('ui_role','개발자'));self._role_apply();self.operator_after=self.after(250,self._operator_tick)
+ @audited('권한.개발 기능')
  def _require_developer(self):
   if getattr(self,'role_active','개발자')!='개발자':raise ValueError('개발자 모드에서 사용할 수 있는 기능입니다.')
  def _role_apply(self):
@@ -131,6 +133,7 @@ class OperatorMixin(RecipeMixin):
  def _operator_steps_refresh(self,actions):
   self.operator_steps.delete(*self.operator_steps.get_children())
   for i,a in enumerate(actions):self.operator_steps.insert('','end',iid=str(i),values=(f"{i+1}. "+a.get('goal',a.get('operation','대기')),a.get('status','대기')))
+ @audited('운영.미션 시작', '운영 미션 검증 후 시작 요청')
  def _operator_start(self):
   if not self.operator_pending or self.operator_pending[0]!=self._operator_signature() or time.monotonic()>self.operator_pending[1]:raise ValueError('현재 설정으로 미리보기를 다시 확인하세요.')
   if not self.connected or not self.real and not self.sim_powered:raise ValueError('로봇 연결/전원을 확인하세요.')

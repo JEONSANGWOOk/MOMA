@@ -1,4 +1,5 @@
 """Display-only node tracking. Never substitutes nearest node for arrival."""
+from .decision_log import decide
 import math
 
 
@@ -31,6 +32,7 @@ class LocationTracker:
             self.since = now
         result = dict(last=self.last, next='', goal='', distance=None, at='', estimated=False, valid=valid, next_is_goal=False)
         if not valid:
+            decide(self,'위치.표시 판단',state,dict(valid=False),'유효 상태 수신 없음','노드 추정 표시 보류')
             self.candidate = ''
             return result
         x, y = state.get('x'), state.get('y')
@@ -78,6 +80,7 @@ class LocationTracker:
             if pose_valid and self.last in nodes and math.hypot(x-nodes[self.last]['x'], y-nodes[self.last]['y']) <= .05:
                 result['at'] = self.last
         result.update(last=self.last, goal=goal)
+        decide(self,'위치.표시 판단',state,dict(result=result,confidence=confidence,min_real_confidence=.5,pose_valid=pose_valid,near_distance_m=.18,proximity_hold_s=.30,release_distance_m=.30),'제어기 보고 위치 사용' if real and not result['estimated'] else ('근접 지속 관측으로 표시 추정' if pose_valid else '좌표/신뢰도 조건 미충족'),'화면 노드 표시 갱신 · 주행 완료 판단에는 사용하지 않음',identity=(result['last'],result['at'],result['next'],result['estimated'],pose_valid))
         target = result['next']
         if pose_valid and target in nodes:
             result['distance'] = math.hypot(x-nodes[target]['x'], y-nodes[target]['y'])

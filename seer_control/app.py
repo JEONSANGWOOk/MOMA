@@ -24,6 +24,7 @@ from .voice_ui import VoiceMixin
 from .operator_ui import OperatorMixin
 from .gamepad import jog_packet
 from .manual_safety import controller_manual_reason
+from .decision_log import DecisionJournal, decide, audited, decision_text, snapshot
 from .studio_core import ACTION_DEFAULTS, validate_actions, point_segment_distance
 from .location import LocationTracker
 from .mission_preview import MissionMapPreview
@@ -71,8 +72,9 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
         self.option_add('*Checkbutton.foreground', INK)
         style = ttk.Style(self)
         configure_styles(style, self.font)
+        self.decision_journal=DecisionJournal(USER_DIR/'decision_logs')
         self.map = MapModel.load(ROOT/'maps/demo.json')
-        self.sim = Simulator(self.map)
+        self.sim = Simulator(self.map,decision_journal=getattr(self,'__dict__',{}).get('decision_journal'))
         self.connected = True
         self.real = False
         self.commands = queue.Queue(maxsize=4)
@@ -173,6 +175,7 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
         self.angular = tk.StringVar(value='15')
         self.layers = {k:tk.BooleanVar(value=(k != 'LiDAR')) for k in ['그리드','벽','영역','노드','경로','장애물','LiDAR']}
         self.location_tracker = LocationTracker()
+        self.location_tracker.decision_journal=self.decision_journal
         self.location_display = {}
         self._build()
         self.bind('<KeyPress>', self.key_press, add='+')
@@ -859,6 +862,8 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
     def _logs(self):
         bar = tk.Frame(self.logs_page,bg=BG); bar.pack(fill='x',pady=12)
         self.button(bar,'CSV 내보내기',self.export_logs,BLUE).pack(side='right')
+        self.button(bar,'판단 로그 폴더',lambda:os.startfile(str(self.decision_journal.folder))).pack(side='right',padx=6)
+        self.label(bar,'판단 로그: '+str(self.decision_journal.folder)).pack(side='left')
         self.log_tree = ttk.Treeview(self.logs_page,columns=('time','level','message'),show='headings')
         for key,title,width in [('time','시간',165),('level','레벨',85),('message','내용',800)]:
             self.log_tree.heading(key,text=title); self.log_tree.column(key,width=width)
@@ -952,6 +957,7 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
         try:
             return fn()
         except (ValueError,KeyError,OSError,TypeError) as e:
+            decide(self,'요청.검증 실패',snapshot(self),dict(operation=getattr(fn,'__name__','요청'),reason=str(e)),'요청 조건 불충족','요청 중단 · '+str(e),force=True)
             self.log('ERROR',e)
             messagebox.showerror('작업 실패',str(e),parent=self)
 
@@ -980,9 +986,9 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
         generation = self.generation
         if not real:
             if self.map is not self.sim.map:
-                self.map=MapModel.load(ROOT/'maps/demo.json');self.sim=Simulator(self.map);self.refresh_nodes()
+                self.map=MapModel.load(ROOT/'maps/demo.json');self.sim=Simulator(self.map,decision_journal=getattr(self,'__dict__',{}).get('decision_journal'));self.refresh_nodes()
             if not self.map.nodes:
-                self.map=MapModel.load(ROOT/'maps/demo.json');self.sim=Simulator(self.map);self.refresh_nodes()
+                self.map=MapModel.load(ROOT/'maps/demo.json');self.sim=Simulator(self.map,decision_journal=getattr(self,'__dict__',{}).get('decision_journal'));self.refresh_nodes()
             self.connected = True
             self.live = {}
             self.connection_text.config(text='DEMO 연결됨 · TCP 전송 없음')
@@ -1082,6 +1088,8 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
                 with self._jog_lock:
                     desired = jog_packet(self._jog_desired,time.monotonic())
                     if desired is not None and controller_manual_reason(self.live,self.last_state,time.monotonic()):
+                        reason=controller_manual_reason(self.live,self.last_state,time.monotonic())
+                        decide(self,'REAL.조종 안전 감시',dict(self.live),dict(reason=reason,state_age_s=time.monotonic()-self.last_state,max_age_s=3),'수동 조종 안전 조건 상실','조종 해제 · 정지 요청',identity=reason)
                         self._jog_desired=None;desired=None
                 if desired is not None:
                     try:
@@ -1241,6 +1249,7 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
             self.events.put(('probe',None,port_probe(host,ports)))
         threading.Thread(target=work,daemon=True).start()
 
+    @audited('REAL.명령 요청')
     def send_command(self,name,payload=None):
         if name=='navigate' and getattr(self,'studio_config',{}).get('real_navigation_mode')=='free':
             name='navigate_free'
@@ -1262,6 +1271,7 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
                 self.map=MapModel(dict(format='amr-console-map-v1',name='로봇 지도 로드 중',nodes=[dict(id='_origin',x=0,y=0)],edges=[],walls=[]))
                 self.map.nodes={}
                 self.refresh_nodes()
+            decide(self,'REAL.명령 허용',self.current_state(),dict(command=name,payload=payload or {},state_age_s=time.monotonic()-self.last_state,max_age_s=3,control_enabled=self.control_enabled,loading_map=self.loading_map),'연결·제어권·상태 최신성·비상정지 조건 통과','전송 큐에 요청 등록 · 실행/응답 확인 전',force=True)
             self.log('TX',name+' '+str(payload or {}))
         self.guarded(send)
 
@@ -1418,7 +1428,7 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
             self.release_drive();self.sim.stop()
             self.map=model;self.map_path=Path(path)
             if not self.real:
-                self.sim=Simulator(model);self.sim_powered=True;self.connected=True
+                self.sim=Simulator(model,decision_journal=getattr(self,'__dict__',{}).get('decision_journal'));self.sim_powered=True;self.connected=True
                 self.curve_edit_record=None;self.curve_drag_index=None
                 self.scan_points=[];self.last_scan=0
                 self.connection_text.config(text='SIM 연결됨 · 로컬 SMAP')
@@ -1721,6 +1731,7 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
             if not auto:messagebox.showinfo('위치 복구','저장된 마지막 위치가 없습니다.',parent=self)
             return False
         current_map=self._current_map_name()
+        decide(self,'위치.복구 호환성',snapshot(self),dict(saved_map=rec.get('map_name'),current_map=current_map,saved_source=rec.get('source'),auto=auto),'저장 지도 일치' if map_matches(rec.get('map_name'),current_map) else '저장 지도 불일치','연결/모드 조건 확인 후 복구 요청' if map_matches(rec.get('map_name'),current_map) and (self.real or rec.get('source')=='SIMULATION') else '복구 차단',force=True)
         if not self.real and rec.get('source') != 'SIMULATION':
             self.log('POSE','[SIM] 실제 로봇의 저장 위치는 시뮬레이션에 적용하지 않습니다.')
             return False
@@ -1756,7 +1767,10 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
         conf=self._confidence_value()
         try:threshold=float(self.pose_conf_threshold.get())
         except Exception:threshold=.80
-        if conf is None:return
+        if conf is None:
+            decide(self,'위치.자동 확정',snapshot(self),dict(confidence=None,threshold=threshold),'위치 신뢰도 미수신','자동 확정 보류')
+            return
+        decide(self,'위치.자동 확정',snapshot(self),dict(confidence=conf,threshold=threshold,enabled=self.pose_autoconfirm.get()),'위치 신뢰도 기준 충족' if confidence_ok(conf,threshold) else '위치 신뢰도 기준 미달','자동 위치 확정 요청' if self.pose_autoconfirm.get() and confidence_ok(conf,threshold) else '자동 확정 보류',identity=(self.pose_autoconfirm.get(),confidence_ok(conf,threshold)))
         self.reloc_info.config(text=f'위치복구 검사 · Confidence {conf:.3f} / 기준 {threshold:.3f}',fg=GREEN if conf>=threshold else ORANGE)
         if self.pose_autoconfirm.get() and confidence_ok(conf,threshold):
             self.send_command('confirm_loc',{})
@@ -1814,7 +1828,7 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
             messagebox.showinfo('SIM 재부팅','시뮬레이션 모드에서만 사용하세요.',parent=self);return
         if hasattr(self,'studio_runner') and self.studio_runner.active:self.cancel_tasks()
         from .model import Simulator
-        self.sim=Simulator(self.map); self.sim_powered=True; self.connected=True
+        self.sim=Simulator(self.map,decision_journal=getattr(self,'__dict__',{}).get('decision_journal')); self.sim_powered=True; self.connected=True
         if hasattr(self,'studio_config'):self._studio_apply_sim_settings()
         self.connection_text.config(text='SIM 재부팅 · 저장 위치 확인')
         self._startup_pose_recovery_check()
@@ -1948,6 +1962,7 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
         self.pad_enabled.set(False);self.release_drive();self.pad_gate.reset()
         if hasattr(self,'studio_runner'):self.studio_charge_inhibit=False
         if hasattr(self,'studio_runner') and not self.studio_arm_safe:
+            decide(self,'이동.팔 인터록',self.current_state(),dict(arm_safe=self.studio_arm_safe),'팔 안전 자세 미확인','AMR 이동 요청 차단',force=True)
             messagebox.showerror('AMR 이동','로봇팔 safe_pose 완료 후 이동하세요.',parent=self);return
         if self.real:
             target=self.target.get()
@@ -1970,7 +1985,9 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
     def press_drive(self,direction):
         if hasattr(self,'pad_enabled') and self.pad_enabled.get():
             self.pad_enabled.set(False);self.release_drive();self.pad_gate.reset()
-        if hasattr(self,'studio_runner') and not self.studio_arm_safe:return
+        if hasattr(self,'studio_runner') and not self.studio_arm_safe:
+            decide(self,'조종.팔 인터록',self.current_state(),dict(arm_safe=False),'팔 안전 자세 미확인','수동 조종 차단')
+            return
         if direction == 'zero':
             if self.real:
                 self.release_drive(force=True)
@@ -1997,6 +2014,7 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
                 if reason:
                     self.release_drive(force=True)
                     self.command_status.config(text='수동 정지 · '+reason,fg=ORANGE)
+                    decide(self,'REAL.수동 조종',self.current_state(),dict(reason=reason,direction=direction),'제어기 안전 조건 불충족','수동 조종 요청 차단',identity=reason)
                     self.log('JOG','수동 조작 차단 · '+reason);return
                 self.held=(direction,motion)
                 desired={'vx':motion[0],'vy':0.0,'w':motion[1]}
@@ -2034,6 +2052,7 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
 
     def focus_guard(self):
         if self.focus_displayof() is None:
+            if self.held or self.manual.get():decide(self,'입력.포커스 안전',snapshot(self),dict(focused=False,held=self.held),'앱 포커스 소실','조종 해제 · 수동 이동 미션 일시정지 검토',force=True)
             if hasattr(self,'studio_runner') and self.studio_runner.active:
                 actions=self.studio_runner.actions
                 if actions and actions[self.studio_runner.index]['type'] in ('Translation','Rotation'):
@@ -3708,7 +3727,7 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
             path = filedialog.askopenfilename(filetypes=[('Console map','*.json')])
             if not path:return
             model = MapModel.load(path)
-            self.map,self.sim = model,Simulator(model)
+            self.map,self.sim = model,Simulator(model,decision_journal=getattr(self,'__dict__',{}).get('decision_journal'))
             self.tasks=[]; self.task_running=False; self.pending_link=None
             self.scan_points=[]; self.last_scan=0
             self.map_path = Path(path)
@@ -3932,11 +3951,14 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
         if task_name in ('','UNKNOWN') and isinstance(status,int) and 0<=status<=6:
             task_name=('NONE','WAITING','RUNNING','SUSPENDED','COMPLETED','FAILED','CANCELED')[status]
         if status in (1,2,3) or task_name in ('WAITING','RUNNING','SUSPENDED'):
+            decide(self,'REAL.기존 순환 미션',snapshot(self),dict(task=task_name,status=status,goal=self.tasks[self.task_index]['goal']),'제어기 주행/대기 상태','현재 목적지 관측 유지',identity=(self.task_index,task_name,status))
             self.mission_seen_active=True; return
         if status in (5,6) or task_name in ('FAILED','CANCELED'):
+            decide(self,'REAL.기존 순환 미션',snapshot(self),dict(task=task_name,status=status,goal=self.tasks[self.task_index]['goal']),'제어기 실패/취소 상태','미션 중단 · 취소 요청',force=True)
             self.log('MISSION',f'중단 · {self.tasks[self.task_index]["goal"]} task={task_name or status}'); self.cancel_tasks(); return
         if not (status==4 or task_name=='COMPLETED'):return
         goal=self.tasks[self.task_index]['goal']; dist=self._mission_station_distance(goal)
+        decide(self,'REAL.기존 순환 도착',snapshot(self),dict(goal=goal,distance_m=dist,max_distance_m=.45,seen_active=self.mission_seen_active,elapsed_s=now-self.mission_goal_sent_at,min_elapsed_s=.8,status=status),'이전 주행 관측 후 완료 상태 수신' if self.mission_seen_active else '주행 관측 없이 완료 상태 수신','단계 완료' if self.mission_seen_active or now-self.mission_goal_sent_at>=.8 and dist is not None and dist<=.45 else '오래된 완료 상태 가능성 · 진행 보류',identity=(self.task_index,self.mission_seen_active,now-self.mission_goal_sent_at>=.8,dist is not None and dist<=.45))
         if not self.mission_seen_active:
             if now-self.mission_goal_sent_at<0.8:return
             if dist is None or dist>0.45:return
@@ -3946,6 +3968,7 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
         self.task_index+=1
         if self.task_index>=len(self.tasks):
             self.mission_repeat_done+=1; target=self.mission_repeat_target
+            decide(self,'REAL.기존 순환 반복',snapshot(self),dict(completed=self.mission_repeat_done,target=target),'반복 횟수 충족' if target and self.mission_repeat_done>=target else '반복 필요','미션 종료' if target and self.mission_repeat_done>=target else '다음 루프 시작',force=True)
             if target and self.mission_repeat_done>=target:
                 self.task_running=False; self.task_index=None
                 self.mission_status.config(text=f'미션 완료 · {self.mission_repeat_done}회',fg=GREEN)
@@ -4234,7 +4257,21 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
         self.sim.obstacle_policy=self.studio_config['sim_obstacle_policy'];self.sim._avoid_next=0.
         self._studio_save_settings()
 
+    def _decision_tick(self):
+        journal=self.decision_journal
+        runner=getattr(self,'studio_runner',None)
+        active=runner is not None and runner.active
+        journal.bind('REAL' if self.real else 'SIM',runner.report if active else None,runner.cycle+1 if active else None,runner.index+1 if active else None)
+        for _ in range(40):
+            try:event=journal.pending.get_nowait()
+            except queue.Empty:break
+            self.log('판단',decision_text(event)+(f" · 이전 동일 판단 반복 {event['repeated']}회" if event['repeated'] else ''))
+        if journal.error and journal.error!=getattr(self,'_decision_write_error',None):
+            self._decision_write_error=journal.error
+            self.log('ERROR','판단 로그 파일 저장 실패: '+journal.error)
+
     def tick(self):
+        self._decision_tick()
         now=time.monotonic();dt=now-self.last_tick;self.last_tick=now
         self.sim.prefer_graph_routes=self.prefer_graph_routes.get()
         self._auto_apply_settings()
@@ -4370,12 +4407,15 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
             elif kind=='command_io':
                 direction,command,port,api,request_payload,response,elapsed=payload
                 if direction=='TX':
+                    decide(self,'REAL.명령 전송',snapshot(self),dict(command=command,port=port,api=api,payload=request_payload),'전송 worker가 요청 처리 시작','제어기로 송신 · 응답 대기',force=True)
                     msg=f'TX {command} · port={port} api={api} payload={request_payload or {}}'
                     self.log('WIRE',msg)
                     self.command_status.config(text=msg,fg=ORANGE)
                 elif direction=='RX':
                     if not hasattr(self,'real_command_acks'):self.real_command_acks={}
                     self.real_command_acks[command]=(time.monotonic(),response)
+                    accepted=int(response.get('ret_code',0))==0
+                    decide(self,'REAL.명령 응답',self.current_state(),dict(command=command,api=api,response=response,elapsed_ms=elapsed),'제어기 명령 수락' if accepted else '제어기 명령 거부','후속 상태로 실제 실행 확인' if accepted else '실행 완료로 간주하지 않음 · 오류 처리',force=True)
                     msg=f'RX {command} · api={api} · {elapsed:.0f} ms · {response}'
                     self.log('WIRE',msg)
                     self.command_status.config(text=msg,fg=GREEN)
@@ -4389,6 +4429,7 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
                 direction,request_payload,detail=payload
                 now_report=time.monotonic()
                 if direction in ('ERROR','ERROR_STOP'):
+                    decide(self,'REAL.조종 응답',snapshot(self),dict(direction=direction,request=request_payload,error=detail),'조종/정지 확인 실패','조종 입력 해제 · 오류 표시',force=True)
                     self.pad_enabled.set(False);self._pad_stop();self.pad_gate.reset()
                     self.studio_motion_error=str(detail)
                     if '40020' in str(detail) or 'preempted' in str(detail):
@@ -4400,6 +4441,7 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
                     self.command_status.config(text=msg,fg=RED)
                 elif direction=='STOP':
                     result,elapsed=detail
+                    decide(self,'REAL.조종 정지 응답',snapshot(self),dict(response=result,elapsed_ms=elapsed),'정지 명령 응답 수신','응답 기록 · 실제 정지 여부는 최신 상태로 확인',force=True)
                     msg=f'JOG STOP RX · 2000 · {elapsed:.0f} ms · {result}'
                     self.log('WIRE',msg); self.command_status.config(text=msg,fg=GREEN)
                 elif direction=='RX' and now_report-self._jog_last_report>.8:
@@ -4570,6 +4612,7 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
                 self.connection_text.config(text='실기 연결됨 · 지도 다운로드 실패')
                 self.log('ERROR','지도 다운로드 실패: '+payload+' · 상태 모니터링은 계속합니다.')
             elif kind=='command_error':
+                decide(self,'REAL.명령 오류',snapshot(self),dict(error=payload),'명령 전송/응답 확인 실패','실행 성공으로 간주하지 않음 · 중복 실행 방지를 위해 자동 재전송 안 함',force=True)
                 self.studio_command_error=str(payload)
                 self.downloading_map=False
                 # A command socket timeout must not invalidate the independent status heartbeat.
@@ -4592,6 +4635,7 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
                 self.connection_text.config(text='TCP 오류 · 연결 해제됨')
                 self.log('ERROR',payload)
         if self.real and self.connected and now-self.last_state>3:
+            decide(self,'REAL.상태 유효기간',snapshot(self),dict(age_s=now-self.last_state,max_age_s=3),'상태 수신 기한 초과','연결/제어 활성 해제 · worker 종료 요청',force=True)
             self.connected=False
             self.control_enabled=False
             if self.worker_stop:self.worker_stop.set()
@@ -4608,6 +4652,7 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
                 except ValueError:self.release_drive()
             self.sim.tick(dt)
             if self.task_running and not self.studio_runner.active and not self.sim.route and self.sim.state.task=='완료':
+                decide(self,'SIM.기존 순환 도착',self.sim.status(),dict(goal=self.tasks[self.task_index]['goal'],task=self.sim.state.task,remaining_route=self.sim.route),'SIM 경로 종료 및 완료 확인','다음 단계 또는 반복 종료 판단',force=True)
                 self.tasks[self.task_index]['status']='완료'
                 delay=max(0,int(self.tasks[self.task_index].get('delay_ms',0)))
                 self.task_index+=1
@@ -4684,6 +4729,7 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
         self.disconnect()
         if hasattr(self,'fr5_client') and self.fr5_client.connected:self._fr5_priority_stop()
         if hasattr(self,'studio_bridge'):self.studio_bridge.close()
+        self.decision_journal.close()
         self.destroy()
 
 
