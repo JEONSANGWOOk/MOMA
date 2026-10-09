@@ -1,0 +1,14 @@
+{
+  "artifacts": {
+    "LAN_Robot_Emulator_Windows.zip": {
+      "bytes": 11051943,
+      "sha256": "867675eeab9fa5f4fb5d877f5574a693c3ff8170eeb1915e69e01f8b2e2d8183"
+    },
+    "LAN_Robot_Emulator_Source.zip": {
+      "bytes": 304477,
+      "sha256": "dda19fac1d9a614a7458124355460e135a0a52d6aa5ad179dd0d5f06bd5eaa24"
+    }
+  },
+  "tests": 455,
+  "validation": "GUI REAL TCP smoke and Windows EXE smoke passed; second laptop LAN setup pending"
+}
