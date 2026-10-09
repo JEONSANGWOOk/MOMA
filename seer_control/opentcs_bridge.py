@@ -151,6 +151,8 @@ class OpenTCSRobot:
             if self.last_error or time.monotonic()-self.updated_at>3:
                 raise ValueError('openTCS 상태 확인 실패: '+(self.last_error or '상태가 오래됨'))
             v = self.vehicle_data; state = self.observed_order.get('state')
+            # A queued MOMA order cannot complete because an unrelated parking job finished.
+            if self.order_data.get('state') in ACTIVE:state=self.order_data['state']
             task = {'RAW':1,'ACTIVE':1,'DISPATCHABLE':1,'BEING_PROCESSED':2,'WITHDRAWN':2,
                     'FINISHED':4,'FAILED':5,'UNROUTABLE':5}.get(state,0)
             external = v.get('transportOrder') and v.get('transportOrder')!=self.order_name
@@ -175,7 +177,7 @@ class OpenTCSRobot:
                         acs_order=current_order or self.order_name,acs_state=state,pose_source='precise' if precise else 'node',speed_available=False,
                         fleet=self.fleet,acs_wait_reason=next((f['wait_reason'] for f in self.fleet if f['selected']),''))
 
-    def clear_idle_blockers(self):
+    def clear_idle_blockers(self, exclude=()):
         """Park only idle virtual vehicles actually holding another job's next resource."""
         with self.lock:
             self.refresh()
@@ -188,7 +190,7 @@ class OpenTCSRobot:
                 else:occupied.add(entry['goal']);parking_vehicles.add(entry['vehicle'])
             submitted=[]
             for entry in self.fleet:
-                if entry['id'] not in blockers or entry['id'] in parking_vehicles or entry['order'] or entry['paused'] or entry['state']!='IDLE':continue
+                if entry['id'] in exclude or entry['id'] not in blockers or entry['id'] in parking_vehicles or entry['order'] or entry['paused'] or entry['state']!='IDLE':continue
                 options=[]
                 for key,node in self.map.nodes.items():
                     if node.get('kind')!='dock' or key in occupied:continue

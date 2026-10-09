@@ -125,9 +125,10 @@ def main():
                 if key not in {v['id'] for v in fleet}:fleet_panel.delete(key)
             if auto_park.get() and not parking_busy and time.monotonic()-parking_last>2:
                 parking_busy=True;parking_last=time.monotonic()
+                protected=(robot.vehicle,) if app.studio_runner.active or app.task_running else ()
                 def park():
                     nonlocal parking_busy
-                    try:robot.clear_idle_blockers()
+                    try:robot.clear_idle_blockers(exclude=protected)
                     except Exception as error:robot.record('자동 주차 오류',dict(error=str(error)),'통로 확보 요청 실패','다음 ACS 상태 확인',identity=str(error))
                     finally:parking_busy=False
                 threading.Thread(target=park,daemon=True,name='opentcs-idle-parking').start()

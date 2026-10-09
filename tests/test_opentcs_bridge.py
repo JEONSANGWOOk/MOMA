@@ -128,6 +128,12 @@ class OpenTCSBridgeTests(unittest.TestCase):
         self.api.vehicle['transportOrder']='external'
         self.assertEqual(self.robot.start_fleet_demo(),[])
         self.assertFalse(any(c[0]=='POST' for c in self.api.calls))
+    def test_foreign_completion_cannot_complete_queued_moma_order(self):
+        self.robot.request(3051,dict(id='B'))
+        self.robot.observed_order=dict(state='FINISHED')
+        self.assertEqual(self.robot.status()['task_status'],1)
+        self.traffic_setup()
+        self.assertEqual(self.robot.clear_idle_blockers(exclude=('AGV-02',)),[])
 
 
 if __name__=='__main__':unittest.main()
