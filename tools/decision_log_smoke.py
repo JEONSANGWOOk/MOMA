@@ -52,6 +52,10 @@ def main():
             lines=(app.decision_journal.folder/'decisions.jsonl').read_text(encoding='utf-8').splitlines()
             assert len(lines)>10
             assert all({'situation','evidence','conclusion','action','session','id'}<=set(json.loads(line)) for line in lines)
+            events=[json.loads(line) for line in lines]
+            assert not any(e['source']=='경로.방문 순서 계획' and not e['situation']['stops'] for e in events)
+            assert any(e['source']=='SIM.속도 결정' and e['situation']['speed']>0 for e in events)
+            assert all(e['evidence']['reason'] for e in events if e['source']=='SIM.대체 경로')
             assert not errors,errors
             if args.output_dir:
                 args.output_dir.mkdir(parents=True,exist_ok=True)

@@ -50,7 +50,8 @@ def plan_stops(model,stops,policy='distance',excluded=()):
             errors.append(f'{a} → {b}: {error}')
             legs.append(dict(start=a,goal=b,nodes=[],distance=0.,seconds=0.))
     result=dict(stops=list(stops),nodes=expanded,legs=legs,distance=distance,seconds=seconds,errors=errors,policy=policy,excluded=list(excluded))
-    decide(model,'경로.방문 순서 계획',dict(stops=stops),dict(policy=policy,excluded=list(excluded),distance_m=distance,seconds=seconds,legs=legs,errors=errors),'연결 경로 계획 성공' if not errors else '일부 방문 구간 연결 불가','계획 경로 제시' if not errors else '이동 작업 생성 차단',force=True)
+    if legs or errors:
+        decide(model,'경로.방문 순서 계획',dict(stops=stops),dict(policy=policy,excluded=result['excluded'],distance_m=distance,seconds=seconds,legs=legs,errors=errors),'연결 경로 계획 성공' if not errors else '일부 방문 구간 연결 불가','계획 경로 제시' if not errors else '이동 작업 생성 차단',identity=(policy,result['excluded'],expanded,distance,seconds,errors))
     return result
 
 

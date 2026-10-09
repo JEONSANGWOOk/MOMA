@@ -31,9 +31,15 @@ def clean(value, depth=0):
 
 def decision_text(event):
     compact=lambda v: json.dumps(v, ensure_ascii=False, separators=(',', ':'))
-    return (f"#{event['id']} [{event['backend']}/{event['source']}] "
+    source=event['source']
+    if source.startswith(event['backend']+'.'):source=source.split('.',1)[1]
+    text=(f"#{event['id']} [{event['backend']}/{source}] "
             f"상황: {compact(event['situation'])} → 근거: {compact(event['evidence'])} "
             f"→ 결론: {event['conclusion']} → 동작: {event['action']}")
+    previous=event.get('previous_summary')
+    if previous:
+        text+=f" | 직전 판단 종료: {previous['conclusion']} / {previous['action']} · 반복 {previous['repeated']}회"
+    return text
 
 
 class DecisionJournal:
@@ -77,7 +83,8 @@ class DecisionJournal:
             token=(self.context['backend'],self.context['mission'],self.context['loop'],self.context['step'],source,key or source)
             fingerprint=json.dumps([conclusion, action, clean(identity)], ensure_ascii=False, sort_keys=True)
             previous=self._states.get(token)
-            if previous and previous['fingerprint']==fingerprint and not force:
+            same=previous is not None and previous['fingerprint']==fingerprint
+            if same and not force:
                 previous['repeated']+=1
                 if now-previous['at']<self.repeat_seconds: return None
             self._sequence+=1
@@ -88,8 +95,10 @@ class DecisionJournal:
                 time=datetime.now().astimezone().isoformat(timespec='milliseconds'),
                 **context, source=source, situation=situation, evidence=evidence,
                 conclusion=str(conclusion), action=str(action),
-                repeated=previous['repeated'] if previous else 0)
-            self._states[token]=dict(fingerprint=fingerprint, at=now, repeated=0)
+                repeated=previous['repeated'] if same else 0)
+            if previous and not same and previous['repeated']:
+                event['previous_summary']=dict(conclusion=previous['conclusion'],action=previous['action'],repeated=previous['repeated'])
+            self._states[token]=dict(fingerprint=fingerprint, at=now, repeated=0,conclusion=str(conclusion),action=str(action))
             # Bound dedup memory even for long-running infinite missions.
             if len(self._states)>4096: self._states.pop(next(iter(self._states)))
             self.records.append(event); self.pending.put(event)

@@ -137,6 +137,9 @@ class ConsoleAdapter:
         previous=self.context.setdefault('nav_progress_pose',self.context['start'])
         if math.dist(position,previous)>=.1:
             self.context['nav_progress_pose']=position;self.context['nav_progress_elapsed']=elapsed
+        if c.sim._auto_wait_active():
+            decide(self,'미션.주행 제한 시간 대기',c.current_state(),dict(inactive_s=max(0.,elapsed-self.context.get('nav_progress_elapsed',0.)),wait_elapsed_s=c.sim._avoid_time-c.sim._auto_block_at,wait_s=c.sim.auto_wait_s,timeout_s=a['timeout_s']),'설정된 장애물 대기 중','대기 완료 전 시간 초과 복구/패스 보류')
+            return 0.
         return max(0.,elapsed-self.context.get('nav_progress_elapsed',0.))
 
     def navigation_timeout_result(self,a):
