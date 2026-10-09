@@ -4,6 +4,7 @@ __pycache__/
 .venv/
 .venv-vision/
 emulator_logs/
+artifacts/opentcs_session/
 venv/
 build/
 dist/

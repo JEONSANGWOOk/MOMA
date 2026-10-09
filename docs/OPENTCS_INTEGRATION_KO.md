@@ -1,0 +1,92 @@
+# MOMA와 openTCS 가상 ACS 연동
+
+기존 MOMA Console의 사용자 미션 화면을 그대로 사용합니다.
+미션의 노드 이동 요청은 openTCS의 실제 HTTP API 운송 작업으로 등록되며,
+이동 계산과 차량 배차·통행 자원 제어는 openTCS가 수행합니다.
+연결 모듈은 자체 Simulator로 로봇을 움직이지 않습니다.
+
+## 실행
+
+이 작업공간에서는 `ACS_Test_openTCS/05_MOMA_Integration.cmd`를 실행하거나,
+MOMA 프로젝트의 `OpenTCS_MOMA.cmd`를 실행합니다.
+openTCS 관제 화면과 기존 MOMA 화면이 함께 열립니다.
+Python과 이 작업공간에 설치된 openTCS·Java가 필요합니다.
+
+프로젝트만 별도로 복사한 경우에는 openTCS를 먼저 실행하고
+가상 차량 AGV-01~04의 Loopback 드라이버와 초기 위치·배차 활성화를 설정한 후,
+`python -X utf8 tools/opentcs_integration.py`로 연결합니다.
+현재 API 주소는 `http://127.0.0.1:55200/v1`입니다.
+
+상단 노란색 안내에서 **AGV-01~04**를 선택합니다.
+한 MOMA 화면은 선택한 차량 한 대를 제어하고, openTCS Operations Desk에서는
+네 대를 함께 관찰합니다. 진행 중인 MOMA 미션은 종료한 뒤 차량을 변경합니다.
+
+## 미션 시험
+
+1. 초기 연결 후 지도와 제어권을 자동으로 받습니다.
+2. MOMA에서 **사용자** 모드를 선택합니다.
+3. **작업 운영 → 지도 경로 설정**에서 노드를 클릭하여 방문 순서를 정합니다.
+4. Shift+클릭이나 삭제 기능으로 방문 노드를 제거할 수 있습니다.
+5. **경로 / 작업 미리보기 → 시작**을 누릅니다.
+6. openTCS의 작업 목록에 `MOMA-...` 이름의 작업이 생성됩니다.
+7. MOMA 일시정지·재개는 선택한 차량의 ACS paused 상태를 변경합니다.
+8. 작업 취소는 해당 MOMA 작업의 withdrawal API를 호출합니다.
+9. openTCS가 보고한 `FINISHED` 상태를 받은 뒤 MOMA가 완료로 판단합니다.
+
+여러 방문 노드는 기존 미션 실행기가 순서대로 요청하므로,
+ACS에는 각 이동 단계가 별도의 운송 작업으로 등록됩니다.
+지도의 노드 ID는 openTCS `Point-...` 이름을 사용합니다.
+openTCS가 다른 작업을 해당 차량에 배정한 경우에도 위치와 작업 상태를 표시하고,
+기존 작업을 덮어쓰지 않고 새 MOMA 이동 요청을 거부합니다.
+MOMA 창을 닫을 때 아직 진행 중인 이 연결의 작업만 취소합니다.
+다른 ACS 클라이언트가 만든 작업은 취소하지 않습니다.
+
+## 통신과 지도
+
+`MOMA Console → localhost SEER 요청 → OpenTCSRobot → openTCS HTTP API`
+
+기존 Console의 상태·미션·판단 로그 경로를 재사용합니다.
+연결용 TCP 포트는 localhost의 19204~19207이며 다른 프로그램이 이미 사용하면
+기존 프로그램을 중단하지 않고 시작 오류를 표시합니다.
+HTTP API는 작업 생성, 차량 상태, 지도, pause/resume, withdrawal을 사용합니다.
+명령 전에 차량의 현재 드라이버가 **Loopback 가상 차량**인지 확인합니다.
+
+좌표는 openTCS의 mm를 MOMA의 m로 변환합니다.
+지도는 노드와 이동 가능한 방향을 보존하고, 시작 시 잠긴 경로는 제외합니다.
+MOMA 지도에서는 연결을 직선으로 표시하므로 openTCS 원본 곡선 모양과 다를 수 있습니다.
+연결 후의 통행·경로 잠금과 실제 실행 경로 결정은 ACS의 판단을 따릅니다.
+
+## 판단 로그
+
+`artifacts/opentcs_session/bridge_logs/decisions.jsonl`과 `decisions.txt`:
+현재 차량·작업·목표, 명령 조건, ACS 작업 ID, 실제 상태, 결론과 후속 동작을 기록합니다.
+
+`artifacts/opentcs_session/settings/decision_logs`:
+기존 MOMA의 미션·주행 완료 판정 로그가 기록됩니다.
+가상 연동용 설정은 별도 폴더에 저장합니다.
+
+## 현재 범위
+
+- 목적지 노드 이동, 순차 미션, pause/resume/cancel, 실제 ACS 상태에 따른 완료·실패
+- 차량 선택, 지도 가져오기, 배터리·위치·외부 ACS 작업 상태 표시
+- 실제 통신 실패와 지원하지 않는 명령을 성공으로 처리하지 않음
+
+기본 Loopback API가 제공하는 노드 도착 위치를 표시합니다.
+연속 좌표가 API에 있으면 사용하지만 자체 주행 보간으로 실제 위치를 만들어 내지 않습니다.
+실제 속도와 라이다 센서는 제공하지 않습니다. 표시 속도 0은 정지 증명이 아닙니다.
+가상 연동의 Confidence 1.0은 실제 위치추정 정확도를 의미하지 않습니다.
+조그·재위치·SLAM·지도 업로드·로봇팔 동작은 이 연동에서 지원하지 않습니다.
+이 연결은 가상 AGV 검증용이며 실제 AGV 연결용 어댑터는 별도 구현해야 합니다.
+
+## 검증
+
+- openTCS 브리지 단위 테스트 9개
+- 전체 프로젝트 테스트 464개 통과
+- 실제 openTCS + 기존 Console 사용자 미션의 작업 생성·배차·위치 반환·일시정지·재개·완료 검증
+- 실제 withdrawal 후 ACS FAILED를 MOMA CANCELED로 변환하는 검증
+- 통합 실행 화면과 openTCS 지도 표시 확인
+
+공식 자료: https://opentcs.org/docs/7/users-guide.html
+
+설치된 배포본의 `opentcs-documentation/service-web-api-stable`에
+이번 연결에 사용한 v1 HTTP API 명세가 포함되어 있습니다.
