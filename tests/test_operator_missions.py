@@ -45,3 +45,16 @@ class OperatorMissionTests(unittest.TestCase):
   recipe=next(r for r in defaults() if r['name']=='현재 노드 왕복 테스트')
   p=compile_mission(recipe,dict(self.params,경유=['LM2','LM3']),self.map,self.arm,self.pose)
   self.assertEqual([a['goal'] for a in p['actions']],['LM2','LM3','LM1'])
+
+ def test_map_route_visits_in_order_without_automatic_return(self):
+  recipe=next(r for r in defaults() if r['name']=='지도 경로 이동')
+  p=compile_mission(recipe,dict(self.params,경유=['LM2','LM3','LM2']),self.map,self.arm,self.pose)
+  self.assertEqual([a['goal'] for a in p['actions']],['LM2','LM3','LM2'])
+  self.assertEqual(p['stops'],['LM1','LM2','LM3','LM2'])
+ def test_empty_or_invalid_map_route_rejected(self):
+  recipe=next(r for r in defaults() if r['name']=='지도 경로 이동')
+  for visits in ([],['missing'],['LM2']*101):
+   with self.assertRaises(ValueError):compile_mission(recipe,dict(self.params,경유=visits),self.map,self.arm,self.pose)
+ def test_map_route_without_connected_path_rejected(self):
+  recipe=next(r for r in defaults() if r['name']=='지도 경로 이동');self.map.edges=[]
+  with self.assertRaises(ValueError):compile_mission(recipe,dict(self.params,경유=['LM3']),self.map,self.arm,self.pose)

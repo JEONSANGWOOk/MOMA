@@ -9,6 +9,7 @@ def defaults():
   dict(name='순환 운반',enabled=True,destinations=[],blocks=[dict(type='이동',value='픽업'),dict(type='이동',value='목적지'),dict(type='이동',value='픽업')]),
   dict(name='자재 공급',enabled=False,destinations=[],blocks=[dict(type='이동',value='픽업'),dict(type='팔 작업',value=''),dict(type='이동',value='목적지'),dict(type='팔 작업',value=''),dict(type='이동',value='복귀')]),
   dict(name='완제품 회수',enabled=False,destinations=[],blocks=[dict(type='이동',value='픽업'),dict(type='팔 작업',value=''),dict(type='이동',value='목적지'),dict(type='팔 작업',value=''),dict(type='이동',value='복귀')]),
+  dict(name='지도 경로 이동',enabled=True,destinations=[],blocks=[dict(type='이동',value='목적지')]),
   dict(name='현재 노드 왕복 테스트',enabled=True,destinations=[],blocks=[dict(type='이동',value='목적지'),dict(type='이동',value='현재 노드')])]
 
 def validate_template(recipe,nodes,arm,require_enabled=True):
@@ -47,11 +48,11 @@ def compile_mission(recipe,params,model,arm,pose):
  if any(b['type']=='이동' and b['value']=='현재 노드' for b in recipe['blocks']):
   if not current or math.hypot(pose['x']-model.nodes[current]['x'],pose['y']-model.nodes[current]['y'])>.25:raise ValueError('현재 노드 왕복 테스트는 노드에서 0.25m 이내에 정지한 뒤 미리보기 하세요.')
   if destination==current and not params.get('경유'):raise ValueError('현재 노드와 다른 방문 목적지를 선택하세요.')
- if recipe['name']=='현재 노드 왕복 테스트':
-  visits=params.get('경유') or [destination]
+ if recipe['name'] in ('현재 노드 왕복 테스트','지도 경로 이동'):
+  visits=params.get('경유') or ([destination] if recipe['name']=='현재 노드 왕복 테스트' else [])
   if not isinstance(visits,list) or not 1<=len(visits)<=100 or any(n not in model.nodes for n in visits):raise ValueError('방문할 노드를 1~100개 선택하세요.')
-  if all(n==current for n in visits):raise ValueError('출발 노드 외 방문할 노드를 추가하세요.')
-  recipe['blocks']=[dict(type='이동',value=n) for n in visits]+[dict(type='이동',value='현재 노드')]
+  if recipe['name']=='현재 노드 왕복 테스트' and all(n==current for n in visits):raise ValueError('출발 노드 외 방문할 노드를 추가하세요.')
+  recipe['blocks']=[dict(type='이동',value=n) for n in visits]+([dict(type='이동',value='현재 노드')] if recipe['name']=='현재 노드 왕복 테스트' else [])
  actions=[];stops=[];labels=[]
  for b in recipe['blocks']:
   value=b['value']
