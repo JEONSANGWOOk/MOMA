@@ -29,8 +29,11 @@ with tempfile.TemporaryDirectory() as folder:
         assert app.studio_arm_safe
         expected=[math.radians(v) for v in cfg['operations']['safe_pose']['target']]
         assert list(app.sim.arm['joint_positions'].values())==expected
-        app.view_mode.set('3D');app._spatial_switch();app._spatial_render();app.update()
-        assert list(app.world3d.scene_joint_values.values())==expected
+        # Operator mode is the startup page; select the world viewport before
+        # checking rendered poses, rather than rendering a hidden 1px canvas.
+        app.tabs.select(app.operation_page);app._sync_navigation()
+        app.view_mode.set('3D');app._spatial_switch();app.update();app._spatial_render()
+        assert list(app.world3d.scene_joint_values.values())==expected, (app.world3d.scene_joint_values, expected, app.arm_dev_sim.q, app.arm_dev_sim.state)
         # REAL feedback rendering from a synthetic in-memory sample (no connect).
         app.real=True;app.fr5_client.connected=True
         app.fr5_feedback=dict(status='IDLE',joints_deg=[0]*6,joints_rad=[0]*6,tcp_mm_deg=[0]*6,motion_done=1)

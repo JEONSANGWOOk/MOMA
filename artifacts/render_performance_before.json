@@ -1,0 +1,18 @@
+{
+  "size": [
+    1100,
+    700
+  ],
+  "backend": "NVIDIA GeForce RTX 2070 Super with Max-Q Design/PCIe/SSE2",
+  "first_frame_ms": 920.31,
+  "median_frame_ms": 87.61,
+  "max_frame_ms": 89.0,
+  "samples_ms": [
+    88.72,
+    85.33,
+    87.48,
+    87.75,
+    89.0,
+    85.02
+  ]
+}

@@ -52,7 +52,10 @@ class ArmCanvas(tk.Canvas):
   if mode!='실기 자세' and self.sim.physics.forecast_q is not None:assets.append((self.sim.kin.asset,self.sim.kin.positions(self.sim.physics.forecast_q),identity(),'#ef4e55',.22))
   if renderer:
    from PIL import ImageTk
-   self.render_image=ImageTk.PhotoImage(renderer.render(self.camera,w,h,assets=assets,faces=physical_faces,lines=physical_lines,grid=True))
+   frame=renderer.render(self.camera,w,h,assets=assets,faces=physical_faces,lines=physical_lines,grid=True)
+   current=getattr(self,'render_image',None)
+   if current and (current.width(),current.height())==frame.size:current.paste(frame)
+   else:self.render_image=ImageTk.PhotoImage(frame)
    self.create_image(0,0,anchor='nw',image=self.render_image,tags='arm_mesh')
   else:
    faces=[]
@@ -282,19 +285,20 @@ class ArmWorkspaceMixin(ArmSceneMixin):
   self._aw_joint_controls();self._aw_sync_main();self.arm_dev_canvas.fit();self._aw_save()
  def _aw_set_synced_joints(self,q):
   self.arm_dev_sim.set_joints(q);self._aw_sync_main();self.arm_dev_canvas.render()
- def _aw_sync_main(self):
+ def _aw_sync_main(self,render=True):
   sim=self.arm_dev_sim;view=self.world3d
   if view.arm_asset is not sim.kin.asset:view.arm_asset=sim.kin.asset;view.arm_asset.synthetic=True;view.scales['arm']=1.
   values=sim.kin.positions(sim.q)
   if not self.real:
    self.sim.arm['joint_positions']=dict(values);view.positions['arm']=dict(values)
    self.sim.arm['status']=sim.state;self.sim.arm['progress']=min(1.,sim.index/max(1,len(sim.actions)))
-  if self.view_mode.get()=='3D' and view.winfo_ismapped():self._spatial_render()
+  if render and self.view_mode.get()=='3D' and view.winfo_ismapped():self._spatial_render()
  def _aw_tick(self):
   if not self.winfo_exists():return
   now=time.monotonic()
   if getattr(self,'arm_sim_owner','workspace')!='mission':self.arm_dev_sim.tick(min(.15,now-self.arm_dev_time))
-  self.arm_dev_time=now;self._aw_sync_main()
+  # The main tick renders the world once. This tick only publishes arm state.
+  self.arm_dev_time=now;self._aw_sync_main(render=False)
   if self.tabs.select()==str(self.arm_workspace_page):
    if tuple(self.arm_dev_sim.q)!=getattr(self,'arm_dev_display_q',None):
     self.arm_dev_syncing=True
@@ -302,4 +306,4 @@ class ArmWorkspaceMixin(ArmSceneMixin):
     self.arm_dev_syncing=False;self.arm_dev_display_q=tuple(self.arm_dev_sim.q)
    pose=self.arm_dev_sim.kin.pose(self.arm_dev_sim.q);self.arm_dev_feedback.set(f'{self.arm_dev_sim.state} · 단계 {min(self.arm_dev_sim.index+1,len(self.arm_dev_sim.actions))}/{len(self.arm_dev_sim.actions)} · TCP [mm/도]: '+', '.join(f'{v:.1f}' for v in pose)+(' · '+self.arm_dev_sim.error if self.arm_dev_sim.error else ''))
    self.arm_dev_io_text.set(json.dumps(self.arm_dev_sim.io,ensure_ascii=False));self._aps_refresh();self.arm_dev_canvas.render()
-  self.after(80,self._aw_tick)
+  self.after(max(10,round(50-(time.monotonic()-now)*1000)),self._aw_tick)

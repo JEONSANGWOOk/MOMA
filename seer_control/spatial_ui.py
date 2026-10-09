@@ -71,7 +71,7 @@ class SpatialMixin:
         if self.real:
             lidar=self.real_laser_points if 'laser_beams(WORLD)' in self.lidar_source else [self._lidar_map_xy(x,y) for x,y in self.real_laser_points]
             if not self.connected or time.monotonic()-self.last_laser_rx>2:lidar=[]
-        else:lidar=self.sim.scan() if self.connected and self.sim_powered else []
+        else:lidar=self.scan_points if self.connected and self.sim_powered else []
         self.world3d.draw_scene(self.map,state,arm,route,joints,lidar if self.layers['LiDAR'].get() else [])
 
     def _spatial_save(self):

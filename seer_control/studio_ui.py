@@ -31,8 +31,9 @@ class ConsoleAdapter:
         runner=getattr(self.c,'studio_runner',None)
         if runner and runner.report:
             runner.report.metadata=dict(backend='REAL' if self.c.real else 'SIM',controller=controller_identity(getattr(self.c,'raw',{})) if self.c.real else {},hardware_verified=False,navigation_api=3050 if getattr(self.c,'studio_config',{}).get('real_navigation_mode')=='free' else 3051)
-        if index==0:
-            self.c.sim.skipped_goals.clear();self.c.sim.skip_result=None
+        sim=getattr(self.c,'sim',None)
+        if index==0 and sim is not None and hasattr(sim,'skipped_goals'):
+            sim.skipped_goals.clear();sim.skip_result=None
 
     def begin(self,a):
         c=self.c;state=c.current_state();typ=a['type']
@@ -212,7 +213,7 @@ class ConsoleAdapter:
                     if self.context.get('arm_wait'):
                         if sim.state in ('RUNNING','PAUSED'):return False
                         sim.start(self.context['arm_config'],operation=a['operation']);c.arm_sim_owner='mission';self.context['arm_wait']=False
-                    sim.tick(dt);c._aw_sync_main()
+                    sim.tick(dt);c._aw_sync_main(render=False)
                     if sim.state=='FAILED':c.arm_sim_owner='workspace';raise ValueError(sim.error)
                     if sim.state=='CANCELED':c.arm_sim_owner='workspace';raise ValueError('공유 로봇팔 작업 취소됨')
                     if sim.state=='COMPLETED':

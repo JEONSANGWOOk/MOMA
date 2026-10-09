@@ -21,10 +21,13 @@ def normalize(v):
 class Camera:
     def __init__(self):self.target=[0.,0.,.4];self.distance=15.;self.yaw=-135.;self.pitch=38.;self.perspective=True
     def basis(self):
+        key=(tuple(self.target),self.distance,self.yaw,self.pitch)
+        if key==getattr(self,'_basis_key',None):return self._basis_value
         yaw,pitch=math.radians(self.yaw),math.radians(self.pitch)
         eye=tuple(self.target[i]+self.distance*v for i,v in enumerate((math.cos(pitch)*math.cos(yaw),math.cos(pitch)*math.sin(yaw),math.sin(pitch))))
         forward=normalize(subtract(self.target,eye));right=normalize(cross(forward,(0,0,1)));up=cross(right,forward)
-        return eye,right,up,forward
+        self._basis_key=key;self._basis_value=(eye,right,up,forward)
+        return self._basis_value
     def project(self,p,width,height):
         eye,right,up,forward=self.basis();relative=subtract(p,eye)
         depth=dot(relative,forward)
@@ -77,7 +80,11 @@ class WorldView3D(tk.Canvas):
         self.bind('<MouseWheel>',lambda event:self.zoom(.88 if event.delta>0 else 1/.88))
         self.bind('<Button-4>',lambda event:self.zoom(.88));self.bind('<Button-5>',lambda event:self.zoom(1/.88))
     def refresh(self):
-        if getattr(self.app,'view_mode',None) and self.app.view_mode.get()=='3D':self.app.draw_map()
+        if getattr(self.app,'view_mode',None) and self.app.view_mode.get()=='3D':
+            if getattr(self,'_refresh_job',None) is None:self._refresh_job=self.after_idle(self._refresh_frame)
+    def _refresh_frame(self):
+        self._refresh_job=None
+        if self.winfo_exists() and self.app.view_mode.get()=='3D':self.app.draw_map()
     def begin_drag(self,event,mode):
         self.focus_set();self.drag=(event.x,event.y,self.camera.yaw,self.camera.pitch,list(self.camera.target),mode)
         self.drag_moved=False
@@ -321,7 +328,10 @@ class WorldView3D(tk.Canvas):
             else:self.create_line(*coords,fill=color[0],width=color[1],tags=tag)
         if renderer:
             from PIL import ImageTk
-            self.render_image=ImageTk.PhotoImage(renderer.render(self.camera,width,height,assets=gpu_assets,faces=faces,lines=[row[:4] for row in lines]))
+            frame=renderer.render(self.camera,width,height,assets=gpu_assets,faces=faces,lines=[row[:4] for row in lines])
+            current=getattr(self,'render_image',None)
+            if current and (current.width(),current.height())==frame.size:current.paste(frame)
+            else:self.render_image=ImageTk.PhotoImage(frame)
             self.create_image(0,0,anchor='nw',image=self.render_image,tags=('world_mesh','world_arm','world_amr'))
         for p,label,color in texts:
             projected=self.camera.project(p,width,height)

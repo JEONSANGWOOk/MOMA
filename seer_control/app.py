@@ -2539,7 +2539,7 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
                 sensor=f'LiDAR 수신 {count}점 · {age:.1f}s 전' if count and age<=2 else ('LiDAR 수신 지연' if count else 'LiDAR 수신 대기')
                 blocked=self.live.get('blocked');obstacle='정지 감지' if blocked is True else ('정상' if blocked is False else '상태 미수신')
             else:
-                sensor=f'LiDAR SIM · {len(self.sim.scan()) if self.connected and self.sim_powered else 0}점'
+                sensor=f'LiDAR SIM · {len(self.scan_points) if self.connected and self.sim_powered else 0}점'
                 obstacle=self.sim.block_reason or getattr(self.sim,'detected_obstacle','') or ('정지 감지' if self.sim.state.blocked else '정상')
             if not self.connected:sensor='LiDAR 미연결';obstacle='연결 대기'
             self.operation_sensor_label.configure(text=f'{sensor}  |  장애물: {obstacle}'+('  |  LiDAR 표시 OFF' if not self.layers['LiDAR'].get() else ''))
@@ -4664,12 +4664,13 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
             self.telemetry.config(state='normal');self.telemetry.delete('1.0','end')
             self.telemetry.insert('end',json.dumps(data,ensure_ascii=False,indent=2));self.telemetry.config(state='disabled')
         if self.tabs.select() in (str(self.operation_page),str(self.nodes_page)):
-            interval=.25 if self.real and self.current_robot_map else .10
+            interval=.04 if self.view_mode.get()=='3D' and self.canvas is self.operation_canvas else (.25 if self.real and self.current_robot_map else .10)
             if now-self._last_operation_draw>=interval:
                 self.draw_map();self._last_operation_draw=now
         if self.pose_autosave.get() and now-self._last_pose_save_at>=1.0 and (self.real or self.sim_powered):
             self.save_last_pose()
-        self.after(100,self.tick)
+        period=50 if self.view_mode.get()=='3D' and self.tabs.select()==str(self.operation_page) else 100
+        self.after(max(10,round(period-(time.monotonic()-now)*1000)),self.tick)
 
     def close(self):
         self._operator_close()

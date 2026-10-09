@@ -7,6 +7,15 @@ from collections import defaultdict
 from .geometry3d import identity,multiply,point
 
 
+def flat_normal(face):
+    """A generated polygon has one normal; no vertex adjacency needs rebuilding."""
+    a,b,c=face[:3]
+    u=tuple(b[i]-a[i] for i in range(3));v=tuple(c[i]-a[i] for i in range(3))
+    raw=(u[1]*v[2]-u[2]*v[1],u[2]*v[0]-u[0]*v[2],u[0]*v[1]-u[1]*v[0])
+    length=max(1e-12,math.sqrt(sum(x*x for x in raw)))
+    return tuple(x/length for x in raw)
+
+
 def smooth_normals(faces,crease=math.cos(math.radians(48))):
     normals=[];adjacent=defaultdict(list)
     for index,face in enumerate(faces):
@@ -79,7 +88,9 @@ class SmoothRenderer:
         self.cache[key]=(asset,rows);return rows
     def render(self,camera,width,height,assets=(),faces=(),lines=(),grid=False):
         if not self.make_current(self.dc,self.context):raise RuntimeError('OpenGL context 전환 실패')
-        factor=2;w=max(16,int(width)*factor);h=max(16,int(height)*factor)
+        # Native pixels avoid four times the readback and a CPU Lanczos resize
+        # on every frame. Source mesh geometry and smooth shading are retained.
+        factor=1;w=max(16,int(width));h=max(16,int(height))
         if self.size!=(w,h):self.resize(self.window,None,0,0,w,h,0x0014);self.size=(w,h)
         self.glViewport(0,0,w,h);self.glClearColor(.929,.949,.973,1);self.glClear(0x00004000|0x00000100)
         self.glMatrixMode(0x1701);self.glLoadIdentity();small=min(w,h)
@@ -90,9 +101,9 @@ class SmoothRenderer:
         self.glMatrixMode(0x1700);self.glLoadMatrixf(self.matrix(view));self.glLightfv(0x4000,0x1203,(C.c_float*4)(-2,-3,5,0));self.glEnable(0x0B50)
         for vertices,color,tag in faces:
             self.glColor4f(*(int(color[i:i+2],16)/255 for i in (1,3,5)),1)
-            normals=smooth_normals([vertices]);self.glBegin(0x0004)
+            normal=flat_normal(vertices);self.glBegin(0x0004);self.glNormal3f(*normal)
             for j in range(1,len(vertices)-1):
-                for i in (0,j,j+1):self.glNormal3f(*normals[0][i]);self.glVertex3f(*vertices[i])
+                for i in (0,j,j+1):self.glVertex3f(*vertices[i])
             self.glEnd()
         opaque=[row for row in assets if row[4]>=1];transparent=[row for row in assets if row[4]<1]
         for asset,positions,world,tint,alpha in opaque+transparent:
@@ -110,7 +121,7 @@ class SmoothRenderer:
             self.glColor4f(*(int(color[i:i+2],16)/255 for i in (1,3,5)),1);self.glLineWidth(line_width*factor);self.glBegin(1);self.glVertex3f(*a);self.glVertex3f(*b);self.glEnd()
         self.glFinish();self.glReadBuffer(0x0405);data=C.create_string_buffer(w*h*3);self.glReadPixels(0,0,w,h,0x1907,0x1401,data)
         img=self.Image.frombytes('RGB',(w,h),data.raw).transpose(self.Image.Transpose.FLIP_TOP_BOTTOM)
-        return img.resize((width,height),self.Image.Resampling.LANCZOS)
+        return img if img.size==(width,height) else img.resize((width,height),self.Image.Resampling.LANCZOS)
     def close(self):
         if self.closed:return
         self.closed=True;self.make_current(self.dc,self.context)

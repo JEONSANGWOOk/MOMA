@@ -14,10 +14,16 @@ def vector(text,size=3):
 def identity():return ((1.,0.,0.,0.),(0.,1.,0.,0.),(0.,0.,1.,0.),(0.,0.,0.,1.))
 
 
-def multiply(a,b):return tuple(tuple(sum(a[i][k]*b[k][j] for k in range(4)) for j in range(4)) for i in range(4))
+def multiply(a,b):
+    # Fixed 4x4 transforms are a rendering/FK hot path. Avoid creating a
+    # generator and calling sum for each of the sixteen output components.
+    columns=tuple(zip(*b))
+    return tuple(tuple(row[0]*c[0]+row[1]*c[1]+row[2]*c[2]+row[3]*c[3] for c in columns) for row in a)
 
 
-def point(matrix,p):return tuple(sum(matrix[i][j]*p[j] for j in range(3))+matrix[i][3] for i in range(3))
+def point(matrix,p):
+    x,y,z=p
+    return tuple(row[0]*x+row[1]*y+row[2]*z+row[3] for row in matrix[:3])
 
 
 def axis_rotation(axis,angle):
