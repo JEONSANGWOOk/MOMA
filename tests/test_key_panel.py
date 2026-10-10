@@ -24,17 +24,15 @@ class KeyTests(unittest.TestCase):
         self.servo.start_key();seen=set()
         for _ in range(1400):
             seen.add(self.servo.stage);self.frame(moving)
-            if self.scene.unlocked or not self.servo.enabled:break
+            if self.servo.completed or not self.servo.enabled:break
         self.assertTrue(self.scene.unlocked,self.servo.status)
-        f=self.scene.feedback();self.assertLess(abs(f['depth_mm']-22),.3)
-        self.assertLess(abs(f['turn_deg']-90),.4);self.assertLess(f['lateral_mm'],.25)
-        self.assertTrue({'ALIGN','APPROACH','INSERT','TURN'}<=seen)
+        self.assertTrue(self.servo.completed,self.servo.status)
+        f=self.scene.feedback();self.assertLess(abs(f['depth_mm']+100),.3)
+        self.assertLess(abs(f['turn_deg']-30),.4);self.assertLess(f['lateral_mm'],.25)
+        self.assertTrue({'ALIGN','APPROACH','INSERT','TURN','RETRACT'}<=seen)
 
     def test_insert_rotate_and_withdraw(self):
-        self.cycle();self.servo.withdraw()
-        for _ in range(600):
-            self.frame()
-            if self.servo.stage=='HOLD' or not self.servo.enabled:break
+        self.cycle()
         self.assertEqual(self.servo.stage,'HOLD',self.servo.status)
         self.assertLess(self.scene.feedback()['depth_mm'],-99)
         self.assertTrue(self.scene.unlocked)

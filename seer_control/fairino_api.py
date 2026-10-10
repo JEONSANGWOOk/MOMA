@@ -184,8 +184,8 @@ class SDKEngine:
         from .visual_servo import norm
         validate(self.config,True)
         stage=spec.get('stage')
-        if stage not in ('ALIGN','APPROACH','INSERT','TURN','HOLD'):raise ValueError('실기 단계 오류')
-        c=calibration(spec['calibration'],stage in ('INSERT','TURN') or spec['calibration'].get('contact_verified') is True)
+        if stage not in ('ALIGN','APPROACH','INSERT','TURN','RETRACT','HOLD'):raise ValueError('실기 단계 오류')
+        c=calibration(spec['calibration'],stage in ('INSERT','TURN','RETRACT') or spec['calibration'].get('contact_verified') is True)
         target=vector(spec['target'],'실기 열쇠 목표');expires=float(spec['expires'])
         if not math.isfinite(expires) or not 0<=expires-time.monotonic()<=.25:raise ValueError('실기 명령 250 ms 유효시간 초과')
         state=self.panel_status()
@@ -197,14 +197,15 @@ class SDKEngine:
         local=apply(transpose([row[:3] for row in socket[:3]]),[target[i]-socket[i][3] for i in range(3)])
         if stage in ('ALIGN','APPROACH') and -local[2]>-4.9:raise ValueError('공중 정렬·접근은 슬롯 5 mm 앞에서 제한됩니다.')
         if -local[2]>c['insert_mm']+.2:raise ValueError('실측 삽입 깊이 초과')
-        if stage=='TURN':
+        if stage in ('TURN','RETRACT'):
             actual_local=apply(transpose([row[:3] for row in socket[:3]]),[current[i]-socket[i][3] for i in range(3)])
             axis=pose_matrix(current)
             tilt=math.degrees(math.acos(max(-1,min(1,sum(axis[i][2]*(-socket[i][2]) for i in range(3))))))
-            if -actual_local[2]<c['insert_mm']-.2 or norm(actual_local[:2])>.2 or tilt>.5:raise ValueError('실제 삽입·정렬 확인 없이 회전 불가')
+            if stage=='TURN' and (-actual_local[2]<c['insert_mm']-.2 or norm(actual_local[:2])>.2 or tilt>.5):raise ValueError('실제 삽입·정렬 확인 없이 회전 불가')
+            if stage=='RETRACT' and (-local[2]>-actual_local[2]+.02 or (-actual_local[2]>0 and (norm(actual_local[:2])>.2 or norm(local[:2])>.2 or tilt>.5))):raise ValueError('열쇠 후퇴 방향·접촉 정렬 조건 미충족')
         if math.dist(current[:3],target[:3])>.501 or math.degrees(norm(rotation_error(pose_matrix(target),pose_matrix(current))))>.251:raise ValueError('실기 단일 명령 0.5 mm / 0.25° 초과')
         if not in_workspace(c,current[:3]) or not in_workspace(c,target[:3]):raise ValueError('실기 작업 범위 초과')
-        if stage in ('INSERT','TURN') or c.get('contact_verified') is True:
+        if stage in ('INSERT','TURN','RETRACT') or c.get('contact_verified') is True:
             f=vector(state.get('force_torque'),'힘/토크 센서')
             if norm(f[:3])>=c['force_limit_n'] or norm(f[3:])>=c['torque_limit_nm']:raise ValueError('힘/토크 보호 임계값 초과')
         if time.monotonic()>expires:raise ValueError('실기 명령 유효시간 초과')

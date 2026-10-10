@@ -11,9 +11,12 @@ from seer_control.arm_workspace import ArmCanvas
 from seer_control.geometry3d import RobotDescription
 from seer_control.fairino_model import installed
 from seer_control.decision_log import DecisionJournal
-from seer_control.vision_stream import read_frame
+from seer_control.vision_stream import read_frame,publish_frame
 from seer_control.key_panel import KeyTool,KeyPanelPhysics,KeyPanelScene,KeyServo
 from seer_control.key_panel_twin import KeyTwin,KeyPanelLink,metres
+from seer_control.live_servo_start import LiveServoStart
+from seer_control.hybrid_key_target import HybridKeyTarget
+from seer_control.photo_screen_stream import photo_record
 from seer_control.key_panel_link_ui import KeyLinkPane
 from seer_control.key_panel_real import socket_frame,pose_matrix
 
@@ -34,12 +37,16 @@ def build_workspace(parent=None,args=None):
     sim=ArmSimulator(RobotDescription.load(installed(Path.home()/'.seer_amr_console') or ROOT/'examples/fairino_fr5.urdf'),decision_journal=journal)
     initialize_panel_arm(sim);sim.physics=KeyPanelPhysics(sim.kin)
     sim.physics.decision_journal=journal
-    mission=BoardArmMission(sim,journal)
+    mission=BoardArmMission(sim,journal);mission.allow_photo_screen=False
     try:mission.config=validate_board(json.loads((ROOT/'.delivery/d455_board.json').read_text(encoding='utf-8')))
     except (OSError,ValueError):mission.config=make_board([dict(dictionary='DICT_4X4_1000',id=0),dict(dictionary='DICT_5X5_1000',id=0)],[100,100],130,'depth_estimate')
     tool=KeyTool(mission);scene=KeyPanelScene(mission,tool);servo=KeyServo(mission,scene)
     twin=KeyTwin(sim.kin.asset);link=KeyPanelLink(twin,journal)
     twin.sim.q=list(sim.q)
+    live_start=LiveServoStart();preview_active=False
+    hybrid=HybridKeyTarget();hybrid_enabled=tk.BooleanVar(value=False);applied_hybrid=False
+    registered_config=dict(mission.config)
+    publish_frame(ROOT/'.delivery/photo_screen_enable.json',dict(enabled=False))
     visited_modes=['SIM']
     if args.smoke_compare:
         from seer_control.geometry3d import multiply,transform
@@ -58,7 +65,7 @@ def build_workspace(parent=None,args=None):
         r=matmul(t,FRONT);origin=[t[i][3]*1000+t[i][2]*100 for i in range(3)]
         twin.socket=[list(r[i])+[origin[i]] for i in range(3)]+[[0,0,0,1]]
     top=ttk.Frame(root,padding=10);top.pack(fill='x')
-    ttk.Label(top,text='전기 판넬 · 원통 열쇠 정렬 → 삽입 → 90° 회전 · SIM 실린더 해제',font=('맑은 고딕',16,'bold')).pack(anchor='w')
+    ttk.Label(top,text='전기 판넬 · 원통 열쇠 정렬 → 삽입 → 30° 회전 → 자동 후퇴',font=('맑은 고딕',16,'bold')).pack(anchor='w')
     ttk.Label(top,text='AMR: MOMA 상단 모드 · FR5: 아래 SIM/REAL/SIM+REAL | 파란 반투명: SIM 예측 · 원래 색: REAL 측정 | 실제 동작은 실측 보정값 사용').pack(anchor='w',pady=4)
     if args.smoke_compare:ttk.Label(top,text='GUI 검증용 합성 피드백 · 실제 로봇 연결 없음 · 실기 명령 전송 불가',foreground='#b33d35').pack(anchor='w')
     def mode_changed(mode):
@@ -73,28 +80,52 @@ def build_workspace(parent=None,args=None):
         canvas.render()
     pane=KeyLinkPane(root,link,ROOT,mode_changed);pane.pack(fill='x',padx=10,pady=3)
     controls=ttk.Frame(root,padding=(10,3));controls.pack(fill='x')
-    combo=ttk.Combobox(controls,textvariable=source,values=['내장 모의 카메라','D455 실시간'],state='readonly',width=20);combo.pack(side='left',padx=4)
+    combo=ttk.Combobox(controls,textvariable=source,values=['내장 모의 카메라','D455 실시간','사진 화면 추종 (SIM)'],state='readonly',width=20);combo.pack(side='left',padx=4)
     def perform(fn):
         try:fn()
         except (ValueError,TypeError,KeyError) as error:servo.stop(str(error));status.set(str(error));mission.report(str(error))
     def switch(event=None):
-        nonlocal record,requested
+        nonlocal record,requested,preview_active
+        live_start.cancel();preview_active=False;hybrid.reset();servo.require_visual_target=False;servo.visual_target_ready=True
         if link.plan or (link.busy and link.pending_kind=='step'):
             source.set('D455 실시간');link.report('실기 작업 정지 후 영상 소스를 변경하세요.');return
         if link.mode!='SIM' and source.get()!='D455 실시간':
             source.set('D455 실시간');link.report('REAL/동시 모드는 실제 D455 영상을 사용합니다.');return
         if servo.enabled:servo.stop('영상 소스 변경')
+        mission.allow_photo_screen=source.get()=='사진 화면 추종 (SIM)'
+        publish_frame(ROOT/'.delivery/photo_screen_enable.json',dict(enabled=mission.allow_photo_screen))
+        if mission.allow_photo_screen:
+            profile=json.loads((ROOT/'.delivery/d455_photo_screen.json').read_text(encoding='utf-8'))
+            mission.config=dict(registered_config,revision=profile['revision'])
+        elif mission.config['revision']!=registered_config['revision']:mission.config=dict(registered_config)
         sim.physics.objects=[tool.key];scene.parts.clear();scene.meshes.clear();scene.walls.clear();scene.center=None;scene.r=None
-        scene.unlocked=False;scene.rotor_deg=0;mission.reference=None;mission.latest=None;mission.stable=0;mission.stamp=None
-        initialize_panel_arm(sim);tool.sync();record=None;requested=False;servo.stage='IDLE';servo.errors={}
+        scene.unlocked=False;scene.rotor_deg=0;scene.mouth_mm=KeyPanelScene.mouth_mm;mission.reference=None;mission.latest=None;mission.stable=0;mission.stamp=None
+        initialize_panel_arm(sim);tool.sync();record=None;requested=False;servo.stage='IDLE';servo.errors={};servo.completed=False
     combo.bind('<<ComboboxSelected>>',switch)
     ttk.Checkbutton(controls,text='모의 판넬 이동·회전',variable=moving).pack(side='left',padx=6)
     ttk.Checkbutton(controls,text='마커 소실 시험',variable=lost).pack(side='left',padx=6)
     ttk.Checkbutton(controls,text='일치하는 열쇠',variable=correct).pack(side='left',padx=6)
+    def change_hybrid():
+        nonlocal applied_hybrid
+        if hybrid_enabled.get()==applied_hybrid:return
+        if servo.enabled or link.plan or (link.busy and link.pending_kind=='step') or (scene.r and scene.feedback()['depth_mm']>0):
+            hybrid_enabled.set(applied_hybrid);status.set('작업 정지 및 열쇠 후퇴 후 추종 방식을 변경하세요.');return
+        applied_hybrid=hybrid_enabled.get()
+        live_start.cancel();hybrid.reset();servo.require_visual_target=False;servo.visual_target_ready=True
+        if not hybrid_enabled.get():scene.mouth_mm=KeyPanelScene.mouth_mm
+        status.set('마커 + 손잡이·구멍 인식 선택 · 구멍 등록 후 시작하세요.' if hybrid_enabled.get() else '마커만 선택 · 구멍 좌우/상하 값을 확인하고 D455 추종을 시작하세요.')
+    ttk.Button(controls,text='사진 추종 시작 (SIM)',command=lambda:perform(request_photo)).pack(side='left',padx=5)
+    tracking=ttk.Frame(root,padding=(10,3));tracking.pack(fill='x')
+    ttk.Label(tracking,text='D455 추종 방식 (SIM)').pack(side='left',padx=4)
+    ttk.Radiobutton(tracking,text='마커만',variable=hybrid_enabled,value=False,command=change_hybrid).pack(side='left',padx=6)
+    ttk.Radiobutton(tracking,text='마커 + 손잡이·구멍 인식',variable=hybrid_enabled,value=True,command=change_hybrid).pack(side='left',padx=6)
+    ttk.Label(tracking,text='마커만: 이미지 등록 없이 두 마커의 중간점 + 아래 구멍 위치 값 사용').pack(side='left',padx=8)
     entryrow=ttk.Frame(root,padding=(10,3));entryrow.pack(fill='x');ttk.Label(entryrow,text='SIM 전용 값',foreground='#315c93').pack(side='left')
     for k,label in [('x','구멍 좌우 mm'),('y','구멍 상하 mm'),('speed','보정 mm/s'),('insert','삽입 mm/s'),('turn','회전 °/s')]:
         ttk.Label(entryrow,text=label).pack(side='left',padx=(8,2));ttk.Entry(entryrow,textvariable=fields[k],width=7).pack(side='left')
     def begin():
+        if servo.enabled:status.set('실시간 추종 중 · 시작 요청 무시');return
+        if preview_active and link.mode=='SIM':request_live();return
         if link.mode!='SIM':
             if servo.enabled:servo.stop('실측 목표의 통합 작업 시작')
             link.start(record,pane.contact.get());return
@@ -102,18 +133,45 @@ def build_workspace(parent=None,args=None):
         if servo.enabled:raise ValueError('진행 중입니다. 먼저 정지하세요.')
         if scene.feedback()['depth_mm']>0:raise ValueError('먼저 열쇠를 후퇴하세요.')
         x,y=float(fields['x'].get()),float(fields['y'].get());insert=float(fields['insert'].get());turn=float(fields['turn'].get())
-        if not all(math.isfinite(v) for v in (x,y,insert,turn)) or not -50<=x<=50 or not 80<=y<=160:raise ValueError('구멍 좌우 ±50 / 상하 80~160 mm')
+        use_hybrid=hybrid_enabled.get() and source.get()=='D455 실시간'
+        if source.get()=='사진 화면 추종 (SIM)':x=y=0.;fields['x'].set('0');fields['y'].set('0')
+        if use_hybrid:
+            if not hybrid.update(record,mission.config['revision'],time.time()):raise ValueError('손잡이·구멍 등록 후 검출을 기다리세요: '+hybrid.status)
+            x,y=hybrid.offset;z=record['handle_target']['board_xyz_mm'][2]
+            scene.mouth_mm=z;fields['x'].set(f'{x:.2f}');fields['y'].set(f'{y:.2f}')
+        if not all(math.isfinite(v) for v in (x,y,insert,turn)) or not -250<=x<=250 or not -350<=y<=350:raise ValueError('구멍 좌우 ±250 / 상하 ±350 mm')
         if not 1<=insert<=20 or not 5<=turn<=45:raise ValueError('삽입 1~20 mm/s / 회전 5~45 °/s')
         # Rebuild the physical handle at the configured calibrated board offset.
         sim.physics.objects=[tool.key];scene.parts.clear();scene.meshes.clear();scene.walls.clear();scene.offset=[x,y]
-        scene.sync();servo.configure_speed(float(fields['speed'].get()),60);servo.insert_speed=insert;servo.turn_speed=turn;servo.start_key()
+        scene.sync();servo.require_visual_target=use_hybrid;servo.visual_target_ready=True
+        servo.configure_speed(float(fields['speed'].get()),60);servo.insert_speed=insert;servo.turn_speed=turn;servo.start_key()
     buttons=ttk.Frame(root,padding=(10,6));buttons.pack(fill='x')
+    def request_photo():
+        if link.mode!='SIM':raise ValueError('화면 사진 추종은 SIM 전용입니다.')
+        if servo.enabled:status.set('실시간 추종 중 · 시작 요청 무시');return
+        if scene.r and scene.feedback()['depth_mm']>0:raise ValueError('열쇠 후퇴 후 사진 기준으로 바꾸세요.')
+        if not (ROOT/'.delivery/d455_photo_screen.json').exists():raise ValueError('첨부 제품 사진 등록이 필요합니다.')
+        source.set('사진 화면 추종 (SIM)');switch();camera.start();live_start.request('SIM')
+        status.set('화면 사진 검출 대기 · 실제 깊이 없는 SIM 시험')
+    def request_live():
+        nonlocal registered_config
+        if link.mode!='SIM':raise ValueError('실기 작업은 선택 모드 작업 시작 버튼을 사용하세요.')
+        if servo.enabled:status.set('실시간 추종 중 · 시작 요청 무시');return
+        if scene.r and scene.feedback()['depth_mm']>0:raise ValueError('열쇠 후퇴 후 영상 기준을 바꾸세요.')
+        camera.start()
+        try:mission.config=validate_board(json.loads((ROOT/'.delivery/d455_board.json').read_text(encoding='utf-8')))
+        except (OSError,ValueError):pass
+        registered_config=dict(mission.config)
+        source.set('D455 실시간');switch();live_start.request(link.mode)
+        status.set('D455 실시간 시작 대기 · 등록된 두 마커를 보여주세요.')
+    ttk.Button(buttons,text='D455 실시간 추종 시작 (SIM)',command=lambda:perform(request_live)).pack(side='left',padx=4)
     ttk.Button(buttons,text='선택 모드 작업 시작',command=lambda:perform(begin)).pack(side='left',padx=4)
     def withdraw():
         if link.mode!='SIM':raise ValueError('실기 자동 후퇴는 지원하지 않습니다. 정지 후 현장 제어기로 후퇴하세요.')
         servo.withdraw()
     ttk.Button(buttons,text='SIM 열쇠 후퇴',command=lambda:perform(withdraw)).pack(side='left',padx=4)
     def stop_all():
+        live_start.cancel()
         servo.stop('사용자 통합 정지')
         link.stop('사용자 통합 정지',force=bool(link.client.config))
     ttk.Button(buttons,text='SIM + FR5 정지',command=stop_all).pack(side='left',padx=4)
@@ -122,8 +180,9 @@ def build_workspace(parent=None,args=None):
         if servo.enabled:raise ValueError('먼저 정지하세요.')
         scene.reset_lock();switch()
     def model_preview():
+        nonlocal preview_active
         if link.mode!='SIM':raise ValueError('SIM 모드에서 사진 모델을 미리 보세요.')
-        source.set('내장 모의 카메라');switch()
+        source.set('내장 모의 카메라');switch();preview_active=True
         root.after(500,lambda:view(True))
     ttk.Button(buttons,text='사진 모델 미리보기 (SIM)',command=lambda:perform(model_preview)).pack(side='left',padx=4)
     ttk.Button(buttons,text='초기화',command=lambda:perform(reset)).pack(side='left',padx=4)
@@ -187,7 +246,9 @@ def build_workspace(parent=None,args=None):
     def close():
         nonlocal closing,closed
         if closed:return True
+        live_start.cancel()
         if servo.enabled:servo.stop('창 닫기')
+        publish_frame(ROOT/'.delivery/photo_screen_enable.json',dict(enabled=False))
         if link.plan:closing=standalone;link.stop('통합 창 닫기');return False
         if link.busy:link.report('FR5 요청/정지 응답을 기다리세요.');return False
         link.client.close()
@@ -195,7 +256,9 @@ def build_workspace(parent=None,args=None):
         if timer:root.after_cancel(timer)
         journal.close();root.destroy();return True
     if standalone:root.protocol('WM_DELETE_WINDOW',close)
-    root.key_panel_close=close;root.key_panel_stop=stop_all;root.key_panel_link=link;root.vision_camera=camera;root.key_panel_modes=pane;root.key_panel_status=status;root.key_model_preview=model_preview
+    root.key_panel_close=close;root.key_panel_stop=stop_all;root.key_panel_link=link;root.vision_camera=camera;root.key_panel_modes=pane;root.key_panel_status=status;root.key_model_preview=model_preview;root.key_live_start=request_live
+    root.key_panel_begin=begin;root.key_vision_source=source;root.key_live_pending=lambda:live_start.pending
+    root.key_photo_start=request_photo;root.key_hybrid_enabled=hybrid_enabled;root.key_change_tracking=change_hybrid
     def update():
         nonlocal record,camera_record,requested,last_draw,timer
         if closed:return
@@ -205,6 +268,7 @@ def build_workspace(parent=None,args=None):
             elapsed=now-started;motion=math.sin(elapsed*.35) if moving.get() else 0.
             record=dict(timestamp=now,vision_source='built_in_demo',board=dict(valid=not lost.get(),revision=mission.config['revision'],markers_used=2,
                 geometry_source='depth_estimate',camera_xyz_m=[motion*.006,0,.6],rotation_vector_rad=[math.pi-motion*.01,0,0],reprojection_px=.1))
+        elif source.get()=='사진 화면 추종 (SIM)':record=photo_record(camera_record,mission.config['revision'])
         else:record=camera_record
         link.tick(record);pane.refresh();camera.show_record(camera_record)
         fresh=link.client.connected and time.monotonic()-link.rx<=.6
@@ -246,10 +310,17 @@ def build_workspace(parent=None,args=None):
             perform(lambda:mission.set_reference(132));perform(scene.sync);view(False)
         if mission.reference and mission.latest:perform(scene.sync)
         if not (args.smoke_ui or args.smoke_compare) and (args.demo or args.smoke) and mission.reference and not requested:requested=True;perform(begin)
+        target_ready=True
+        if source.get()=='D455 실시간' and hybrid_enabled.get():
+            target_ready=hybrid.update(record,mission.config['revision'],now)
+            if servo.require_visual_target:
+                servo.visual_target_ready=target_ready
+                if target_ready:scene.retarget(hybrid.offset)
+        if source.get() in ('D455 실시간','사진 화면 추종 (SIM)'):live_start.tick(record,mission.reference is not None and mission.stable>=3 and target_ready,lambda:perform(begin),now)
         servo.tick(record,now=now);tool.sync()
         if scene.r:
             f=scene.feedback()
-            feedback.set(f"KAHL-1057-B(R) · 치수 추정 SIM\n영상: {source.get()}\n단계: {servo.stage}\n좌우·상하 오차: {f['lateral_mm']:.3f} mm\n삽입 깊이: {f['depth_mm']:+.3f} / {scene.insertion_mm:g} mm\n열쇠 SIM 회전: {f['turn_deg']:.2f} / 90°\n축 기울기: {f['axis_error_deg']:.3f}°\n잠금 상태: {'해제' if scene.unlocked else '잠김'}\n열쇠 코드: {'일치' if correct.get() else '불일치'}\n그리퍼 앞 TCP: +{tool.offset_mm:.0f} mm\n접촉·토크: 기하학 모델, 센서 측정 아님")
+            feedback.set(f"KAHL-1057-B(R) · 치수 추정 SIM\n영상: {source.get()}\n단계: {servo.stage} · 목표 갱신 {getattr(servo,'updates',0)}회\n좌우·상하 오차: {f['lateral_mm']:.3f} mm\n삽입 깊이: {f['depth_mm']:+.3f} / {scene.insertion_mm:g} mm\n열쇠 SIM 회전: {f['turn_deg']:.2f} / 30°\n축 기울기: {f['axis_error_deg']:.3f}°\n잠금 상태: {'해제' if scene.unlocked else '잠김'}\n열쇠 코드: {'일치' if correct.get() else '불일치'}\n그리퍼 앞 TCP: +{tool.offset_mm:.0f} mm\n접촉·토크: 기하학 모델, 센서 측정 아님")
             if now-last_draw>=.1 and root.winfo_viewable():
                 canvas.render();draw_detail(f);last_draw=now
                 w,h=canvas.winfo_width(),canvas.winfo_height()
@@ -260,8 +331,9 @@ def build_workspace(parent=None,args=None):
                 if tip:
                     x,y=tip[:2];canvas.create_oval(x-4,y-4,x+4,y+4,outline='#f7c447',width=2)
                     canvas.create_text(x+12,y+18,text='SIM 열쇠 끝',anchor='w',fill='#98601c')
-        status.set(servo.status if servo.stage!='IDLE' else ('준비 완료 · 시작 버튼을 누르세요' if mission.reference else '두 마커 인식 대기'))
-        if (args.smoke_ui and now-started>2) or (args.smoke and (scene.unlocked or failures or now-started>90 or (requested and not servo.enabled))):
+        waiting='사진 화면 검출 대기 · SIM 추정 깊이' if source.get()=='사진 화면 추종 (SIM)' else 'D455 결합 추종 대기 · '+hybrid.status if hybrid_enabled.get() else 'D455 실시간 시작 대기 · 등록된 두 마커 필요'
+        status.set(waiting if live_start.pending else servo.status if servo.stage!='IDLE' else '준비 완료 · 시작 버튼을 누르세요' if mission.reference else '사진 검출 대기' if mission.allow_photo_screen else '두 마커 인식 대기')
+        if (args.smoke_ui and now-started>2) or (args.smoke and (getattr(servo,'completed',False) or failures or now-started>90 or (requested and not servo.enabled))):
             from tools.window_capture import capture_window
             root.update_idletasks()
             capture_window(root,ROOT/'.delivery/d455_key_panel.png')

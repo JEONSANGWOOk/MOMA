@@ -74,22 +74,28 @@ class VisualServo:
             if len(raw[field])!=3 or any(not math.isfinite(v) for v in raw[field]):raise ValueError('원본 기준판 좌표 오류')
         if raw['camera_xyz_m'][2]<=0 or not math.isfinite(raw['reprojection_px']) or raw['reprojection_px']>2:
             raise ValueError('원본 기준판 깊이/재투영 오류')
-        if self.raw:
-            jump=math.dist(raw['camera_xyz_m'],self.raw['camera_xyz_m'])*1000
-            turn=math.degrees(norm(rotation_error(rotation(raw['rotation_vector_rad']),rotation(self.raw['rotation_vector_rad']))))
-            if jump>30 or turn>10:raise ValueError('원본 영상 급변 · 서보 정지')
+        if self.raw and not self.accept_raw_change(raw):
+            self.last_stamp=stamp
+            return
         dt=1/30 if self.last_stamp is None else min(.25,max(0.,stamp-self.last_stamp))
         if dt<=0:raise ValueError('영상 시간 역전 · 서보 정지')
         self.last_stamp=stamp;self.raw=copy.deepcopy(raw)
         return dt
 
-    def move_tip(self,target_r,target_mm,dt,velocity=None,precision=False):
+    def accept_raw_change(self,raw):
+        jump=math.dist(raw['camera_xyz_m'],self.raw['camera_xyz_m'])*1000
+        turn=math.degrees(norm(rotation_error(rotation(raw['rotation_vector_rad']),rotation(self.raw['rotation_vector_rad']))))
+        if jump>30 or turn>10:raise ValueError('원본 영상 급변 · 서보 정지')
+        return True
+
+    def move_tip(self,target_r,target_mm,dt,velocity=None,precision=False,angular_velocity=None):
         current=self.sim.kin.fk(self.sim.q);length=self.mission.tool_offset_mm
         p=[current[i][3]*1000+current[i][2]*length for i in range(3)]
         error=[target_mm[i]-p[i] for i in range(3)];angular=rotation_error(target_r,current)
         alpha=1-math.exp(-self.gain*dt);velocity=velocity or [0.,0.,0.]
         step=limited([alpha*v+velocity[i]*dt for i,v in enumerate(error)],self.speed_mm_s*dt)
-        delta=limited([alpha*v for v in angular],math.radians(self.angular_deg_s)*dt)
+        angular_velocity=angular_velocity or [0.,0.,0.]
+        delta=limited([alpha*v+angular_velocity[i]*dt for i,v in enumerate(angular)],math.radians(self.angular_deg_s)*dt)
         r=matmul(rotation(delta),[list(row[:3]) for row in current[:3]])
         pose=pose_from_matrix(r,[p[i]+step[i]-r[i][2]*length for i in range(3)])
         q=self.sim.kin.ik(pose,self.sim.q,position_tolerance=.000002 if precision else .00001,rotation_tolerance=.0001)

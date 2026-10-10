@@ -11,7 +11,7 @@ def calibrated():
     c=template();c.update(verified=True,key_tcp_confirmed=True,board_revision='measured',tool=1,
         T_base_camera_mm=[list(r) for r in identity()],T_board_socket_mm=[list(r) for r in identity()],
         T_socket_key_zero_mm=[list(r) for r in transform(rpy=(math.pi,0,0))],workspace_min_mm=[-100,-100,500],workspace_max_mm=[100,100,700],
-        standby_mm=25,insert_mm=5,turn_deg=90,version_confirmed=True,controller_version='3.9.8',
+        standby_mm=25,insert_mm=5,turn_deg=30,version_confirmed=True,controller_version='3.9.8',
         contact_verified=True,force_sensor_verified=True,controller_guard_verified=True,force_limit_n=5,torque_limit_nm=.5)
     return c
 
@@ -45,6 +45,20 @@ class RealTests(unittest.TestCase):
         s=socket_frame(self.c,self.record,100)
         self.assertAlmostEqual(s[0][3],37);self.assertAlmostEqual(s[2][3],600)
 
+    def test_measured_hybrid_center_changes_target_and_rejects_estimates(self):
+        self.c.update(hybrid_target_verified=True,hybrid_target_revision='hole')
+        self.record['handle_target']=dict(valid=True,confidence=.95,profile_revision='hole',board_revision='measured',dimension_source='measured',board_xyz_mm=[.6,-.3,0.])
+        s=socket_frame(self.c,self.record,100);self.assertAlmostEqual(s[0][3],.6);self.assertAlmostEqual(s[1][3],-.3)
+        for mode in ('missing','estimated','revision','height','range'):
+            r=copy.deepcopy(self.record)
+            if mode=='missing':r.pop('handle_target')
+            if mode=='estimated':r['handle_target']['dimension_source']='estimated_plane'
+            if mode=='revision':r['handle_target']['profile_revision']='other'
+            if mode=='height':r['handle_target']['board_xyz_mm'][2]=1
+            if mode=='range':r['handle_target']['board_xyz_mm'][0]=11
+            with self.subTest(mode=mode):
+                with self.assertRaises(ValueError):socket_frame(self.c,r,100)
+
     def test_synthetic_estimated_stale_and_wrong_revision_rejected(self):
         for change in ('demo','estimate','stale','revision'):
             r=copy.deepcopy(self.record)
@@ -71,12 +85,28 @@ class RealTests(unittest.TestCase):
                 self.feedback['tcp_mm_deg']=target;commands+=1
             if p.stage=='HOLD':break
         self.assertEqual(p.stage,'HOLD');self.assertGreater(commands,0)
-        self.assertAlmostEqual(self.feedback['tcp_mm_deg'][2],595 if contact else 605,delta=.12)
-        if contact:self.assertTrue({'INSERT','TURN'}<=seen);self.assertAlmostEqual(p.evidence['actual_turn_deg'],90,delta=.31)
+        self.assertAlmostEqual(self.feedback['tcp_mm_deg'][2],625 if contact else 605,delta=.12)
+        if contact:
+            self.assertTrue({'INSERT','TURN','RETRACT'}<=seen);self.assertAlmostEqual(p.evidence['actual_turn_deg'],30,delta=.31)
+            self.assertTrue(p.completed)
         else:self.assertFalse({'INSERT','TURN'}&seen)
 
     def test_air_approach_stops_before_slot(self):self.run_plan(False)
     def test_contact_sequence_from_measured_feedback(self):self.run_plan(True)
+
+    def test_old_ninety_degree_calibration_is_rejected(self):
+        self.c['turn_deg']=90
+        with self.assertRaises(ValueError):calibration(self.c,True)
+
+    def test_worker_retreats_outward_and_preserves_force_guard(self):
+        spec=self.spec();spec['stage']='RETRACT';self.robot.tcp=[0,0,595,180,0,0];spec['target']=[0,0,595.1,180,0,0]
+        self.engine.panel_step(spec);self.robot.MoveL.assert_called_once()
+        self.setUp();spec=self.spec();spec['stage']='RETRACT';self.robot.tcp=[0,0,595,180,0,0];spec['target']=[0,0,594.9,180,0,0]
+        with self.assertRaisesRegex(ValueError,'후퇴'):self.engine.panel_step(spec)
+        self.robot.MoveL.assert_not_called()
+        spec['target'][2]=595.1;self.robot.FT_GetForceTorqueRCS.return_value=(0,[6,0,0,0,0,0])
+        with self.assertRaisesRegex(ValueError,'힘/토크'):self.engine.panel_step(spec)
+        self.robot.MoveL.assert_not_called()
 
     def spec(self):return dict(target=[0,0,624.5,180,0,0],expires=time.monotonic()+.25,stage='APPROACH',calibration=self.c,socket_base_mm=[list(r) for r in transform((0,0,600))])
 

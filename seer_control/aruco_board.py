@@ -94,7 +94,8 @@ class BoardArmMission:
             if not math.isfinite(stamp) or not -.1<=now-stamp<=.7:raise ValueError('영상 수신 지연')
             if not board.get('valid'):raise ValueError(board.get('reason','기준판 미검출'))
             if self.config is None or board['revision']!=self.config['revision']:raise ValueError('등록 설정 적용 대기')
-            if board['markers_used']!=2:raise ValueError('기준 마커 두 개 필요')
+            photo=getattr(self,'allow_photo_screen',False) and record.get('vision_source')=='photo_screen_sim' and board.get('geometry_source')=='photo_screen_estimate' and board.get('markers_used')==0
+            if board['markers_used']!=2 and not photo:raise ValueError('기준 마커 두 개 필요')
             if not math.isfinite(board['reprojection_px']) or board['reprojection_px']>2:raise ValueError('기준판 재투영 오차 초과')
             for field in ('camera_xyz_m','rotation_vector_rad'):
                 if len(board[field])!=3 or any(not math.isfinite(v) for v in board[field]):raise ValueError('기준판 좌표 오류')

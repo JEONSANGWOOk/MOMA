@@ -90,6 +90,13 @@ class KeyPanelScene:
 
     def hole(self):return self.world(self.offset+[self.mouth_mm])
 
+    def retarget(self,offset):
+        delta=[b-a for a,b in zip(self.offset,offset)]
+        for obj,local,_ in self.meshes:
+            if obj['name'] in ('전기 판넬 본체','판넬 문') or obj['name'].startswith('힌지 '):continue
+            local[0]+=delta[0];local[1]+=delta[1]
+        self.offset=list(offset)
+
     def feedback(self,q=None):
         p=self.tool.tip_mm(q);local=apply(transpose(self.r),[a-b for a,b in zip(p,self.center)])
         current=self.sim.kin.fk(self.sim.q if q is None else q)
@@ -162,7 +169,7 @@ class KeyPanelScene:
             for polygons,color,name in handle_meshes(self.model)+socket_meshes(self.model,math.radians(self.rotor_deg)):
                 mesh(t,polygons,color,name)
             # Visual marker plates establish their actual metric centers, no invented IDs.
-            for index,m in enumerate(self.mission.config['markers']):
+            for index,m in enumerate([] if getattr(self.mission,'allow_photo_screen',False) else self.mission.config['markers']):
                 local=[(-1 if index==0 else 1)*self.mission.config['spacing_mm']/2,0,2.2]
                 t=matrix(self.r,self.world(local));s=m['side_mm']/1000
                 mesh(t,box((s,s,.0004)),'#f2f3f4','marker_paper')
@@ -173,13 +180,14 @@ class KeyPanelScene:
 
 
 class KeyServo(VisualServo):
+    turn_goal_deg=30.
     def __init__(self,mission,scene):
-        super().__init__(mission);self.scene=scene;self.turn=0.;self.insert_speed=10.;self.turn_speed=30.
+        super().__init__(mission);self.scene=scene;self.turn=0.;self.insert_speed=10.;self.turn_speed=30.;self.updates=0;self.reacquire=None;self.reacquire_count=0;self.completed=False;self.require_visual_target=False;self.visual_target_ready=True
 
     def start_key(self):
         if self.scene.unlocked:raise ValueError('이미 잠금해제 상태입니다. 후퇴 후 초기화하세요.')
         self.start([0,0],100,20)
-        self.distance=self.scene.mouth_mm+100;self.turn=0.;self.lock=0
+        self.distance=self.scene.mouth_mm+100;self.turn=0.;self.lock=0;self.updates=0;self.reacquire=None;self.reacquire_count=0;self.completed=False
         self.report('열쇠 정렬 시작',dict(hole_offset_mm=self.scene.offset,insert_mm=self.scene.insertion_mm))
 
     def withdraw(self):
@@ -189,51 +197,82 @@ class KeyServo(VisualServo):
         self.distance=f['tip_local_mm'][2];self.turn=f['turn_deg'];self.stage='RETRACT';self.lock=0
         self.last_stamp=None;self.raw=None;self.feedforward=None;self.enabled=True
 
+    def accept_raw_change(self,raw):
+        import copy
+        def changed(a,b,mm,deg):
+            return math.dist(a['camera_xyz_m'],b['camera_xyz_m'])*1000>mm or math.degrees(norm(rotation_error(rotation(a['rotation_vector_rad']),rotation(b['rotation_vector_rad']))))>deg
+        if not changed(raw,self.raw,30,10):
+            self.reacquire=None;self.reacquire_count=0
+            return True
+        # Only a free-space SIM can reacquire a moved target. A key already
+        # inserted into the socket retains the strict contact-motion guard.
+        if self.scene.feedback()['depth_mm']>0:return super().accept_raw_change(raw)
+        self.reacquire_count=self.reacquire_count+1 if self.reacquire and not changed(raw,self.reacquire,15,5) else 1
+        self.reacquire=copy.deepcopy(raw)
+        self.feedforward=None;self.lock=0
+        if self.reacquire_count<3:
+            self.report('마커 이동 재확인 · 추종 유지 · 전진 보류',dict(confirmation_frames=self.reacquire_count),action='새 위치 3프레임 확인 대기')
+            return False
+        self.reacquire=None;self.reacquire_count=0
+        return True
+
     def tick(self,record,now=None):
         if not self.enabled:return
         import time
         try:
             dt=self.read_sample(record,time.time() if now is None else now)
             if dt is None:return
+            # A slow GUI/IK cycle must not turn elapsed camera time into a large
+            # swept motion and an ever slower next cycle. Drop missed steps.
+            sample_dt=dt;dt=min(dt,1/30)
+            self.updates+=1
             s=self.scene;f=s.sync();n=[row[2] for row in s.r]
             target_r=matmul(s.nominal(),rotation([0,0,math.radians(self.turn)]))
             angle=math.degrees(norm(rotation_error(target_r,self.sim.kin.fk(self.sim.q))))
-            aligned=f['lateral_mm']<=.20 and angle<=.3
+            aligned=f['lateral_mm']<=.20 and angle<=.3 and (not self.require_visual_target or self.visual_target_ready)
             if self.stage=='APPROACH' and aligned:self.distance=max(s.mouth_mm+5,self.distance-self.approach_mm_s*dt)
             if self.stage=='INSERT' and aligned:self.distance=max(s.mouth_mm-s.insertion_mm,self.distance-self.insert_speed*dt)
             if self.stage=='RETRACT' and f['lateral_mm']<=1.5 and angle<=1:self.distance=min(s.mouth_mm+100,self.distance+self.retract_mm_s*dt)
-            if self.stage=='TURN':
+            if self.stage=='TURN' and (not self.require_visual_target or self.visual_target_ready):
                 if not s.can_turn(f):raise ValueError('삽입 깊이/정렬/열쇠 일치 조건 미충족: 회전 정지')
-                self.turn=min(90.,self.turn+self.turn_speed*dt)
+                self.turn=min(self.turn_goal_deg,self.turn+self.turn_speed*dt)
                 target_r=matmul(s.nominal(),rotation([0,0,math.radians(self.turn)]))
             goal=s.world(s.offset+[self.distance]);error=math.dist(goal,f['tip_world_mm'])
-            converged=error<=.15 and angle<=.3
+            converged=error<=.15 and angle<=.3 and (not self.require_visual_target or self.visual_target_ready or self.stage in ('RETRACT','HOLD'))
             self.lock=self.lock+1 if converged else 0
             if self.stage=='ALIGN' and self.lock>=3:self.stage='APPROACH';self.lock=0
             elif self.stage=='APPROACH' and self.distance<=s.mouth_mm+5 and self.lock>=3:self.stage='INSERT';self.lock=0
             elif self.stage=='INSERT' and self.distance<=s.mouth_mm-s.insertion_mm and self.lock>=5:
                 if not s.can_turn(f):raise ValueError('키가 일치하지 않거나 완전 삽입이 확인되지 않았습니다.')
                 self.stage='TURN';self.lock=0
-            elif self.stage=='TURN' and self.turn>=90 and abs(f['turn_deg']-90)<=.3 and self.lock>=5:
+            elif self.stage=='TURN' and self.turn>=self.turn_goal_deg and abs(f['turn_deg']-self.turn_goal_deg)<=.3 and self.lock>=5:
                 if not s.can_turn(f):raise ValueError('잠금해제 조건 미충족')
-                s.unlocked=True;self.stage='HOLD_UNLOCKED';self.lock=0
-            elif self.stage=='RETRACT' and self.distance>=s.mouth_mm+100 and self.lock>=5:self.stage='HOLD';self.lock=0
-            velocity=[0.,0.,0.]
-            anchor=s.hole()
-            if self.feedforward is not None:velocity=limited([(a-b)/dt for a,b in zip(anchor,self.feedforward)],self.speed_mm_s)
-            self.feedforward=anchor
-            self.move_tip(target_r,goal,dt,velocity,precision=True)
+                s.unlocked=True;self.stage='RETRACT';self.lock=0
+            elif self.stage=='RETRACT' and self.distance>=s.mouth_mm+100 and self.lock>=5:self.stage='HOLD';self.lock=0;self.completed=s.unlocked
+            velocity=[0.,0.,0.];angular_velocity=[0.,0.,0.]
+            # Compare the two board poses at identical commanded depth so advancing
+            # the key cannot masquerade as marker motion or double the insertion speed.
+            anchor=s.world(s.offset+[self.distance])
+            if self.feedforward is not None:
+                old_center,old_r=self.feedforward
+                old_offset=apply(old_r,s.offset+[self.distance])
+                old_anchor=[a+b for a,b in zip(old_center,old_offset)]
+                velocity=limited([(a-b)/sample_dt for a,b in zip(anchor,old_anchor)],self.speed_mm_s)
+                angular_velocity=limited([v/sample_dt for v in rotation_error(s.r,old_r)],math.radians(self.angular_deg_s))
+            self.feedforward=(list(s.center),[list(row) for row in s.r])
+            self.move_tip(target_r,goal,dt,velocity,precision=True,angular_velocity=angular_velocity)
             f=s.sync();self.errors=dict(f,target_tcp_mm=goal,position_error_mm=math.dist(goal,f['tip_world_mm']),
                 angle_error_deg=math.degrees(norm(rotation_error(target_r,self.sim.kin.fk(self.sim.q)))),
                 command_depth_mm=s.mouth_mm-self.distance,command_turn_deg=self.turn,
                 revision=self.revision,sample_timestamp=self.last_stamp,vision_source=record.get('vision_source','D455'),
                 camera_board_xyz_m=list(self.mission.latest['camera_xyz_m']),
-                camera_board_rvec_rad=list(self.mission.latest['rotation_vector_rad']),
+                camera_board_rvec_rad=list(self.mission.latest['rotation_vector_rad']),tracking_updates=self.updates,
+                advance_paused_for_alignment=self.stage in ('APPROACH','INSERT') and not aligned,
                 alignment_confirmed=aligned,rotation_allowed=s.can_turn(f),consecutive_confirmed_frames=self.lock,
                 rotation_requirements=dict(min_depth_mm=s.insertion_mm-.3,max_lateral_mm=.25,max_axis_deg=.5,matching_key=True),
-                collision_checks=True,source='simulated_FK_feedback')
+                collision_checks=True,completed=self.completed,visual_target_required=self.require_visual_target,visual_target_ready=self.visual_target_ready,source='simulated_FK_feedback')
             labels=dict(ALIGN='마커 기준 열쇠 위치·자세 정렬',APPROACH='정렬 확인 후 슬롯 앞까지 접근',
                 INSERT='횡방향·각도 확인하며 삽입',TURN='완전 삽입·키 일치 확인 후 회전',
-                HOLD_UNLOCKED='실제 90° 회전 확인 · 잠금해제 자세 추종',RETRACT='현재 방향 유지하며 후퇴',HOLD='후퇴 완료 · 실시간 추종')
-            self.report('열쇠 SIM · '+labels[self.stage],self.errors,'실시간 마커 자세로 열쇠 끝 위치/회전 보정')
+                RETRACT='30° 방향 유지하며 열쇠 자동 후퇴',HOLD='후퇴 완료 · 실시간 추종')
+            self.report('열쇠 SIM · '+labels[self.stage]+(' · 실제 구멍 미확인: 전진·회전 보류' if self.require_visual_target and not self.visual_target_ready and self.stage not in ('RETRACT','HOLD') else ''),self.errors,'실시간 마커 자세와 구멍 중심으로 열쇠 끝 위치/회전 보정')
         except (ValueError,KeyError,TypeError,OverflowError) as exc:self.stop(str(exc))

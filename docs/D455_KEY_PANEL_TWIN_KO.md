@@ -6,7 +6,7 @@
 
 | 모드 | 동작 |
 |---|---|
-| SIM | 가상 판넬에서 정렬·22 mm 삽입·90° 회전 시험. 실기 이동 명령 없음 |
+| SIM | 가상 판넬에서 정렬·22 mm 삽입·30° 회전 시험. 실기 이동 명령 없음 |
 | REAL | 실제 D455와 실측 보정값으로 FR5 제어. 수신한 실제 관절 자세 표시 |
 | SIM+REAL | 동일한 실측 TCP 목표를 먼저 가상 역기구학으로 계산하고 FR5에 전송. 실제 관절과 SIM 예측을 겹쳐 비교 |
 
@@ -26,3 +26,5 @@ SIM+REAL의 파란 반투명 로봇은 가상 예측이고 원래 색 로봇은 
 판단·모드·목표·실제/가상 TCP 차이·중지 사유는 `.delivery/d455_key_panel/decisions.jsonl` 및 `decisions.txt`에 기록됩니다.
 
 검증: `py -3 -m unittest tests.test_key_panel_twin tests.test_key_panel_real tests.test_fairino tests.test_arm_sync tests.test_render_performance`. `--smoke-ui`는 연결 없는 화면 시험, `--smoke-compare`는 명시적인 합성 피드백으로 겹침 표시만 시험하며 실제 명령을 보낼 수 없습니다. 실제 로봇 동작은 네트워크·보정 준비 후 현장에서 확인해야 합니다.
+
+30° 회전 확인 후 열쇠 방향을 유지하면서 자동 후퇴합니다. SIM은 슬롯 앞 100 mm, REAL은 보정 파일의 standby_mm까지 후퇴한 뒤 완료합니다. REAL의 이전 90° 보정 설정은 사용할 수 없으며 turn_deg를 실물 기준으로 30° 이하로 확인해야 합니다. 기존 힘/토크·정렬·영상·충돌 보호는 후퇴 중에도 유지됩니다.

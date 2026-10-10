@@ -24,9 +24,9 @@ def rigid(value,name):
 def template():
     return dict(version=1,verified=False,camera_mount='fixed_external',board_revision=None,tool=None,user=0,
         key_tcp_confirmed=False,T_base_camera_mm=None,T_board_socket_mm=None,T_socket_key_zero_mm=None,
-        workspace_min_mm=None,workspace_max_mm=None,standby_mm=None,insert_mm=None,turn_deg=None,
+        workspace_min_mm=None,workspace_max_mm=None,standby_mm=None,insert_mm=None,turn_deg=30.,
         controller_version='',version_confirmed=False,contact_verified=False,force_sensor_verified=False,
-        force_limit_n=None,torque_limit_nm=None,controller_guard_verified=False)
+        force_limit_n=None,torque_limit_nm=None,controller_guard_verified=False,hybrid_target_verified=False,hybrid_target_revision=None)
 
 
 def calibration(c,contact=False):
@@ -40,7 +40,7 @@ def calibration(c,contact=False):
     for name in ('workspace_min_mm','workspace_max_mm'):
         if not isinstance(c.get(name),list) or len(c[name])!=3 or any(type(x) not in (int,float) or not math.isfinite(x) for x in c[name]):raise ValueError('검증된 작업 범위 필요')
     if any(a>=b for a,b in zip(c['workspace_min_mm'],c['workspace_max_mm'])):raise ValueError('작업 범위 오류')
-    for name,lo,hi in [('standby_mm',5,100),('insert_mm',.1,30),('turn_deg',-90,90)]:
+    for name,lo,hi in [('standby_mm',5,100),('insert_mm',.1,30),('turn_deg',-30,30)]:
         v=c.get(name)
         if type(v) not in (int,float) or not math.isfinite(v) or not lo<=v<=hi:raise ValueError(name+': 실측 범위 오류')
     if c.get('version_confirmed') is not True or not c.get('controller_version','').strip():raise ValueError('제어기·SDK 호환 버전 확인 필요')
@@ -58,7 +58,7 @@ def pose_matrix(pose):
 
 def socket_frame(c,record,now=None):
     now=time.time() if now is None else now
-    if not record or record.get('vision_source')=='built_in_demo':raise ValueError('실기 모드에는 실제 D455 영상이 필요합니다.')
+    if not record or record.get('vision_source') in ('built_in_demo','photo_screen_sim'):raise ValueError('실기 모드에는 실제 D455 영상과 실측 대상이 필요합니다.')
     age=now-float(record['timestamp'])
     if not math.isfinite(age) or not -.1<=age<=.25:raise ValueError('D455 영상 소실/250 ms 지연')
     b=record['board'];raw=record.get('raw_board',b)
@@ -68,7 +68,14 @@ def socket_frame(c,record,now=None):
         if len(xyz)!=3 or len(rv)!=3 or any(not math.isfinite(v) for v in xyz+rv) or xyz[2]<=0 or not 0<=item['reprojection_px']<=1.5:raise ValueError('영상 자세/재투영 품질 미충족')
     r=rotation(b['rotation_vector_rad']);t=[v*1000 for v in b['camera_xyz_m']]
     cam=tuple(tuple(r[i])+(t[i],) for i in range(3))+((0,0,0,1),)
-    return multiply(multiply(c['T_base_camera_mm'],cam),c['T_board_socket_mm'])
+    target=copy.deepcopy(c['T_board_socket_mm'])
+    if c.get('hybrid_target_verified') is True:
+        h=record.get('handle_target') or {};xyz=h.get('board_xyz_mm')
+        if not h.get('valid') or h.get('profile_revision')!=c.get('hybrid_target_revision') or not c.get('hybrid_target_revision') or h.get('board_revision')!=c['board_revision'] or h.get('dimension_source')!='measured' or h.get('confidence',0)<.78:raise ValueError('실기 결합 추종: 실측 확인한 구멍 검출 필요')
+        if not isinstance(xyz,list) or len(xyz)!=3 or any(type(v) not in (float,int) or not math.isfinite(v) for v in xyz):raise ValueError('실기 구멍 좌표 오류')
+        if math.dist(xyz[:2],[target[0][3],target[1][3]])>10 or abs(xyz[2]-target[2][3])>.2:raise ValueError('실측 구멍 보정 범위 초과')
+        target[0][3],target[1][3]=xyz[:2]
+    return multiply(multiply(c['T_base_camera_mm'],cam),target)
 
 
 def in_workspace(c,p):return all(lo<=v<=hi for lo,v,hi in zip(c['workspace_min_mm'],p,c['workspace_max_mm']))
@@ -79,7 +86,7 @@ class RealKeyPlan:
     def __init__(self,c,contact=False):
         self.c=copy.deepcopy(calibration(c,contact));self.contact=contact
         self.stage='ALIGN';self.depth=-c['standby_mm'];self.turn=0.;self.lock=0
-        self.last_socket=None;self.last_stamp=None;self.evidence={};self.started=None;self.last_raw=None
+        self.last_socket=None;self.last_stamp=None;self.evidence={};self.started=None;self.last_raw=None;self.completed=False
 
     def step(self,record,feedback,now=None):
         now=time.time() if now is None else now
@@ -105,7 +112,7 @@ class RealKeyPlan:
         tilt=math.degrees(math.acos(max(-1,min(1,sum(current[i][2]*(-socket[i][2]) for i in range(3))))))
         if actual_depth>self.c['insert_mm']+.2:raise ValueError('실제 열쇠 삽입 깊이 초과')
         if actual_depth>0 and (not self.contact or lateral>.2 or tilt>.5):raise ValueError('접촉 중 실제 열쇠 정렬 조건 미충족')
-        if self.stage in ('INSERT','TURN','HOLD') and self.contact:
+        if self.stage in ('INSERT','TURN','RETRACT','HOLD') and self.contact:
             f=vector(feedback.get('force_torque'),'힘/토크 센서')
             if norm(f[:3])>=self.c['force_limit_n'] or norm(f[3:])>=self.c['torque_limit_nm']:raise ValueError('접촉 힘/토크 한계 초과')
         if self.stage=='TURN' and (lateral>.2 or tilt>.5 or actual_depth<self.c['insert_mm']-.2):raise ValueError('회전 중 실제 깊이·축 정렬 조건 미충족')
@@ -117,12 +124,14 @@ class RealKeyPlan:
             if self.stage=='ALIGN':self.stage='APPROACH'
             elif self.stage=='APPROACH' and self.depth>=-5:self.stage='INSERT' if self.contact else 'HOLD'
             elif self.stage=='INSERT' and self.depth>=self.c['insert_mm']:self.stage='TURN'
-            elif self.stage=='TURN' and abs(actual_turn-self.c['turn_deg'])<=.3 and abs(self.turn-self.c['turn_deg'])<1e-6:self.stage='HOLD'
+            elif self.stage=='TURN' and abs(actual_turn-self.c['turn_deg'])<=.3 and abs(self.turn-self.c['turn_deg'])<1e-6:self.stage='RETRACT'
+            elif self.stage=='RETRACT' and self.depth<=-self.c['standby_mm']:self.stage='HOLD';self.completed=True
             self.lock=0
         if not fresh or feedback['motion_done']!=1 or feedback.get('status') not in ('IDLE','COMPLETED'):return None
         if lateral<=.2 and angle<=.3:
             if self.stage=='APPROACH':self.depth=min(-5.,self.depth+.5)
             elif self.stage=='INSERT':self.depth=min(self.c['insert_mm'],self.depth+.1)
+            elif self.stage=='RETRACT':self.depth=max(-self.c['standby_mm'],self.depth-(.1 if actual_depth>0 else .5))
         if self.stage=='TURN':
             delta=max(-.25,min(.25,self.c['turn_deg']-self.turn));self.turn+=delta
         target=[origin[i]-socket[i][2]*self.depth for i in range(3)]
@@ -133,7 +142,7 @@ class RealKeyPlan:
         if not in_workspace(self.c,p[:3]) or not in_workspace(self.c,command[:3]) or not in_workspace(self.c,target):raise ValueError('검증된 실기 작업 범위 밖')
         self.evidence=dict(stage=self.stage,actual_tcp=p,target_tcp=command,goal_tcp=target,lateral_mm=lateral,
             actual_depth_mm=actual_depth,command_depth_mm=self.depth,actual_turn_deg=actual_turn,command_turn_deg=self.turn,
-            axis_error_deg=tilt,sample_timestamp=stamp,board_revision=self.c['board_revision'],mode='REAL')
+            axis_error_deg=tilt,sample_timestamp=stamp,board_revision=self.c['board_revision'],completed=self.completed,mode='REAL')
         if norm(delta)<.002 and norm(dr)<math.radians(.005):return None
         return dict(target=command,expires=time.monotonic()+.25,stage=self.stage,calibration=self.c,
                     socket_base_mm=[list(row) for row in socket])

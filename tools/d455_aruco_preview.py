@@ -13,6 +13,8 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from seer_control.aruco_board import validate_board,object_points,make_board
 from seer_control.vision_filter import VisionFilter
 from seer_control.vision_stream import publish_frame
+from seer_control.handle_vision import HandleDetector
+from seer_control.photo_screen_vision import PhotoScreenDetector
 
 DICTIONARY=cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
 PARAMETERS=cv2.aruco.DetectorParameters()
@@ -361,6 +363,10 @@ def _capture(args):
         if args.log:
             args.log.parent.mkdir(parents=True,exist_ok=True);log=args.log.open('a',encoding='utf-8')
         last_preview=0.;last_log=0.;count=0;start=time.monotonic();last_board_read=0.;board_config=None;board_error='기준판 등록 대기';filtering=VisionFilter();control_filter=VisionFilter(tau=.08,window=3,position_deadband=.0001,rotation_deadband_deg=.1)
+        camera_info=dict(matrix=camera.tolist(),distortion=distortion.tolist(),model=str(intr.model).split('.')[-1],width=intr.width,height=intr.height)
+        handle_detector=HandleDetector(Path(__file__).resolve().parents[1]/'.delivery/d455_handle_target.json')
+        photo_detector=PhotoScreenDetector(Path(__file__).resolve().parents[1]/'.delivery/d455_photo_screen.json')
+        photo_filter=VisionFilter(tau=.15,window=3);photo_enabled=False
         window='D455 ArUco - camera frame only'
         while not args.probe or time.monotonic()-start<5:
             if args.stop_file and args.stop_file.exists():break
@@ -401,6 +407,8 @@ def _capture(args):
                     board_config=validate_board(json.loads(args.board_config.read_text(encoding='utf-8')));board_error=''
                 except (OSError,ValueError,TypeError,KeyError) as error:
                     board_config=None;board_error='기준판 설정 없음/오류: '+str(error)
+                try:photo_enabled=json.loads((Path(__file__).resolve().parents[1]/'.delivery/photo_screen_enable.json').read_text(encoding='utf-8')).get('enabled') is True
+                except (OSError,ValueError):photo_enabled=False
             board=estimate_board(board_config,observations,rs,intr,camera,distortion) if board_config else dict(valid=False,reason=board_error,markers_used=0)
             raw_observations=observations;raw_pair=pair;raw_board=board
             observations=filtering.markers(raw_observations,now,orientation_degrees)
@@ -411,6 +419,9 @@ def _capture(args):
             record=dict(timestamp=time.time(),detected=bool(observations),marker_count=len(observations),markers=observations,center_pair=pair,board=board,
                         raw_markers=raw_observations,raw_center_pair=raw_pair,raw_board=raw_board,control_board=control_board,
                         filter_profile='median5_ema250ms_pos0.5mm_rot0.4deg',control_filter_profile='median3_ema80ms_pos0.1mm_rot0.1deg')
+            record['handle_target']=handle_detector.detect(image,record,camera_info)
+            record['photo_target']=photo_detector.detect(image,camera_info,record['timestamp']) if photo_enabled else dict(valid=False,reason='사진 추종 시작 (SIM)을 누르세요.')
+            record['photo_control_target']=photo_filter.board(record['photo_target'],now,orientation_degrees)
             if args.live and not args.probe:
                 try:publish_frame(args.live,record)
                 except OSError:pass # reader lock must not terminate camera capture
@@ -420,10 +431,22 @@ def _capture(args):
             if args.probe:continue
             if now-last_preview>=.1:
                 preview=render_preview(image,observations,pair)
+                target=record['handle_target']
+                photo_target=record['photo_target']
+                if photo_target.get('center_px'):
+                    target=photo_target
+                    cv2.polylines(preview,[np.rint(photo_target['outline_px']).astype(np.int32)],True,(255,210,30),2)
+                if target.get('center_px'):
+                    hx,hy=[int(round(v)) for v in target['center_px']];color=(60,240,80) if target['valid'] else (0,180,255)
+                    cv2.drawMarker(preview,(hx,hy),color,cv2.MARKER_CROSS,18,2)
+                    label='PHOTO HOLE / SIM' if target is photo_target else 'HOLE '+str(round(target.get('confidence',0),2))
+                    cv2.putText(preview,label,(max(0,hx-40),max(15,hy-18)),cv2.FONT_HERSHEY_SIMPLEX,.5,color,2)
                 if args.preview_json:
                     ok,jpeg=cv2.imencode('.jpg',preview[:,:image.shape[1]],[cv2.IMWRITE_JPEG_QUALITY,85])
                     if ok:
-                        try:publish_frame(args.preview_json,dict(timestamp=record['timestamp'],jpeg_base64=base64.b64encode(jpeg).decode('ascii')))
+                        ok_raw,raw_jpeg=cv2.imencode('.jpg',image,[cv2.IMWRITE_JPEG_QUALITY,95])
+                        try:publish_frame(args.preview_json,dict(timestamp=record['timestamp'],jpeg_base64=base64.b64encode(jpeg).decode('ascii'),
+                            image_jpeg_base64=base64.b64encode(raw_jpeg).decode('ascii') if ok_raw else None,camera=camera_info,board=raw_board))
                         except OSError:pass
                 if not args.no_window:cv2.imshow(window,preview)
                 last_preview=now

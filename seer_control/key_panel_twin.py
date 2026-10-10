@@ -150,7 +150,7 @@ class KeyPanelLink:
             socket_frame(self.cal,record);command['expires']=time.monotonic()+.25
             command['camera_timestamp']=record['timestamp']
             self.submit('step',lambda cmd=command:self.client.call(self.config,'panel_step',cmd))
-        self.report(self.mode+' · '+self.plan.stage,dict(decision=self.plan.evidence,comparison=self.twin.comparison(f)),
+        self.report(self.mode+' · '+('30° 회전·열쇠 후퇴 완료' if self.plan.completed else self.plan.stage),dict(decision=self.plan.evidence,comparison=self.twin.comparison(f)),
             '동일 TCP 목표의 SIM 예측 후 FR5 전송' if self.mode=='SIM+REAL' else '실측 TCP 목표의 FR5 전송')
 
     def tick(self,record):

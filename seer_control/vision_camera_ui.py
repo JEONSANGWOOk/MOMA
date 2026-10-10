@@ -3,6 +3,7 @@ import base64,io,json,subprocess,time,uuid
 from pathlib import Path
 from tkinter import ttk
 import tkinter as tk
+from .vision_stream import publish_frame
 from PIL import Image,ImageTk
 
 
@@ -23,6 +24,10 @@ class VisionCameraPane(ttk.Frame):
         row=ttk.Frame(self);row.pack(fill='x',pady=4)
         ttk.Button(row,text='카메라 시작 / 연결',command=self.start).pack(side='left',padx=3)
         ttk.Button(row,text='카메라 중지',command=self.stop).pack(side='left',padx=3)
+        teach=ttk.Frame(self);teach.pack(fill='x')
+        ttk.Button(teach,text='손잡이·구멍 등록',command=self.register_handle).pack(side='left',padx=3)
+        ttk.Button(teach,text='등록 삭제',command=self.delete_handle).pack(side='left',padx=3)
+        ttk.Button(self,text='학습한 제품 사진 화면에 표시',command=self.show_product_photo).pack(fill='x',pady=3)
         self.message=tk.StringVar(value='카메라 시작 버튼을 누르세요.')
         ttk.Label(self,textvariable=self.message,wraplength=325).pack(fill='x')
         self.image=ttk.Label(self,text='D455 실시간 영상 대기',anchor='center');self.image.pack(fill='x',pady=5)
@@ -31,6 +36,58 @@ class VisionCameraPane(ttk.Frame):
         self.details.pack(fill='both',expand=True)
         ttk.Label(self,text='카메라 광학 좌표 · 실제 로봇 좌표는 실측 보정 필요',wraplength=325).pack(fill='x',pady=4)
         self.timer=self.after(100,self.tick)
+
+    def show_product_photo(self):
+        path=self.root_path/'.delivery/kahl_screen_reference.png'
+        if not path.exists():self.message.set('제공된 제품 사진 등록이 필요합니다.');return
+        dialog=tk.Toplevel(self);dialog.title('KAHL-1057-B(R) · 사진 표시 · F11 전체 화면 / Esc 닫기');dialog.geometry('1000x850')
+        view=tk.Canvas(dialog,bg='white',highlightthickness=0);view.pack(fill='both',expand=True)
+        original=Image.open(path).convert('RGB')
+        def draw(event):
+            if event.width<10 or event.height<10:return
+            image=original.copy();image.thumbnail((event.width,event.height));dialog.photo=ImageTk.PhotoImage(image,master=dialog)
+            view.delete('all');view.create_image(event.width/2,event.height/2,image=dialog.photo)
+        view.bind('<Configure>',draw);dialog.bind('<Escape>',lambda e:dialog.destroy())
+        dialog.bind('<F11>',lambda e:dialog.attributes('-fullscreen',not dialog.attributes('-fullscreen')))
+        return dialog
+
+    def delete_handle(self):
+        (self.root_path/'.delivery/d455_handle_target.json').unlink(missing_ok=True)
+        self.message.set('구멍 등록 삭제 · 결합 추종의 삽입은 보류됩니다.')
+
+    def register_handle(self):
+        snapshot=preview_record(self.path)
+        board=(snapshot or {}).get('board') or {}
+        if not snapshot or not snapshot.get('image_jpeg_base64') or not board.get('valid') or board.get('markers_used')!=2 or board.get('reprojection_px',99)>2:
+            self.message.set('카메라 연결 후 등록된 두 마커와 손잡이를 함께 보여주세요.');return
+        try:picture=Image.open(io.BytesIO(base64.b64decode(snapshot['image_jpeg_base64'],validate=True)))
+        except (ValueError,OSError):self.message.set('카메라 원본 영상 오류');return
+        dialog=tk.Toplevel(self);dialog.title('손잡이 등록 · 실제 열쇠구멍 중심 클릭')
+        ttk.Label(dialog,text='실제 열쇠구멍 중심을 클릭한 후 저장하세요. 마커와 손잡이는 같은 판넬에 고정하세요.').pack(padx=10,pady=8)
+        view=tk.Canvas(dialog,width=picture.width,height=picture.height,highlightthickness=0);view.pack()
+        photo=ImageTk.PhotoImage(picture,master=dialog);view.create_image(0,0,image=photo,anchor='nw');dialog.image=photo
+        selected=[];mark=[];note=tk.StringVar(value='구멍 중심 선택 대기')
+        ttk.Label(dialog,textvariable=note).pack(pady=4)
+        row=ttk.Frame(dialog);row.pack(fill='x',padx=10,pady=6)
+        ttk.Label(row,text='마커 평면 → 구멍 입구 높이 mm (SIM 추정)').pack(side='left')
+        height=tk.StringVar(value='32');ttk.Entry(row,textvariable=height,width=8).pack(side='left',padx=5)
+        def choose(event):
+            selected[:]=[event.x,event.y]
+            for item in mark:view.delete(item)
+            mark[:]=[view.create_oval(event.x-6,event.y-6,event.x+6,event.y+6,outline='#00ff55',width=2)]
+            note.set(f'구멍 중심: {event.x}, {event.y} px · 주변 외형도 함께 등록')
+        def save():
+            try:
+                import math
+                if not selected:raise ValueError('구멍 중심을 클릭하세요.')
+                z=float(height.get())
+                if not math.isfinite(z) or not 0<=z<=100:raise ValueError('표면 높이는 0~100 mm입니다.')
+                publish_frame(self.root_path/'.delivery/d455_handle_target.json',dict(version=1,revision=uuid.uuid4().hex,
+                    center_px=list(selected),surface_z_mm=z,image_jpeg_base64=snapshot['image_jpeg_base64'],
+                    board=snapshot['board'],camera=snapshot['camera'],dimension_source='estimated_plane'))
+                self.message.set('손잡이 외형·구멍 중심 등록 완료 · 추종 정지 후 다시 시작하세요.');dialog.destroy()
+            except (ValueError,OSError,KeyError) as error:note.set(str(error))
+        view.bind('<Button-1>',choose);ttk.Button(dialog,text='선택한 구멍·외형 저장',command=save).pack(pady=8)
 
     def start(self):
         if self.process and self.process.poll() is None:return
@@ -70,6 +127,13 @@ class VisionCameraPane(ttk.Frame):
             for field,label in [('line_depth_deg','전후 각도'),('image_line_deg','영상 기울기')]:
                 if pair.get(field) is not None:lines.append(f'{label}: {pair[field]:+.2f}°')
             board=record.get('board') or {};lines.append('두 마커 기준판: '+('유효' if board.get('valid') else str(board.get('reason','대기'))))
+            target=record.get('handle_target') or {};lines.append('손잡이·구멍: '+('검출 확인' if target.get('valid') else str(target.get('reason','등록 대기'))))
+            if target.get('confidence') is not None:lines.append(f"외형 일치: {target['confidence']:.2f}")
+            if target.get('board_xyz_mm'):lines.append('구멍 기준판 XYZ mm: '+', '.join(f'{v:.2f}' for v in target['board_xyz_mm']))
+            photo=record.get('photo_target') or {}
+            lines.append('제품 사진: '+('구멍 위치 확인 · SIM 전용' if photo.get('valid') else photo.get('reason','등록 대기')))
+            if photo.get('center_px'):lines.append('사진 구멍 px: '+', '.join(f'{v:.1f}' for v in photo['center_px']))
+            if photo.get('inliers'):lines.append(f"사진 일치 특징점: {photo['inliers']} · 크기/깊이 추정값")
         text='\n'.join(lines)
         if getattr(self,'last_text',None)!=text:
             self.details.configure(state='normal');self.details.delete('1.0','end');self.details.insert('end',text);self.details.configure(state='disabled');self.last_text=text
