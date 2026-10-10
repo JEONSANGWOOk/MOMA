@@ -1,4 +1,4 @@
 # Optional D455 / ArUco preview environment; separate from the GUI runtime.
 pyrealsense2>=2.58.2,<3
-opencv-contrib-python>=4.10,<5
+opencv-contrib-python>=4.12,<5
 numpy>=2,<3

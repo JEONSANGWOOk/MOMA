@@ -12,7 +12,19 @@ import numpy as np
 DICTIONARY=cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
 PARAMETERS=cv2.aruco.DetectorParameters()
 PARAMETERS.cornerRefinementMethod=cv2.aruco.CORNER_REFINE_SUBPIX
-DETECTOR=cv2.aruco.ArucoDetector(DICTIONARY,PARAMETERS)
+# Smaller 50/100/250 dictionaries are prefixes of the corresponding 1000 family.
+# Search each full family once so a physical marker is not counted repeatedly.
+DICTIONARY_NAMES=('DICT_4X4_1000','DICT_5X5_1000','DICT_6X6_1000',
+                  'DICT_7X7_1000','DICT_ARUCO_ORIGINAL','DICT_ARUCO_MIP_36h12')
+DETECTOR=cv2.aruco.ArucoDetector(
+    [cv2.aruco.getPredefinedDictionary(getattr(cv2.aruco,name)) for name in DICTIONARY_NAMES],PARAMETERS)
+
+
+def detect_all(image):
+    corners,ids,_,indices=DETECTOR.detectMarkersMultiDict(image)
+    if ids is None:return []
+    return [(polygon,int(marker_id),DICTIONARY_NAMES[int(index)])
+            for polygon,marker_id,index in zip(corners,ids.ravel(),indices.ravel())]
 
 
 def estimate(corners, size_m, camera, distortion):
@@ -67,8 +79,20 @@ def pose_inputs(rs,intr,polygon,camera,distortion):
 def self_test():
     marker=cv2.aruco.generateImageMarker(DICTIONARY,0,300)
     canvas=cv2.copyMakeBorder(marker,60,60,60,60,cv2.BORDER_CONSTANT,value=255)
-    corners,ids,_=DETECTOR.detectMarkers(canvas)
-    assert ids is not None and ids.ravel().tolist()==[0]
+    detections=detect_all(canvas)
+    assert len(detections)==1 and detections[0][1:]==(0,'DICT_4X4_1000')
+    # Mixed families, IDs outside the old 0..49 range, and repeated physical IDs.
+    sheet=np.full((660,880),255,dtype=np.uint8)
+    expected=[]
+    examples=[(name,73) for name in DICTIONARY_NAMES]+[('DICT_4X4_1000',0)]*2
+    for slot,(name,marker_id) in enumerate(examples):
+        y=20+(slot//4)*320;x=20+(slot%4)*220
+        sheet[y:y+180,x:x+180]=cv2.aruco.generateImageMarker(
+            cv2.aruco.getPredefinedDictionary(getattr(cv2.aruco,name)),marker_id,180)
+        expected.append((marker_id,name))
+    found=detect_all(sheet)
+    assert sorted((item[1],item[2]) for item in found)==sorted(expected),found
+    assert detect_all(np.full((480,640),255,dtype=np.uint8))==[]
     camera=np.array([[600.,0,320],[0,600.,240],[0,0,1]])
     points=np.array([[-.05,.05,0],[.05,.05,0],[.05,-.05,0],[-.05,-.05,0]])
     rotation=np.array([3.,.1,.2]);translation=np.array([.02,-.03,.8])
@@ -88,7 +112,7 @@ def self_test():
     intr.coeffs=[.1,-.01,.001,.002,0.]
     prepared,k,d,axes=pose_inputs(rs,intr,pixels,camera,np.asarray(intr.coeffs))
     assert not np.allclose(prepared,pixels.reshape(4,2)) and np.isfinite(prepared).all()
-    print('PASS: marker ID detection, camera XYZ recovery, physical size scaling, invalid pose rejection')
+    print('PASS: 8 simultaneous markers / 6 families, repeated IDs, blank frame, camera XYZ recovery, physical size scaling, invalid pose rejection')
 
 
 def run(args):
@@ -129,10 +153,18 @@ def run(args):
             if not color or use_depth and not depth:continue
             image=np.asanyarray(color.get_data()).copy()
             depth_image=np.asanyarray(depth.get_data()) if depth else None
-            corners,ids,_=DETECTOR.detectMarkers(image);observations=[]
-            if ids is not None:
-                cv2.aruco.drawDetectedMarkers(image,corners,ids)
-                for polygon,marker_id in zip(corners,ids.ravel()):
+            detections=detect_all(image);observations=[]
+            if detections:
+                cv2.aruco.drawDetectedMarkers(image,[item[0] for item in detections],np.array([[item[1]] for item in detections],dtype=np.int32))
+                for polygon,marker_id,dictionary in detections:
+                    observation=dict(id=marker_id,dictionary=dictionary,corners_px=polygon.reshape(4,2).tolist(),
+                        marker_size_mm=args.marker_mm,pose_valid=False,camera_xyz_m=None,
+                        rotation_vector_rad=None,reprojection_px=None,depth_z_m=None,
+                        coordinate_frame='camera_optical',robot_control=False)
+                    observations.append(observation)
+                    px,py=np.rint(polygon.reshape(4,2).min(axis=0)).astype(int)
+                    label_at=(max(0,int(px)),max(60,int(py)-8))
+                    cv2.putText(image,f'{dictionary.removeprefix("DICT_")} ID {marker_id}',label_at,cv2.FONT_HERSHEY_SIMPLEX,.42,(0,255,255),1)
                     prepared,k,d,draw_axes=pose_inputs(rs,intr,polygon,camera,distortion)
                     result=estimate(prepared,args.marker_mm/1000,k,d)
                     if result is None:continue
@@ -140,18 +172,18 @@ def run(args):
                     cx,cy=np.rint(polygon.reshape(4,2).mean(axis=0)).astype(int)
                     patch=depth_image[max(0,cy-2):min(depth_image.shape[0],cy+3),max(0,cx-2):min(depth_image.shape[1],cx+3)] if depth_image is not None else np.array([])
                     valid=patch[patch>0];depth_m=float(np.median(valid)*depth_scale) if valid.size else None
-                    observations.append(dict(id=int(marker_id),camera_xyz_m=xyz.tolist(),rotation_vector_rad=rotation.ravel().tolist(),reprojection_px=error,depth_z_m=depth_m,coordinate_frame='camera_optical',robot_control=False))
+                    observation.update(pose_valid=True,camera_xyz_m=xyz.tolist(),rotation_vector_rad=rotation.ravel().tolist(),reprojection_px=error,depth_z_m=depth_m)
                     if draw_axes:cv2.drawFrameAxes(image,camera,distortion,rotation,translation,args.marker_mm/2000)
-                    label=f'ID {marker_id} X {xyz[0]*1000:.0f} Y {xyz[1]*1000:.0f} Z {xyz[2]*1000:.0f} mm / err {error:.2f}px'
-                    cv2.putText(image,label,(8,65+len(observations)*22),cv2.FONT_HERSHEY_SIMPLEX,.45,(0,255,0),1)
+                    label=f'XYZ {xyz[0]*1000:.0f} {xyz[1]*1000:.0f} {xyz[2]*1000:.0f} mm'
+                    cv2.putText(image,label,(label_at[0],label_at[1]+18),cv2.FONT_HERSHEY_SIMPLEX,.42,(0,255,0),1)
             count+=1;now=time.monotonic()
             if now-last_log>=.2:
-                record=dict(timestamp=time.time(),detected=bool(observations),markers=observations)
+                record=dict(timestamp=time.time(),detected=bool(observations),marker_count=len(observations),markers=observations)
                 if log:log.write(json.dumps(record,allow_nan=False)+'\n');log.flush()
                 last_log=now
             if args.probe:continue
             cv2.putText(image,'Camera: X right / Y down / Z forward. No robot commands.',(8,20),cv2.FONT_HERSHEY_SIMPLEX,.43,(0,255,255),1)
-            cv2.putText(image,'ESC or Q: close' if observations else 'Marker not found - show DICT_4X4_50 marker',(8,42),cv2.FONT_HERSHEY_SIMPLEX,.45,(0,255,255),1)
+            cv2.putText(image,f'Markers: {len(observations)} / all ArUco families / ESC or Q: close',(8,42),cv2.FONT_HERSHEY_SIMPLEX,.45,(0,255,255),1)
             cv2.imshow(window,image)
             if cv2.waitKey(1)&0xFF in (27,ord('q')) or cv2.getWindowProperty(window,cv2.WND_PROP_VISIBLE)<1:break
         if args.probe:
