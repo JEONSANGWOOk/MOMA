@@ -154,7 +154,68 @@ class SDKEngine:
         finally:checked(self.robot.ImmStopJOG(),'ImmStopJOG')
         return self.status()
 
+    def panel_status(self):
+        state=self.status()
+        counter=getattr(getattr(self.robot,'robot_state_pkg',None),'frame_cnt',None)
+        previous=getattr(self,'_panel_frame',None);now=time.monotonic()
+        if type(counter) is int and 0<=counter<=255:
+            if previous is None:self._panel_frame=(counter,now);self._panel_live=False
+            elif counter!=previous[0]:self._panel_frame=(counter,now);self._panel_live=True
+            elif now-previous[1]>.6:raise RuntimeError('FR5 실시간 상태 패킷 600 ms 정체')
+        else:self._panel_live=False
+        state['telemetry_verified']=self._panel_live;state['frame_counter']=counter
+        if self.target and self.operation.startswith('key_panel_') and state['status'] not in ('ERROR','PAUSED','CANCELED'):
+            from .key_panel_real import pose_matrix
+            from .arm_simulation import rotation_error
+            from .visual_servo import norm
+            target=self.target[1];actual=state['tcp_mm_deg']
+            arrived=math.dist(target[:3],actual[:3])<=.05 and math.degrees(norm(rotation_error(pose_matrix(target),pose_matrix(actual))))<=.05
+            state['status']='COMPLETED' if arrived and state['motion_done']==1 and time.monotonic()-self.command_time>=.15 else 'RUNNING'
+        state['tool']=checked(self.robot.GetActualTCPNum(),'GetActualTCPNum',True)
+        state['user']=checked(self.robot.GetActualWObjNum(),'GetActualWObjNum',True)
+        try:state['force_torque']=vector(checked(self.robot.FT_GetForceTorqueRCS(),'FT_GetForceTorqueRCS',True),'力/力矩')
+        except (AttributeError,ValueError,RuntimeError):state['force_torque']=None
+        return state
+
+    def panel_step(self,spec):
+        from .key_panel_real import calibration,pose_matrix,in_workspace,rigid
+        from .aruco_board import apply,transpose
+        from .arm_simulation import rotation_error
+        from .visual_servo import norm
+        validate(self.config,True)
+        stage=spec.get('stage')
+        if stage not in ('ALIGN','APPROACH','INSERT','TURN','HOLD'):raise ValueError('실기 단계 오류')
+        c=calibration(spec['calibration'],stage in ('INSERT','TURN') or spec['calibration'].get('contact_verified') is True)
+        target=vector(spec['target'],'실기 열쇠 목표');expires=float(spec['expires'])
+        if not math.isfinite(expires) or not 0<=expires-time.monotonic()<=.25:raise ValueError('실기 명령 250 ms 유효시간 초과')
+        state=self.panel_status()
+        if not state['telemetry_verified']:raise ValueError('FR5 실제 상태 패킷 갱신 확인 필요')
+        if state['motion_done']!=1 or state['status'] not in ('IDLE','COMPLETED'):raise ValueError('FR5 정지·안전 상태 미충족')
+        if state['tool']!=c['tool'] or state['user']!=0:raise ValueError('실제 열쇠 TCP/베이스 좌표 번호 불일치')
+        current=state['tcp_mm_deg']
+        socket=rigid(spec['socket_base_mm'],'슬롯 실기 좌표')
+        local=apply(transpose([row[:3] for row in socket[:3]]),[target[i]-socket[i][3] for i in range(3)])
+        if stage in ('ALIGN','APPROACH') and -local[2]>-4.9:raise ValueError('공중 정렬·접근은 슬롯 5 mm 앞에서 제한됩니다.')
+        if -local[2]>c['insert_mm']+.2:raise ValueError('실측 삽입 깊이 초과')
+        if stage=='TURN':
+            actual_local=apply(transpose([row[:3] for row in socket[:3]]),[current[i]-socket[i][3] for i in range(3)])
+            axis=pose_matrix(current)
+            tilt=math.degrees(math.acos(max(-1,min(1,sum(axis[i][2]*(-socket[i][2]) for i in range(3))))))
+            if -actual_local[2]<c['insert_mm']-.2 or norm(actual_local[:2])>.2 or tilt>.5:raise ValueError('실제 삽입·정렬 확인 없이 회전 불가')
+        if math.dist(current[:3],target[:3])>.501 or math.degrees(norm(rotation_error(pose_matrix(target),pose_matrix(current))))>.251:raise ValueError('실기 단일 명령 0.5 mm / 0.25° 초과')
+        if not in_workspace(c,current[:3]) or not in_workspace(c,target[:3]):raise ValueError('실기 작업 범위 초과')
+        if stage in ('INSERT','TURN') or c.get('contact_verified') is True:
+            f=vector(state.get('force_torque'),'힘/토크 센서')
+            if norm(f[:3])>=c['force_limit_n'] or norm(f[3:])>=c['torque_limit_nm']:raise ValueError('힘/토크 보호 임계값 초과')
+        if time.monotonic()>expires:raise ValueError('실기 명령 유효시간 초과')
+        checked(self.robot.MoveL(target,tool=c['tool'],user=0,vel=1.,acc=10.,ovl=10.,blendR=0.),'MoveL')
+        self.target=('MoveL',target);self.operation='key_panel_'+stage;self.command_time=time.monotonic()
+        self.canceled=False;self.paused=False
+        return dict(accepted=True,operation=self.operation,target=target)
+
     def call(self,kind,operation=None):
+        if kind=='panel_status':return self.panel_status()
+        if kind=='panel_step':return self.panel_step(operation)
         if kind=='status':return self.status()
         if kind=='execute':return self.execute(operation)
         if kind=='jog':return self.jog(operation)

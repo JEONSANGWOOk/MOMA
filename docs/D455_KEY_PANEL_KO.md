@@ -28,3 +28,8 @@
 `.delivery/d455_key_panel/decisions.jsonl` 및 `decisions.txt`에 각 단계, 영상 시각/기준 버전, 목표 좌표, 실제 FK 좌표, 횡방향 오차, 깊이, 축 각도, 명령/실제 회전, 열쇠 일치 여부, 잠금 상태와 동작 결론을 남깁니다. 충돌 중간 자세도 별도로 기록합니다. 센서 힘이나 실제 토크 측정값으로 해석하면 안 됩니다.
 
 개발 검증: `py -3 -m unittest tests.test_key_panel` 및 `py -3 tools/d455_key_panel.py --smoke`. GUI 검증 결과와 캡처는 `.delivery/d455_key_panel_verification.json`, `.delivery/d455_key_panel.png`입니다.
+
+
+## FR5 실기 연결
+
+`D455_Key_Panel_Real.cmd` 및 SIM 화면의 실기 연결 버튼에서 192.168.57.2 로봇 상태를 읽고, 실측 보정 파일로 실기 정렬·접근을 준비할 수 있습니다. 실제 삽입·회전은 접촉 보호 조건을 검증해야 합니다. [실기 사용 설명](D455_KEY_PANEL_REAL_KO.md)을 참고하세요.

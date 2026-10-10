@@ -1,0 +1,33 @@
+{
+  "ip": "192.168.57.2",
+  "controller_port": 20003,
+  "probe": {
+    "ok": false,
+    "ip": "192.168.57.2",
+    "error": "timed out"
+  },
+  "physical_motion_tested": false,
+  "physical_motion_commands_sent": false,
+  "calibration_available": false,
+  "laptop_ethernet_ipv4": "192.168.58.107/24",
+  "gui": {
+    "gui_errors": [],
+    "connected": false,
+    "motion_started": false,
+    "ip": "192.168.57.2"
+  },
+  "tests": {
+    "passed": 44,
+    "failed": 0,
+    "commands": [
+      "py -3 -m unittest tests.test_key_panel_real tests.test_fairino",
+      "py -3 -m unittest discover -s tests -p test_fairino_programs.py -v"
+    ]
+  },
+  "sdk": {
+    "source": "https://raw.githubusercontent.com/FAIR-INNOVATION/fairino-python-sdk/563ae32bb3348585c28cf870e293acf7ba6bb286/windows/fairino/Robot.py",
+    "tag": "v2.2.8_robot_v3.9.8",
+    "commit": "563ae32bb3348585c28cf870e293acf7ba6bb286",
+    "sha256": "2e6c9434786cad0a2d61e3103168a18458d5087af4e9a6a8964dd1d51e207de1"
+  }
+}

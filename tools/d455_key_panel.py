@@ -68,6 +68,12 @@ def main():
         if servo.enabled:raise ValueError('먼저 정지하세요.')
         scene.reset_lock();switch()
     ttk.Button(buttons,text='초기화',command=lambda:perform(reset)).pack(side='left',padx=4)
+    def real_console():
+        import subprocess
+        servo.stop('실기 연결 화면으로 전환 · SIM 동작 정지')
+        executable=Path(sys.executable).with_name('pythonw.exe')
+        subprocess.Popen([str(executable if executable.exists() else sys.executable),str(ROOT/'tools/d455_key_panel_real.py'),'--ip','192.168.57.2'],cwd=str(ROOT),creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+    ttk.Button(buttons,text='FR5 실기 연결 · 192.168.57.2',command=real_console).pack(side='left',padx=10)
     ttk.Label(root,textvariable=status,padding=(12,4),font=('맑은 고딕',12,'bold')).pack(fill='x')
     body=ttk.Frame(root);body.pack(fill='both',expand=True,padx=10)
     app=SimpleNamespace(font='맑은 고딕',arm_dev_display=tk.StringVar(value='SIM 개발'),arm_scene_geometry=scene.geometry)
