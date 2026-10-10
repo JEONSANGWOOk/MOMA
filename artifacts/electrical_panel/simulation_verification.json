@@ -1,0 +1,65 @@
+{
+  "unlocked": true,
+  "stage": "HOLD_UNLOCKED",
+  "status": "열쇠 SIM · 실제 90° 회전 확인 · 잠금해제 자세 추종",
+  "feedback": {
+    "tip_world_mm": [
+      -636.9475171779688,
+      -100.01411897429988,
+      449.79668466602027
+    ],
+    "tip_local_mm": [
+      1.7589085881346397e-06,
+      99.99998939098658,
+      10.000000062455
+    ],
+    "lateral_mm": 1.0753833040727193e-05,
+    "depth_mm": 21.999999937545,
+    "turn_deg": 89.98269172878035,
+    "axis_error_deg": 3.52019892386405e-06,
+    "correct_key": true,
+    "unlocked": true,
+    "target_tcp_mm": [
+      -636.9475172471065,
+      -100.01412073350266,
+      449.7966952749435
+    ],
+    "position_error_mm": 1.0754014428606712e-05,
+    "angle_error_deg": 0.017308271626274158,
+    "command_depth_mm": 22.0,
+    "command_turn_deg": 90.0,
+    "revision": "82614d4c95494efcb31691a960ba35a8",
+    "sample_timestamp": 1791611726.399834,
+    "camera_board_xyz_m": [
+      0.0,
+      0,
+      0.6
+    ],
+    "camera_board_rvec_rad": [
+      3.141592653589793,
+      0,
+      0
+    ],
+    "alignment_confirmed": true,
+    "rotation_allowed": true,
+    "consecutive_confirmed_frames": 0,
+    "rotation_requirements": {
+      "min_depth_mm": 21.7,
+      "max_lateral_mm": 0.25,
+      "max_axis_deg": 0.5,
+      "matching_key": true
+    },
+    "collision_checks": true,
+    "source": "simulated_FK_feedback"
+  },
+  "gui_errors": [],
+  "vision_source": "built_in_demo",
+  "execution": "offline_no_robot_transport",
+  "generic_model_only": true,
+  "tests": {
+    "command": "py -3 -m unittest tests.test_arm_physics tests.test_visual_servo tests.test_pen_marking tests.test_key_panel -v",
+    "passed": 33,
+    "failed": 0,
+    "elapsed_seconds": 116.624
+  }
+}

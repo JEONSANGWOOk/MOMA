@@ -60,30 +60,49 @@ class VisualServo:
         self.stage='ALIGN';self.cycle=cycle;self.lock=0;self.last_stamp=None;self.raw=None;self.errors={};self.completed_cycles=0;self.marking=False;self.feedforward=None
         self.enabled=True;self.report('PBVS 정면 정렬 시작',action='영상별 위치·각도 오차를 계산해 가상 팔 보정')
 
+    def read_sample(self,record,now):
+        m=self.mission
+        if m.latest is None or not record or not -.1<=now-record['timestamp']<=.7:
+            raise ValueError('영상 소실/지연 · 서보 정지')
+        if m.reference is not self.reference or m.config['revision']!=self.revision:
+            raise ValueError('기준 좌표/등록 변경 · 서보 정지')
+        stamp=record['timestamp']
+        if stamp==self.last_stamp:return # never advance using repeated camera frames
+        raw=record.get('raw_board',record['board'])
+        if not raw.get('valid') or raw['revision']!=self.revision:raise ValueError('원본 기준판 측정 무효')
+        for field in ('camera_xyz_m','rotation_vector_rad'):
+            if len(raw[field])!=3 or any(not math.isfinite(v) for v in raw[field]):raise ValueError('원본 기준판 좌표 오류')
+        if raw['camera_xyz_m'][2]<=0 or not math.isfinite(raw['reprojection_px']) or raw['reprojection_px']>2:
+            raise ValueError('원본 기준판 깊이/재투영 오류')
+        if self.raw:
+            jump=math.dist(raw['camera_xyz_m'],self.raw['camera_xyz_m'])*1000
+            turn=math.degrees(norm(rotation_error(rotation(raw['rotation_vector_rad']),rotation(self.raw['rotation_vector_rad']))))
+            if jump>30 or turn>10:raise ValueError('원본 영상 급변 · 서보 정지')
+        dt=1/30 if self.last_stamp is None else min(.25,max(0.,stamp-self.last_stamp))
+        if dt<=0:raise ValueError('영상 시간 역전 · 서보 정지')
+        self.last_stamp=stamp;self.raw=copy.deepcopy(raw)
+        return dt
+
+    def move_tip(self,target_r,target_mm,dt,velocity=None,precision=False):
+        current=self.sim.kin.fk(self.sim.q);length=self.mission.tool_offset_mm
+        p=[current[i][3]*1000+current[i][2]*length for i in range(3)]
+        error=[target_mm[i]-p[i] for i in range(3)];angular=rotation_error(target_r,current)
+        alpha=1-math.exp(-self.gain*dt);velocity=velocity or [0.,0.,0.]
+        step=limited([alpha*v+velocity[i]*dt for i,v in enumerate(error)],self.speed_mm_s*dt)
+        delta=limited([alpha*v for v in angular],math.radians(self.angular_deg_s)*dt)
+        r=matmul(rotation(delta),[list(row[:3]) for row in current[:3]])
+        pose=pose_from_matrix(r,[p[i]+step[i]-r[i][2]*length for i in range(3)])
+        q=self.sim.kin.ik(pose,self.sim.q,position_tolerance=.000002 if precision else .00001,rotation_tolerance=.0001)
+        if max(abs(a-b) for a,b in zip(q,self.sim.q))>math.radians(self.joint_deg_s)*dt:
+            raise ValueError('관절 속도/역기구학 분기 초과 · 서보 정지')
+        self.sim.set_joints(q)
+
     def tick(self,record,now=None):
         if not self.enabled:return
         now=time.time() if now is None else now
         try:
-            m=self.mission
-            if m.latest is None or not record or not -.1<=now-record['timestamp']<=.7:
-                raise ValueError('영상 소실/지연 · 서보 정지')
-            if m.reference is not self.reference or m.config['revision']!=self.revision:
-                raise ValueError('기준 좌표/등록 변경 · 서보 정지')
-            stamp=record['timestamp']
-            if stamp==self.last_stamp:return # never advance using repeated camera frames
-            raw=record.get('raw_board',record['board'])
-            if not raw.get('valid') or raw['revision']!=self.revision:raise ValueError('원본 기준판 측정 무효')
-            for field in ('camera_xyz_m','rotation_vector_rad'):
-                if len(raw[field])!=3 or any(not math.isfinite(v) for v in raw[field]):raise ValueError('원본 기준판 좌표 오류')
-            if raw['camera_xyz_m'][2]<=0 or not math.isfinite(raw['reprojection_px']) or raw['reprojection_px']>2:
-                raise ValueError('원본 기준판 깊이/재투영 오류')
-            if self.raw:
-                jump=math.dist(raw['camera_xyz_m'],self.raw['camera_xyz_m'])*1000
-                turn=math.degrees(norm(rotation_error(rotation(raw['rotation_vector_rad']),rotation(self.raw['rotation_vector_rad']))))
-                if jump>30 or turn>10:raise ValueError('원본 영상 급변 · 서보 정지')
-            dt=1/30 if self.last_stamp is None else min(.25,max(0.,stamp-self.last_stamp))
-            if dt<=0:raise ValueError('영상 시간 역전 · 서보 정지')
-            self.last_stamp=stamp;self.raw=copy.deepcopy(raw)
+            m=self.mission;dt=self.read_sample(record,now)
+            if dt is None:return
             center,r=m.virtual_board();tool=matmul(r,FRONT);n=[row[2] for row in r]
             hole=[center[i]+r[i][0]*self.offset[0]+r[i][1]*self.offset[1] for i in range(3)]
             current=self.sim.kin.fk(self.sim.q)
@@ -115,7 +134,7 @@ class VisualServo:
                 self.lock=0
             elif self.stage=='APPROACH' and self.distance<=self.goal and self.lock>=5:
                 if self.marking:
-                    mark=self.pen.record_mark(self.mark_queue[self.mark_index],self.offset,stamp)
+                    mark=self.pen.record_mark(self.mark_queue[self.mark_index],self.offset,self.last_stamp)
                     if mark is None:raise ValueError('펜 실제 접촉 좌표 불일치 · 마킹 보류')
                     self.mark_results.append(mark);self.report('실제 펜 끝 마킹 확인',mark,'계산된 접촉점을 판넬에 기록')
                 self.stage='RETRACT';self.lock=0

@@ -5,7 +5,7 @@ from .geometry3d import box,cylinder,transform,multiply,point,identity
 
 def inverse(t):
  return tuple(tuple(t[j][i] if j<3 else -sum(t[k][i]*t[k][3] for k in range(3)) for j in range(4)) if i<3 else (0,0,0,1) for i in range(4))
-def dot(a,b):return sum(x*y for x,y in zip(a,b))
+def dot(a,b):return a[0]*b[0]+a[1]*b[1]+a[2]*b[2]
 def obb(t,size):return (point(t,(0,0,0)),[tuple(t[i][j] for i in range(3)) for j in range(3)],[v/2 for v in size])
 def separation(a,b):
  """SAT separating-axis distance; <=0 indicates conservative OBB overlap."""
@@ -15,7 +15,15 @@ def separation(a,b):
    z=(x[1]*y[2]-x[2]*y[1],x[2]*y[0]-x[0]*y[2],x[0]*y[1]-x[1]*y[0]);n=math.sqrt(dot(z,z))
    if n>1e-8:axes.append(tuple(v/n for v in z))
  d=tuple(y-x for x,y in zip(ca,cb))
- return max(abs(dot(d,n))-sum(v*abs(dot(ax,n)) for ax,v in zip(aa,ha))-sum(v*abs(dot(ax,n)) for ax,v in zip(ab,hb)) for n in axes)
+ return max(abs(dot(d,n))-(ha[0]*abs(dot(aa[0],n))+ha[1]*abs(dot(aa[1],n))+ha[2]*abs(dot(aa[2],n)))-(hb[0]*abs(dot(ab[0],n))+hb[1]*abs(dot(ab[1],n))+hb[2]*abs(dot(ab[2],n))) for n in axes)
+
+def contact_gap(a,b,margin):
+ # Bounding spheres reject distant pairs before the full oriented-box SAT.
+ # This only skips pairs whose conservative lower gap already exceeds margin.
+ ra=math.sqrt(dot(a[2],a[2]));rb=math.sqrt(dot(b[2],b[2]))
+ distance2=sum((x-y)**2 for x,y in zip(a[0],b[0]))
+ if distance2>(ra+rb+margin)**2:return math.sqrt(distance2)-ra-rb
+ return separation(a,b)
 
 DEFAULT=dict(kind='none',do_bank='ToolDO',do_channel=0,di_bank='ToolDI',di_channel=0,
  mount_offset_m=0.,stroke_m=.085,speed_m_s=.08,force_n=60.,friction=.5,tool_mass_kg=.8,
@@ -71,32 +79,39 @@ class ArmPhysics:
    if o is self.held:continue
    target=obb(o['matrix'],o['size'])
    for name,bounds in robot+tools:
-    gap=separation(bounds,target)
+    gap=contact_gap(bounds,target,margin)
     # Movable workpiece contact with fingers/cup is the intentional grasp interface.
     if name in ('finger','cup') and not o['static']:continue
     if gap<=0:risks.append((name,o['name']))
     elif gap<margin:near.append((name,o['name'],gap))
   if self.held:
-   matrix=multiply(self.tcp(q),self.relative);held=obb(matrix,self.held['size'])
+   matrix=multiply(self.tcp(q),self.relative)
+   parts=self.held.get('collision_parts') or [dict(matrix=transform(),size=self.held['size'])]
+   held_parts=[(multiply(matrix,p['matrix']),p['size']) for p in parts]
+   held_bounds=[obb(t,size) for t,size in held_parts]
    for o in self.objects:
-    if o is not self.held and separation(held,obb(o['matrix'],o['size']))<-.0005:risks.append((self.held['name'],o['name']))
+    if o is not self.held and any(contact_gap(bounds,obb(o['matrix'],o['size']),0)<-.0005 for bounds in held_bounds):risks.append((self.held['name'],o['name']))
   if self.config['ground_collision']:
-   for name,t,size in [(name,multiply(poses[name],transform(center)),size) for name,center,size in self.bounds if name not in getattr(self.kin.asset,'roots',[])+['base_link']]+self.tool_boxes(q):
-    low=min(point(t,p)[2] for face in box(size) for p in face)
+   # Exact vertical support of each oriented box, equivalent to all 8 vertices.
+   ground_boxes=[(name,bounds) for name,bounds in robot if name not in getattr(self.kin.asset,'roots',[])+['base_link']]+tools
+   for name,(center,axes,half) in ground_boxes:
+    low=center[2]-sum(abs(axis[2])*h for axis,h in zip(axes,half))
     if low<-.005:risks.append((name,'바닥'))
     elif low<margin:near.append((name,'바닥',max(0,low)))
-   if self.held and min(point(matrix,p)[2] for face in box(self.held['size']) for p in face)<-.001:risks.append((self.held['name'],'바닥'))
+   if self.held and min(c[2]-sum(abs(a[2])*h for a,h in zip(axes,half)) for c,axes,half in held_bounds)<-.001:risks.append((self.held['name'],'바닥'))
   if self.config['self_collision']:
    adjacent={frozenset((j['parent'],j['child'])) for j in self.kin.asset.joints}
    for i,(name,a) in enumerate(robot):
     for other,b in robot[i+1:]:
      if frozenset((name,other)) not in adjacent and separation(a,b)<-.005:risks.append((name,other))
   return risks,near
+ def motion_samples(self,source,target,thickness):
+  angular_step=min(.025,max(.0001,thickness/8))
+  return max(1,math.ceil(max((abs(a-b) for a,b in zip(source,target)),default=0)/angular_step))
  def check_motion(self,source,target):
   # Joint sweep spacing is tightened for thin obstacles (conservative 2 m reach).
   thickness=min((min(o['size']) for o in self.objects if o is not self.held),default=.08)
-  angular_step=min(.025,max(.0001,thickness/8))
-  count=max(1,math.ceil(max((abs(a-b) for a,b in zip(source,target)),default=0)/angular_step))
+  count=self.motion_samples(source,target,thickness)
   for i in range(1,count+1):
    q=[a+(b-a)*i/count for a,b in zip(source,target)];risks,near=self.contacts(q)
    if risks:
