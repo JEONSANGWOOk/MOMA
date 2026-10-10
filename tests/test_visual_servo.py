@@ -25,8 +25,10 @@ class ServoTests(unittest.TestCase):
         positions=[]
         for _ in range(400):
             self.frame();positions.append(self.sim.kin.pose(self.sim.q)[:3])
-            if not self.servo.enabled:break
-        self.assertEqual(self.servo.stage,'COMPLETED',self.servo.status)
+            if self.servo.completed_cycles or not self.servo.enabled:break
+        self.assertEqual(self.servo.stage,'HOLD',self.servo.status)
+        self.assertTrue(self.servo.enabled)
+        self.assertEqual(self.servo.completed_cycles,1)
         self.assertGreater(positions[0][0]-min(p[0] for p in positions),95)
         self.assertLess(max(abs(p[2]-self.z) for p in positions),2)
         self.assertLess(abs(positions[-1][0]-positions[0][0]),2)
@@ -40,7 +42,7 @@ class ServoTests(unittest.TestCase):
         for _ in range(80):self.frame()
         self.assertTrue(self.servo.enabled,self.servo.status)
         self.assertGreater(math.dist(before[:3],self.sim.kin.pose(self.sim.q)[:3]),5)
-        self.assertLess(self.servo.errors['position_error_mm'],1.3)
+        self.assertLess(self.servo.errors['position_error_mm'],.5)
         self.assertLess(self.servo.errors['angle_error_deg'],1.)
 
     def test_repeated_frames_do_not_move_and_loss_stops(self):
@@ -62,6 +64,20 @@ class ServoTests(unittest.TestCase):
                 self.frame()
             else:self.servo.tick(self.record,now=self.record['timestamp']+1)
             self.assertFalse(self.servo.enabled);self.assertEqual(q,self.sim.q)
+
+    def test_thirty_hz_continuous_pose_hold_reacquires_after_repeated_changes(self):
+        self.servo.start([0,0],200,100)
+        for direction in (1,-1,1):
+            self.record['board']['camera_xyz_m'][0]+=.006*direction
+            self.record['board']['rotation_vector_rad'][0]-=.025*direction
+            for _ in range(300):
+                self.record['timestamp']+=1/30
+                self.m.inspect(self.record,now=self.record['timestamp'])
+                self.m.update_scene();self.servo.tick(self.record,now=self.record['timestamp'])
+            self.assertTrue(self.servo.enabled,self.servo.status)
+            self.assertEqual(self.servo.stage,'HOLD')
+            self.assertLess(self.servo.errors['position_error_mm'],.5)
+            self.assertLess(self.servo.errors['angle_error_deg'],.3)
 
     def test_invalid_raw_pose_and_revision_stop(self):
         for fault in ('nan','revision'):

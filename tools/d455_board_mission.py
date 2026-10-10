@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import tkinter as tk
 from tkinter import ttk
 ROOT=Path(__file__).resolve().parents[1];sys.path.insert(0,str(ROOT))
-from seer_control.aruco_arm_follow import latest_record
+from seer_control.vision_stream import read_frame
 from seer_control.aruco_board import BoardArmMission,make_board,save_board,validate_board,apply,object_points,initialize_panel_arm
 from seer_control.visual_servo import VisualServo
 from seer_control.arm_simulation import ArmSimulator
@@ -24,10 +24,12 @@ from seer_control.fairino_model import installed
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--smoke',action='store_true')
     parser.add_argument('--smoke-servo',action='store_true')
+    parser.add_argument('--hold',action='store_true',help='Wait for valid markers, reference once, then maintain pose continuously')
     parser.add_argument('--smoke-cycle',action='store_true',help='Validate GUI route planning and complete offline cycle using current camera frames')
     parser.add_argument('--camera-log',type=Path,help='Camera JSONL input (default: live D455 log)')
     args=parser.parse_args();config_path=ROOT/'.delivery/d455_board.json'
     log_path=args.camera_log or ROOT/'.delivery/d455_aruco.jsonl'
+    live_path=None if args.camera_log else ROOT/'.delivery/d455_aruco_live.json'
     root=tk.Tk();root.title('MOMA · ArUco 기준판 정렬·접근·복귀 SIM');root.geometry('1240x860')
     journal=DecisionJournal(ROOT/'.delivery/d455_board_mission')
     sim=ArmSimulator(RobotDescription.load(installed(Path.home()/'.seer_amr_console') or ROOT/'examples/fairino_fr5.urdf'),decision_journal=journal)
@@ -99,14 +101,14 @@ def main():
     def visual(cycle):
         if busy:raise ValueError('경로 검증을 먼저 정지하세요.')
         servo.start([float(fields['x'].get()),float(fields['y'].get())],float(fields['standby'].get()),float(fields['approach'].get()),cycle)
-    ttk.Button(control,text='비주얼 서보 정렬 유지',command=lambda:perform(lambda:visual(False))).pack(side='left',padx=3)
+    ttk.Button(control,text='실시간 자세 유지 시작',command=lambda:perform(lambda:visual(False))).pack(side='left',padx=3)
     ttk.Button(control,text='비주얼 서보 전진 → 후진',command=lambda:perform(lambda:visual(True))).pack(side='left',padx=3)
     ttk.Button(control,text='정지',command=stop).pack(side='left',padx=3)
     ttk.Label(root,textvariable=status,font=('맑은 고딕',11,'bold'),padding=8).pack(fill='x')
     app=SimpleNamespace(font='맑은 고딕',arm_dev_display=tk.StringVar(value='SIM 개발'))
     canvas=ArmCanvas(root,app,sim);canvas.pack(fill='both',expand=True,padx=10,pady=4)
     ttk.Label(root,textvariable=feedback,padding=8).pack(fill='x')
-    ttk.Label(root,text='판 X: 좌우 · 판 Y: 상하 · 거리: 판넬 앞뒤 방향 (TCP가 판넬을 향함)\n실측 치수가 없으면 깊이 추정으로 SIM 시험하세요. 영상 소실·판 이동·수신 지연은 정지하며 자동 재개하지 않습니다.',padding=(10,0,10,10)).pack(fill='x')
+    ttk.Label(root,text='판 X: 좌우 · 판 Y: 상하 · 거리: 판넬 앞뒤 방향 (TCP가 판넬을 향함)\n실측 치수가 없으면 깊이 추정으로 SIM 시험하세요. 자세 유지 중 마커 이동·회전을 계속 보정합니다. 영상 소실·급변·지연은 정지합니다.',padding=(10,0,10,10)).pack(fill='x')
     try:
         config=validate_board(json.loads(config_path.read_text(encoding='utf-8')));mission.config=config
         for key,m in zip(['side_a','side_b'],config['markers']):fields[key].set(str(m['side_mm']))
@@ -115,11 +117,11 @@ def main():
         registered_markers=config['markers']
     except (OSError,ValueError,KeyError,TypeError):pass
     errors=[];root.report_callback_exception=lambda typ,value,tb:errors.append(str(value))
-    previous=time.monotonic();draw_state=None;cycle_requested=False
+    previous=time.monotonic();draw_state=None;cycle_requested=False;last_draw=0.;completed_cycles=0
     def update():
-        nonlocal record,previous,busy,epoch,draw_state,cycle_requested
+        nonlocal record,previous,busy,epoch,draw_state,cycle_requested,last_draw,completed_cycles
         now=time.monotonic();dt=min(.15,now-previous);previous=now
-        record=latest_record(log_path);board=mission.inspect(record)
+        record=read_frame(log_path,live_path);board=mission.inspect(record)
         if board:
             info.set(f'{board["markers_used"]}개 / 오차 {board["reprojection_px"]:.2f}px / '+('실측 치수' if board['geometry_source']=='measured' else '깊이 추정 치수'))
             if mission.reference:
@@ -134,7 +136,9 @@ def main():
         else:
             info.set('두 마커를 보여주세요 / 등록 설정 확인')
             if busy:epoch+=1;busy=False
-        if (args.smoke or args.smoke_cycle or args.smoke_servo) and mission.latest and mission.stable>=3 and not mission.reference:perform(reference)
+        if (args.smoke or args.smoke_cycle or args.smoke_servo or args.hold) and mission.latest and mission.stable>=3 and not mission.reference:perform(reference)
+        if args.hold and mission.reference and mission.latest and not cycle_requested:
+            cycle_requested=True;perform(lambda:visual(False))
         if args.smoke_servo and mission.reference and mission.latest and not cycle_requested:
             cycle_requested=True;perform(lambda:visual(True))
         if args.smoke_cycle and mission.reference and mission.latest and not cycle_requested:
@@ -148,15 +152,16 @@ def main():
             else:perform(lambda:mission.launch(snapshot,config))
         mission.tick(dt)
         servo.tick(record)
-        if args.smoke_servo and servo.stage=='COMPLETED':
+        completed_cycles=servo.completed_cycles
+        if args.smoke_servo and completed_cycles:
             from window_capture import capture_window
             root.after(0,lambda:(capture_window(root,ROOT/'.delivery/d455_visual_servo.png'),close()))
         if args.smoke_cycle and sim.state=='COMPLETED':
             from window_capture import capture_window
             root.after(0,lambda:(capture_window(root,ROOT/'.delivery/d455_board_mission_cycle.png'),close()))
         state=(tuple(sim.q),mission.stamp,mission.latest is not None,tuple(v.get() for v in fields.values()))
-        if state!=draw_state:
-            draw_state=state;canvas.render()
+        if state!=draw_state and now-last_draw>=.1:
+            last_draw=now;draw_state=state;canvas.render()
             if mission.reference and mission.latest:
                 try:center,r=mission.virtual_board()
                 except ValueError:center=None
@@ -190,13 +195,13 @@ def main():
         while True:
             try:journal.pending.get_nowait()
             except queue.Empty:break
-        root.after(100,update)
+        root.after(33,update)
     def close():
         completed=servo.stage=='COMPLETED'
         stop()
         if completed:servo.stage='COMPLETED'
         journal.close();root.destroy()
-    root.protocol('WM_DELETE_WINDOW',close);root.update();canvas.fit();root.after(100,update)
+    root.protocol('WM_DELETE_WINDOW',close);root.update();canvas.fit();root.after(33,update)
     if args.smoke:
         from window_capture import capture_window
         root.after(1200,lambda:capture_window(root,ROOT/'.delivery/d455_board_mission_preview.png'))
@@ -206,7 +211,7 @@ def main():
     root.mainloop()
     if errors:raise RuntimeError('; '.join(errors))
     if args.smoke_servo:
-        if servo.stage!='COMPLETED':raise RuntimeError('PBVS incomplete: '+servo.status)
+        if not completed_cycles:raise RuntimeError('PBVS incomplete: '+servo.status)
         print('PASS: camera-frame PBVS align/forward/backward, virtual arm only')
     if args.smoke:print('PASS: board registration, work offsets, offline mission GUI')
     if args.smoke_cycle:

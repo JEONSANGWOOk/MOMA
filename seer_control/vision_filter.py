@@ -6,18 +6,21 @@ from collections import deque
 
 
 class VisionFilter:
-    def __init__(self):self.states={}
+    def __init__(self,tau=.25,window=5,position_deadband=.0005,rotation_deadband_deg=.4):
+        self.states={};self.tau=tau;self.window=window
+        self.position_deadband=position_deadband;self.rotation_deadband_deg=rotation_deadband_deg
     def clear(self):self.states.clear()
 
-    def vector(self,key,value,now,deadband=.0005):
+    def vector(self,key,value,now,deadband=None):
+        if deadband is None:deadband=self.position_deadband
         if value is None:self.states.pop(key,None);return None
         state=self.states.get(key)
         if state is None or now-state['time']>.7:
-            self.states[key]=dict(time=now,history=deque([list(value)],maxlen=5),ema=list(value),shown=list(value))
+            self.states[key]=dict(time=now,history=deque([list(value)],maxlen=self.window),ema=list(value),shown=list(value))
             return list(value)
         state['history'].append(list(value))
         median=[statistics.median(v[i] for v in state['history']) for i in range(len(value))]
-        alpha=1-math.exp(-max(0.,now-state['time'])/.25);state['time']=now
+        alpha=1-math.exp(-max(0.,now-state['time'])/self.tau);state['time']=now
         state['ema']=[a+(b-a)*alpha for a,b in zip(state['ema'],median)]
         if math.dist(state['ema'],state['shown'])>deadband:state['shown']=list(state['ema'])
         return list(state['shown'])
@@ -28,7 +31,7 @@ class VisionFilter:
         q=[math.cos(angle/2)]+[v*math.sin(angle/2)/angle if angle>1e-12 else 0. for v in value]
         previous=self.states.get(key)
         if previous and sum(a*b for a,b in zip(previous['ema'],q))<0:q=[-v for v in q]
-        filtered=self.vector(key,q,now,deadband=math.sin(math.radians(.4)/2))
+        filtered=self.vector(key,q,now,deadband=math.sin(math.radians(self.rotation_deadband_deg)/2))
         norm=math.sqrt(sum(v*v for v in filtered));q=[v/norm for v in filtered]
         length=math.sqrt(sum(v*v for v in q[1:]))
         if length<1e-12:return [0.,0.,0.]

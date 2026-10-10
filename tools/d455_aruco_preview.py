@@ -11,6 +11,7 @@ import numpy as np
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from seer_control.aruco_board import validate_board,object_points,make_board
 from seer_control.vision_filter import VisionFilter
+from seer_control.vision_stream import publish_frame
 
 DICTIONARY=cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
 PARAMETERS=cv2.aruco.DetectorParameters()
@@ -353,7 +354,7 @@ def run(args):
         depth_scale=profile.get_device().first_depth_sensor().get_depth_scale() if use_depth else None
         if args.log:
             args.log.parent.mkdir(parents=True,exist_ok=True);log=args.log.open('a',encoding='utf-8')
-        last_log=0.;count=0;start=time.monotonic();last_board_read=0.;board_config=None;board_error='기준판 등록 대기';filtering=VisionFilter()
+        last_log=0.;count=0;start=time.monotonic();last_board_read=0.;board_config=None;board_error='기준판 등록 대기';filtering=VisionFilter();control_filter=VisionFilter(tau=.08,window=3,position_deadband=.0001,rotation_deadband_deg=.1)
         window='D455 ArUco - camera frame only'
         while not args.probe or time.monotonic()-start<5:
             frames=pipeline.wait_for_frames(3000)
@@ -399,9 +400,14 @@ def run(args):
             pair=filtering.pair(center_pair(observations),now)
             board=filtering.board(raw_board,now,orientation_degrees)
             count+=1;now=time.monotonic()
+            control_board=control_filter.board(raw_board,now,orientation_degrees)
+            record=dict(timestamp=time.time(),detected=bool(observations),marker_count=len(observations),markers=observations,center_pair=pair,board=board,
+                        raw_markers=raw_observations,raw_center_pair=raw_pair,raw_board=raw_board,control_board=control_board,
+                        filter_profile='median5_ema250ms_pos0.5mm_rot0.4deg',control_filter_profile='median3_ema80ms_pos0.1mm_rot0.1deg')
+            if args.live and not args.probe:
+                try:publish_frame(args.live,record)
+                except OSError:pass # reader lock must not terminate camera capture
             if now-last_log>=.2:
-                record=dict(timestamp=time.time(),detected=bool(observations),marker_count=len(observations),markers=observations,center_pair=pair,board=board,
-                            raw_markers=raw_observations,raw_center_pair=raw_pair,raw_board=raw_board,filter_profile='median5_ema250ms_pos0.5mm_rot0.4deg')
                 if log:log.write(json.dumps(record,allow_nan=False)+'\n');log.flush()
                 last_log=now
             if args.probe:continue
@@ -426,6 +432,7 @@ def main():
     parser.add_argument('--self-test',action='store_true')
     parser.add_argument('--serial')
     parser.add_argument('--log',type=Path)
+    parser.add_argument('--live',type=Path,default=Path(__file__).resolve().parents[1]/'.delivery/d455_aruco_live.json')
     parser.add_argument('--board-config',type=Path,default=Path(__file__).resolve().parents[1]/'.delivery/d455_board.json')
     args=parser.parse_args()
     if not math.isfinite(args.marker_mm) or args.marker_mm<=0:parser.error('--marker-mm must be positive and finite')

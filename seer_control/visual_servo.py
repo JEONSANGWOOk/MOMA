@@ -20,7 +20,8 @@ class VisualServo:
         self.mission=mission;self.sim=mission.sim;self.enabled=False
         self.status='비주얼 서보 대기';self.stage='IDLE';self.errors={}
         self.last_stamp=None;self.raw=None;self.lock=0;self.offset=None
-        self.reference=None;self.revision=None;self.distance=0.;self.goal=0.
+        self.reference=None;self.revision=None;self.distance=0.;self.goal=0.;self.completed_cycles=0
+        self.position_tolerance_mm=.4;self.angle_tolerance_deg=.3
 
     def report(self,message,evidence=None,action='가상 TCP 유지'):
         self.status=message
@@ -36,7 +37,7 @@ class VisualServo:
         self.mission.snapshot(offset,standby,approach) # shared geometry/input validation
         self.offset=list(offset);self.distance=standby;self.goal=approach
         self.reference=self.mission.reference;self.revision=self.mission.config['revision']
-        self.stage='ALIGN';self.cycle=cycle;self.lock=0;self.last_stamp=None;self.raw=None;self.errors={}
+        self.stage='ALIGN';self.cycle=cycle;self.lock=0;self.last_stamp=None;self.raw=None;self.errors={};self.completed_cycles=0
         self.enabled=True;self.report('PBVS 정면 정렬 시작',action='영상별 위치·각도 오차를 계산해 가상 팔 보정')
 
     def tick(self,record,now=None):
@@ -60,7 +61,7 @@ class VisualServo:
                 jump=math.dist(raw['camera_xyz_m'],self.raw['camera_xyz_m'])*1000
                 turn=math.degrees(norm(rotation_error(rotation(raw['rotation_vector_rad']),rotation(self.raw['rotation_vector_rad']))))
                 if jump>30 or turn>10:raise ValueError('원본 영상 급변 · 서보 정지')
-            dt=.2 if self.last_stamp is None else min(.25,max(0.,stamp-self.last_stamp))
+            dt=1/30 if self.last_stamp is None else min(.25,max(0.,stamp-self.last_stamp))
             if dt<=0:raise ValueError('영상 시간 역전 · 서보 정지')
             self.last_stamp=stamp;self.raw=copy.deepcopy(raw)
             center,r=m.virtual_board();tool=matmul(r,FRONT);n=[row[2] for row in r]
@@ -80,7 +81,7 @@ class VisualServo:
                 position_error_mm=norm(error),angle_error_deg=angle,revision=self.revision,
                 current_tcp_mm=p,target_tcp_mm=target,forward_alignment_allowed=aligned,
                 board_camera_xyz_m=list(m.latest['camera_xyz_m']),offset_mm=list(self.offset))
-            converged=norm(error)<=1.2 and angle<=1.
+            converged=norm(error)<=self.position_tolerance_mm and angle<=self.angle_tolerance_deg
             self.lock=self.lock+1 if converged else 0
             if self.stage=='ALIGN' and self.lock>=3:
                 if self.cycle:self.stage='APPROACH';self.standby=self.distance
@@ -89,18 +90,19 @@ class VisualServo:
             elif self.stage=='APPROACH' and self.distance<=self.goal and self.lock>=5:
                 self.stage='RETRACT';self.lock=0
             elif self.stage=='RETRACT' and self.distance>=self.standby and self.lock>=5:
-                self.enabled=False;self.stage='COMPLETED';self.report('PBVS 전진·후진 완료',self.errors);return
+                self.completed_cycles+=1;self.stage='HOLD';self.lock=0
+                self.report('PBVS 전진·후진 완료 · 실시간 자세 유지 계속',self.errors)
             # Proportional SE(3) correction; norm limits apply to Cartesian commands.
             step=limited([1.5*v*dt for v in error],15.*dt)
             delta=limited([1.5*v*dt for v in angular],math.radians(5)*dt)
-            if norm(error)>1.2 or angle>1.:
+            if not converged:
                 next_r=matmul(rotation(delta),[list(row[:3]) for row in current[:3]])
                 pose=pose_from_matrix(next_r,[p[i]+step[i] for i in range(3)])
-                q=self.sim.kin.ik(pose,self.sim.q,position_tolerance=.00015,rotation_tolerance=.001)
+                q=self.sim.kin.ik(pose,self.sim.q,position_tolerance=.00001,rotation_tolerance=.0001)
                 # Reject discontinuous IK branch switches before updating the simulator.
                 if max(abs(a-b) for a,b in zip(q,self.sim.q))>math.radians(15)*dt:
                     raise ValueError('관절 속도/역기구학 분기 초과 · 서보 정지')
                 self.sim.set_joints(q) # swept collision and joint-limit validation
-            self.report('PBVS '+dict(ALIGN='정면 정렬',HOLD='정렬 유지',APPROACH='전진 접근',RETRACT='후진 복귀')[self.stage],
+            self.report('PBVS '+dict(ALIGN='정면 정렬',HOLD='실시간 자세 유지',APPROACH='전진 접근',RETRACT='후진 복귀')[self.stage],
                 self.errors,'영상 목표와 가상 TCP 오차를 보정')
         except (ValueError,KeyError,TypeError,OverflowError) as exc:self.stop(str(exc))
