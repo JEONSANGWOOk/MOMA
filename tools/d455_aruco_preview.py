@@ -8,6 +8,8 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
+from seer_control.aruco_board import validate_board,object_points,make_board
 
 DICTIONARY=cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
 PARAMETERS=cv2.aruco.DetectorParameters()
@@ -52,6 +54,34 @@ def marker_center(polygon):
     center=np.cross(np.cross(points[0],points[2]),np.cross(points[1],points[3]))
     if abs(center[2])<1e-9:return None
     return (center[:2]/center[2]).tolist()
+
+
+def estimate_board(config,observations,rs,intr,camera,distortion):
+    result=dict(valid=False,reason='기준 마커 두 개 필요',revision=config['revision'],
+                geometry_source=config['geometry_source'],markers_used=0)
+    points=[];pixels=[]
+    for index,registered in enumerate(config['markers']):
+        matches=[m for m in observations if (m['dictionary'],m['id'])==(registered['dictionary'],registered['id'])]
+        if len(matches)!=1:return result
+        polygon=np.asarray(matches[0]['corners_px'],dtype=np.float64)
+        prepared,k,d,_=pose_inputs(rs,intr,polygon,camera,distortion)
+        points.extend(object_points(config,index));pixels.extend(prepared.reshape(4,2))
+        result['markers_used']+=1
+    points=np.asarray(points,dtype=np.float64);pixels=np.asarray(pixels,dtype=np.float64)
+    ok,rotations,translations,_=cv2.solvePnPGeneric(points,pixels,k,d,flags=cv2.SOLVEPNP_IPPE)
+    candidates=[]
+    for r,t in zip(rotations,translations) if ok else []:
+        if not np.isfinite(r).all() or not np.isfinite(t).all():continue
+        matrix=cv2.Rodrigues(r)[0]
+        if np.any((points@matrix.T+t.reshape(1,3))[:,2]<=0):continue
+        projection=cv2.projectPoints(points,r,t,k,d)[0].reshape(-1,2)
+        error=float(np.sqrt(np.mean(np.sum((projection-pixels)**2,axis=1))))
+        candidates.append((error,r,t))
+    if not candidates:return dict(result,reason='기준판 자세 추정 실패')
+    error,r,t=min(candidates,key=lambda item:item[0])
+    result.update(valid=True,reason='',camera_xyz_m=t.ravel().tolist(),rotation_vector_rad=r.ravel().tolist(),
+                  reprojection_px=error,orientation_deg=orientation_degrees(r))
+    return result
 
 
 def center_pair(observations):
@@ -276,6 +306,17 @@ def self_test():
     prepared,k,d,axes=pose_inputs(rs,intr,pixels,camera,np.zeros(5))
     result=estimate(prepared,.1,k,d)
     assert result and np.allclose(result[2].ravel(),translation,atol=1e-5) and not axes
+    config=make_board([dict(dictionary='DICT_4X4_1000',id=0),dict(dictionary='DICT_5X5_1000',id=0)],[100,100],130)
+    observations=[]
+    for index,marker in enumerate(config['markers']):
+        polygon=cv2.projectPoints(np.asarray(object_points(config,index)),rotation,translation,camera,np.zeros(5))[0]
+        observations.append(dict(marker,corners_px=polygon.reshape(4,2).tolist()))
+    board=estimate_board(config,observations,rs,intr,camera,np.zeros(5))
+    assert board['valid'] and board['markers_used']==2 and board['reprojection_px']<1e-5
+    assert np.allclose(board['camera_xyz_m'],translation,atol=1e-5)
+    assert not estimate_board(config,observations[:1],rs,intr,camera,np.zeros(5))['valid']
+    assert not estimate_board(config,observations+[observations[0]],rs,intr,camera,np.zeros(5))['valid']
+    print('PASS: registered 8-corner board pose recovery, missing/duplicate board marker rejection')
     intr.coeffs=[.1,-.01,.001,.002,0.]
     prepared,k,d,axes=pose_inputs(rs,intr,pixels,camera,np.asarray(intr.coeffs))
     assert not np.allclose(prepared,pixels.reshape(4,2)) and np.isfinite(prepared).all()
@@ -311,7 +352,7 @@ def run(args):
         depth_scale=profile.get_device().first_depth_sensor().get_depth_scale() if use_depth else None
         if args.log:
             args.log.parent.mkdir(parents=True,exist_ok=True);log=args.log.open('a',encoding='utf-8')
-        last_log=0.;count=0;start=time.monotonic()
+        last_log=0.;count=0;start=time.monotonic();last_board_read=0.;board_config=None;board_error='기준판 등록 대기'
         window='D455 ArUco - camera frame only'
         while not args.probe or time.monotonic()-start<5:
             frames=pipeline.wait_for_frames(3000)
@@ -344,9 +385,17 @@ def run(args):
                     error,rotation,translation=result;xyz=translation.ravel()
                     observation.update(pose_valid=True,camera_xyz_m=xyz.tolist(),rotation_vector_rad=rotation.ravel().tolist(),orientation_deg=orientation_degrees(rotation),reprojection_px=error)
             pair=center_pair(observations)
+            now=time.monotonic()
+            if now-last_board_read>.5:
+                last_board_read=now
+                try:
+                    board_config=validate_board(json.loads(args.board_config.read_text(encoding='utf-8')));board_error=''
+                except (OSError,ValueError,TypeError,KeyError) as error:
+                    board_config=None;board_error='기준판 설정 없음/오류: '+str(error)
+            board=estimate_board(board_config,observations,rs,intr,camera,distortion) if board_config else dict(valid=False,reason=board_error,markers_used=0)
             count+=1;now=time.monotonic()
             if now-last_log>=.2:
-                record=dict(timestamp=time.time(),detected=bool(observations),marker_count=len(observations),markers=observations,center_pair=pair)
+                record=dict(timestamp=time.time(),detected=bool(observations),marker_count=len(observations),markers=observations,center_pair=pair,board=board)
                 if log:log.write(json.dumps(record,allow_nan=False)+'\n');log.flush()
                 last_log=now
             if args.probe:continue
@@ -371,6 +420,7 @@ def main():
     parser.add_argument('--self-test',action='store_true')
     parser.add_argument('--serial')
     parser.add_argument('--log',type=Path)
+    parser.add_argument('--board-config',type=Path,default=Path(__file__).resolve().parents[1]/'.delivery/d455_board.json')
     args=parser.parse_args()
     if not math.isfinite(args.marker_mm) or args.marker_mm<=0:parser.error('--marker-mm must be positive and finite')
     if not 0<=args.marker_id<50:parser.error('--marker-id must be 0..49')
