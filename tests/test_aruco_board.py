@@ -2,7 +2,7 @@ import copy
 import math
 import unittest
 from pathlib import Path
-from seer_control.aruco_board import BoardArmMission,make_board,object_points
+from seer_control.aruco_board import BoardArmMission,make_board,object_points,initialize_panel_arm
 from seer_control.arm_simulation import ArmSimulator
 from seer_control.geometry3d import RobotDescription
 
@@ -12,7 +12,7 @@ ROOT=Path(__file__).resolve().parents[1]
 class BoardTests(unittest.TestCase):
     def setUp(self):
         self.sim=ArmSimulator(RobotDescription.load(ROOT/'examples/fairino_fr5.urdf'))
-        self.sim.q=[math.radians(v) for v in [0,-90,90,-90,-90,0]]
+        initialize_panel_arm(self.sim)
         self.home=list(self.sim.q);self.mission=BoardArmMission(self.sim)
         self.config=make_board([dict(dictionary='DICT_4X4_1000',id=0),dict(dictionary='DICT_5X5_1000',id=0)],[100,100],130)
         self.mission.config=self.config

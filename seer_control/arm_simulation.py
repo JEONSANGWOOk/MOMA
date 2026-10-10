@@ -54,12 +54,12 @@ class ArmKinematics:
   if abs(math.cos(pitch))>1e-7:roll=math.atan2(t[2][1],t[2][2]);yaw=math.atan2(t[1][0],t[0][0])
   else:roll=0.;yaw=math.atan2(-t[0][1],t[1][1])
   return [t[i][3]*1000 for i in range(3)]+[math.degrees(v) for v in (roll,pitch,yaw)]
- def ik(self,pose,seed,iterations=120):
+ def ik(self,pose,seed,iterations=120,position_tolerance=.0008,rotation_tolerance=.004):
   p=vector(pose,'TCP');target=transform([v/1000 for v in p[:3]],[math.radians(v) for v in p[3:]])
   q=self.clamp(list(seed));damping=.025;weight=.3
   for iteration in range(iterations):
    current=self.fk(q);position=[target[i][3]-current[i][3] for i in range(3)];rotation=rotation_error(target,current)
-   if math.sqrt(sum(v*v for v in position))<.0008 and math.sqrt(sum(v*v for v in rotation))<.004:return q
+   if math.sqrt(sum(v*v for v in position))<position_tolerance and math.sqrt(sum(v*v for v in rotation))<rotation_tolerance:return q
    error=position+[v*weight for v in rotation];columns=[];eps=1e-5
    for i in range(len(q)):
     shifted=list(q);shifted[i]+=eps;t=self.fk(shifted)

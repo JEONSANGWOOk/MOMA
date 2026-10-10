@@ -62,6 +62,14 @@ def pose_from_matrix(r,p):
     return list(p)+[math.degrees(v) for v in (roll,pitch,yaw)]
 
 
+def initialize_panel_arm(sim):
+    """Offline initial pose: upright panel in front, tool Z points toward -base X."""
+    seed=[math.radians(v) for v in [0,-90,90,-90,-90,0]]
+    q=sim.kin.ik([-350,-100,350,-90,0,90],seed,iterations=500)
+    sim.physics.check_motion(q,q)
+    sim.q=q
+
+
 class BoardArmMission:
     def __init__(self,sim,journal=None):
         self.sim=sim;self.journal=journal;self.config=None;self.latest=None

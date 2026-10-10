@@ -12,7 +12,8 @@ import tkinter as tk
 from tkinter import ttk
 ROOT=Path(__file__).resolve().parents[1];sys.path.insert(0,str(ROOT))
 from seer_control.aruco_arm_follow import latest_record
-from seer_control.aruco_board import BoardArmMission,make_board,save_board,validate_board,apply,object_points
+from seer_control.aruco_board import BoardArmMission,make_board,save_board,validate_board,apply,object_points,initialize_panel_arm
+from seer_control.visual_servo import VisualServo
 from seer_control.arm_simulation import ArmSimulator
 from seer_control.arm_workspace import ArmCanvas
 from seer_control.geometry3d import RobotDescription
@@ -22,18 +23,20 @@ from seer_control.fairino_model import installed
 
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--smoke',action='store_true')
+    parser.add_argument('--smoke-servo',action='store_true')
     parser.add_argument('--smoke-cycle',action='store_true',help='Validate GUI route planning and complete offline cycle using current camera frames')
+    parser.add_argument('--camera-log',type=Path,help='Camera JSONL input (default: live D455 log)')
     args=parser.parse_args();config_path=ROOT/'.delivery/d455_board.json'
-    log_path=ROOT/'.delivery/d455_aruco.jsonl'
+    log_path=args.camera_log or ROOT/'.delivery/d455_aruco.jsonl'
     root=tk.Tk();root.title('MOMA · ArUco 기준판 정렬·접근·복귀 SIM');root.geometry('1240x860')
     journal=DecisionJournal(ROOT/'.delivery/d455_board_mission')
     sim=ArmSimulator(RobotDescription.load(installed(Path.home()/'.seer_amr_console') or ROOT/'examples/fairino_fr5.urdf'),decision_journal=journal)
-    sim.q=[math.radians(v) for v in [0,-90,90,-90,-90,0]]
-    mission=BoardArmMission(sim,journal);record=None;registered_markers=[];busy=False;epoch=0;results=queue.Queue()
+    initialize_panel_arm(sim)
+    mission=BoardArmMission(sim,journal);servo=VisualServo(mission);record=None;registered_markers=[];busy=False;epoch=0;results=queue.Queue()
     fields={name:tk.StringVar(value=value) for name,value in [('side_a','100'),('side_b','100'),('spacing','130'),('rot_a','0'),('rot_b','0'),('x','0'),('y','0'),('standby','200'),('approach','100')]}
     source=tk.StringVar(value='실측 입력');info=tk.StringVar(value='카메라 로그 수신 대기');status=tk.StringVar();feedback=tk.StringVar()
     top=ttk.Frame(root,padding=10);top.pack(fill='x')
-    ttk.Label(top,text='두 마커 기준판 → 가상 팔 정렬·접근·복귀',font=('맑은 고딕',15,'bold')).pack(anchor='w')
+    ttk.Label(top,text='정면 판넬 · 열쇠구멍 목표 · 비주얼 서보 전진/후진',font=('맑은 고딕',15,'bold')).pack(anchor='w')
     ttk.Label(top,text='SIM 전용 · 실제 로봇 통신 없음 · 등록한 판이 두 마커를 고정한다고 가정 · 카메라도 작업 중 고정').pack(anchor='w',pady=4)
     registration=ttk.LabelFrame(root,text='1. 기준판 등록 — 검은 사각형 한 변 / 중심 간 실제 간격 [mm]',padding=8);registration.pack(fill='x',padx=10)
     row=ttk.Frame(registration);row.pack(fill='x')
@@ -45,7 +48,7 @@ def main():
         except (ValueError,TypeError,KeyError,OSError) as error:mission.report(str(error))
     def stop():
         nonlocal epoch,busy
-        epoch+=1;busy=False;mission.stop()
+        epoch+=1;busy=False;servo.stop();mission.stop()
     def current_markers():
         if not record or time.time()-record['timestamp']>.7:raise ValueError('현재 카메라 영상이 필요합니다.')
         markers=record['markers']
@@ -72,16 +75,18 @@ def main():
     ttk.Button(buttons,text='두 마커 기준판 등록',command=lambda:perform(register)).pack(side='left',padx=3)
     ttk.Label(buttons,textvariable=info).pack(side='left',padx=10)
     actions=ttk.LabelFrame(root,text='2. 기준 좌표와 작업 목표',padding=8);actions.pack(fill='x',padx=10,pady=6)
-    for key,label in [('x','판 X 오프셋'),('y','판 Y 오프셋'),('standby','대기 거리'),('approach','접근 거리')]:
+    for key,label in [('x','구멍 좌우'),('y','구멍 상하'),('standby','대기 거리'),('approach','접근 거리')]:
         ttk.Label(actions,text=label+' mm').pack(side='left',padx=(6,2));ttk.Entry(actions,textvariable=fields[key],width=6).pack(side='left')
     def reference():
-        if busy or mission.running:raise ValueError('계획/실행을 먼저 정지하세요.')
+        if busy or mission.running or servo.enabled:raise ValueError('계획/실행을 먼저 정지하세요.')
+        servo.stage='IDLE';servo.errors={}
         mission.set_reference(float(fields['standby'].get()));mission.update_scene();canvas.fit()
     ttk.Button(actions,text='가상 좌표 기준 설정',command=lambda:perform(reference)).pack(side='left',padx=8)
     control=ttk.Frame(root,padding=(10,0));control.pack(fill='x')
     def plan(action):
         nonlocal busy,epoch
-        if busy:raise ValueError('경로 검증 중입니다.')
+        if busy or servo.enabled:raise ValueError('현재 계획/서보를 먼저 정지하세요.')
+        servo.stage='IDLE';servo.errors={}
         mission.update_scene()
         snapshot=mission.snapshot([float(fields['x'].get()),float(fields['y'].get())],float(fields['standby'].get()),float(fields['approach'].get()),action)
         busy=True;epoch+=1;token=epoch;mission.report('전체 경로 역기구학·충돌 검사 중',dict(targets=snapshot['targets']),action='별도 가상 모델에서 경로 사전 검사')
@@ -91,12 +96,17 @@ def main():
         threading.Thread(target=worker,daemon=True,name='board-route-validation').start()
     ttk.Button(control,text='중점·자세 정렬',command=lambda:perform(lambda:plan('align'))).pack(side='left',padx=3)
     ttk.Button(control,text='정렬 → 접근 → 복귀',command=lambda:perform(lambda:plan('cycle'))).pack(side='left',padx=3)
+    def visual(cycle):
+        if busy:raise ValueError('경로 검증을 먼저 정지하세요.')
+        servo.start([float(fields['x'].get()),float(fields['y'].get())],float(fields['standby'].get()),float(fields['approach'].get()),cycle)
+    ttk.Button(control,text='비주얼 서보 정렬 유지',command=lambda:perform(lambda:visual(False))).pack(side='left',padx=3)
+    ttk.Button(control,text='비주얼 서보 전진 → 후진',command=lambda:perform(lambda:visual(True))).pack(side='left',padx=3)
     ttk.Button(control,text='정지',command=stop).pack(side='left',padx=3)
     ttk.Label(root,textvariable=status,font=('맑은 고딕',11,'bold'),padding=8).pack(fill='x')
     app=SimpleNamespace(font='맑은 고딕',arm_dev_display=tk.StringVar(value='SIM 개발'))
     canvas=ArmCanvas(root,app,sim);canvas.pack(fill='both',expand=True,padx=10,pady=4)
     ttk.Label(root,textvariable=feedback,padding=8).pack(fill='x')
-    ttk.Label(root,text='판 X: 왼쪽 → 오른쪽 · 판 Y: 위쪽 · 거리: 판 앞쪽 법선 방향\n실측 치수가 없으면 깊이 추정으로 SIM 시험하세요. 영상 소실·판 이동·수신 지연은 정지하며 자동 재개하지 않습니다.',padding=(10,0,10,10)).pack(fill='x')
+    ttk.Label(root,text='판 X: 좌우 · 판 Y: 상하 · 거리: 판넬 앞뒤 방향 (TCP가 판넬을 향함)\n실측 치수가 없으면 깊이 추정으로 SIM 시험하세요. 영상 소실·판 이동·수신 지연은 정지하며 자동 재개하지 않습니다.',padding=(10,0,10,10)).pack(fill='x')
     try:
         config=validate_board(json.loads(config_path.read_text(encoding='utf-8')));mission.config=config
         for key,m in zip(['side_a','side_b'],config['markers']):fields[key].set(str(m['side_mm']))
@@ -124,7 +134,9 @@ def main():
         else:
             info.set('두 마커를 보여주세요 / 등록 설정 확인')
             if busy:epoch+=1;busy=False
-        if (args.smoke or args.smoke_cycle) and mission.latest and mission.stable>=3 and not mission.reference:perform(reference)
+        if (args.smoke or args.smoke_cycle or args.smoke_servo) and mission.latest and mission.stable>=3 and not mission.reference:perform(reference)
+        if args.smoke_servo and mission.reference and mission.latest and not cycle_requested:
+            cycle_requested=True;perform(lambda:visual(True))
         if args.smoke_cycle and mission.reference and mission.latest and not cycle_requested:
             cycle_requested=True;perform(lambda:plan('cycle'))
         while True:
@@ -135,6 +147,10 @@ def main():
             if error:mission.report('전체 경로 검사 실패: '+error,dict(targets=snapshot['targets']))
             else:perform(lambda:mission.launch(snapshot,config))
         mission.tick(dt)
+        servo.tick(record)
+        if args.smoke_servo and servo.stage=='COMPLETED':
+            from window_capture import capture_window
+            root.after(0,lambda:(capture_window(root,ROOT/'.delivery/d455_visual_servo.png'),close()))
         if args.smoke_cycle and sim.state=='COMPLETED':
             from window_capture import capture_window
             root.after(0,lambda:(capture_window(root,ROOT/'.delivery/d455_board_mission_cycle.png'),close()))
@@ -154,27 +170,44 @@ def main():
                             canvas.create_polygon(*[v for p in points for v in p[:2]],fill='white',outline='#26394d',width=2)
                             x=sum(p[0] for p in points)/4;y=sum(p[1] for p in points)/4
                             canvas.create_text(x,y,text=f'#{index+1}\nID {marker["id"]}',fill='#192c40',font=('맑은 고딕',9,'bold'))
+                if center and mission.targets:
+                    distance=sum((mission.targets['approach'][i]-center[i])*r[i][2] for i in range(3))
+                    hole=[mission.targets['approach'][i]-r[i][2]*distance for i in range(3)]
+                    hp=canvas.camera.project([v/1000 for v in hole],max(10,canvas.winfo_width()),max(10,canvas.winfo_height()))
+                    ap=canvas.camera.project([v/1000 for v in mission.targets['align'][:3]],max(10,canvas.winfo_width()),max(10,canvas.winfo_height()))
+                    if hp:
+                        canvas.create_oval(hp[0]-6,hp[1]-6,hp[0]+6,hp[1]+6,outline='#ff9911',width=3)
+                        canvas.create_text(hp[0]+10,hp[1]+16,text='열쇠구멍 목표',anchor='w',fill='#dc7600')
+                        if ap:canvas.create_line(ap[0],ap[1],hp[0],hp[1],fill='#ff9911',dash=(5,3),arrow='last',width=2)
                 targets=[('대기/후퇴',mission.targets['align'][:3],'#2081d5'),('접근',mission.targets['approach'][:3],'#2081d5')] if mission.targets else []
                 for name,pose,color in ([('중점',center,'#ef5435')]+targets if center else []):
                     p=canvas.camera.project([v/1000 for v in pose],max(10,canvas.winfo_width()),max(10,canvas.winfo_height()))
                     if p:
                         canvas.create_oval(p[0]-4,p[1]-4,p[0]+4,p[1]+4,fill=color,outline='white')
                         canvas.create_text(p[0]+8,p[1],text=name,anchor='w',fill=color)
-        status.set(mission.status)
-        feedback.set('TCP [mm/도]: '+', '.join(f'{v:.1f}' for v in sim.kin.pose(sim.q)))
+        status.set(servo.status if servo.enabled or servo.stage in ('COMPLETED','STOPPED') and servo.last_stamp is not None else mission.status)
+        feedback.set('TCP [mm/도]: '+', '.join(f'{v:.1f}' for v in sim.kin.pose(sim.q)) + (' | 좌우·상하 오차 %.2f mm / 각도 %.2f° / 판넬 거리 %.1f mm' % (servo.errors['lateral_mm'],servo.errors['angle_error_deg'],servo.errors['normal_mm']) if servo.errors else ''))
         while True:
             try:journal.pending.get_nowait()
             except queue.Empty:break
         root.after(100,update)
-    def close():stop();journal.close();root.destroy()
+    def close():
+        completed=servo.stage=='COMPLETED'
+        stop()
+        if completed:servo.stage='COMPLETED'
+        journal.close();root.destroy()
     root.protocol('WM_DELETE_WINDOW',close);root.update();canvas.fit();root.after(100,update)
     if args.smoke:
         from window_capture import capture_window
         root.after(1200,lambda:capture_window(root,ROOT/'.delivery/d455_board_mission_preview.png'))
         root.after(1600,close)
     if args.smoke_cycle:root.after(25000,close)
+    if args.smoke_servo:root.after(65000,close)
     root.mainloop()
     if errors:raise RuntimeError('; '.join(errors))
+    if args.smoke_servo:
+        if servo.stage!='COMPLETED':raise RuntimeError('PBVS incomplete: '+servo.status)
+        print('PASS: camera-frame PBVS align/forward/backward, virtual arm only')
     if args.smoke:print('PASS: board registration, work offsets, offline mission GUI')
     if args.smoke_cycle:
         if sim.state!='COMPLETED':raise RuntimeError('GUI cycle incomplete: '+mission.status+' / '+sim.error)
