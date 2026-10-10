@@ -24,6 +24,8 @@ class FairinoUIMixin(FairinoProgramMixin,ArmWorkspaceMixin):
         if self.studio_config['arm'].get('driver')=='fairino':self.studio_arm_safe=False
 
     def _arm_call(self,config,kind,operation=None):
+        from .moma_vision_ui import ensure_arm_available
+        ensure_arm_available(self)
         if config.get('driver')=='fairino':return self.fr5_client.call(config,kind,operation)
         return arm_call(config,kind,operation)
 
@@ -48,6 +50,8 @@ class FairinoUIMixin(FairinoProgramMixin,ArmWorkspaceMixin):
 
     @audited('REAL.FR5 연결', '검증된 설정으로 FR5 연결 요청')
     def _fr5_connect(self):
+        from .moma_vision_ui import ensure_arm_available
+        ensure_arm_available(self)
         if not self.real:raise ValueError('REAL 모드로 전환한 뒤 FR5를 연결하세요. SIM에서는 실기로 전송하지 않습니다.')
         if self.studio_runner.active:raise ValueError('미션 종료 후 연결하세요.')
         cfg=copy.deepcopy(self.studio_config['arm'])

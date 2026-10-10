@@ -74,6 +74,7 @@ class KeyPanelLink:
         self.config=profile();self.config['ip']='192.168.57.2';self.cal=None
         self.feedback={};self.rx=0.;self.mode='SIM';self.plan=None;self.busy=False
         self.events=queue.Queue();self.epoch=0;self.poll_at=0.;self.status='FR5 미연결';self.last_record=None;self.pending_kind=None
+        self.connection_guard=lambda:None;self.motion_guard=lambda:None
 
     def report(self,message,evidence=None,action='통합 화면 갱신'):
         self.status=message
@@ -88,6 +89,7 @@ class KeyPanelLink:
         threading.Thread(target=run,daemon=True,name='key-twin-'+kind).start()
 
     def connect(self,ip,sdk):
+        self.connection_guard()
         if self.plan or self.busy or self.client.connected:raise ValueError('정지·연결 해제 후 다시 연결하세요.')
         self.config=profile();self.config.update(ip=ip,sdk_path=sdk)
         if self.cal:self.config.update(verified=self.cal['verified'],version_confirmed=self.cal['version_confirmed'],controller_version=self.cal['controller_version'])
@@ -111,6 +113,7 @@ class KeyPanelLink:
     def start(self,record,contact=False):
         if self.mode=='SIM':raise ValueError('SIM 모드는 가상 작업 버튼을 사용하세요.')
         if self.plan or self.busy:raise ValueError('FR5 작업/요청 처리 중')
+        self.motion_guard()
         calibration(self.cal,contact);socket=socket_frame(self.cal,record)
         f=self.feedback
         if not self.client.connected or time.monotonic()-self.rx>.5 or f.get('telemetry_verified') is not True:raise ValueError('최신 실제 FR5 상태 필요')
@@ -136,6 +139,7 @@ class KeyPanelLink:
         self.epoch+=1;self.client.close();self.feedback={};self.rx=0.;self.twin.fitted=False;self.report('FR5 연결 해제')
 
     def advance(self,record):
+        self.motion_guard()
         f=self.feedback
         if f.get('status')=='ERROR' or f.get('tool')!=self.cal['tool'] or f.get('user')!=0:raise ValueError('실제 로봇 오류/TCP 변경')
         command=self.plan.step(record,f)
@@ -167,7 +171,7 @@ class KeyPanelLink:
             elif kind=='stop':self.report('FR5 정지 응답 확인 · 재연결 필요',result)
         if self.plan:
             try:
-                socket_frame(self.cal,record)
+                self.motion_guard();socket_frame(self.cal,record)
                 if now-self.rx>.6:raise ValueError('실제 피드백 600 ms 지연')
             except Exception as exc:self.stop(str(exc))
         if self.client.connected and not self.busy and now-self.poll_at>=.2:

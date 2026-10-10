@@ -195,6 +195,8 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
         self._ui_scale_init()
         self._spatial_restore()
         self._operator_build()
+        from .moma_vision_ui import register_workspace
+        register_workspace(self)
         self._pad_start()
         self.last_tick = time.monotonic()
         self.after(100, self.tick)
@@ -1255,6 +1257,10 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
         if name=='navigate' and getattr(self,'studio_config',{}).get('real_navigation_mode')=='free':
             name='navigate_free'
         def send():
+            from .moma_vision_ui import panel_link
+            link=panel_link(self)
+            if link and (link.plan or link.busy) and name not in ('cancel','pause','unlock_control'):
+                raise ValueError('판넬 작업 정지 확인 후 AMR 명령을 실행하세요.')
             if not self.real or not self.connected:raise ValueError('실기 연결이 필요합니다.')
             if not self.control_enabled:raise ValueError('상단에서 실기 · 제어 모드로 연결하세요.')
             if self.loading_map and name not in ('cancel','pause'):raise ValueError('지도 전환 완료를 기다리세요.')
@@ -1454,6 +1460,9 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
         self.guarded(save)
 
     def action(self,name):
+        if name in ('stop','cancel','motor_off','pause'):
+            from .moma_vision_ui import stop_panel
+            stop_panel(self)
         if name in ('stop','cancel','motor_off','pause') and hasattr(self,'pad_enabled'):
             self.pad_enabled.set(False);self.release_drive();self.pad_gate.reset()
         if hasattr(self,'studio_runner') and name in ('stop','cancel','motor_off'):
@@ -4722,6 +4731,9 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
         self.after(max(10,round(period-(time.monotonic()-now)*1000)),self.tick)
 
     def close(self):
+        from .moma_vision_ui import close_panel
+        if not close_panel(self):
+            self.log('WARN','판넬 FR5 정지/요청 응답 확인 후 창을 다시 닫아주세요.');return
         self._operator_close()
         self._voice_close()
         self._pad_stop()
@@ -4738,5 +4750,17 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
 
 
 def main():
+    import argparse
+    parser=argparse.ArgumentParser(description='MOMA integrated AMR, arm and vision console')
+    parser.add_argument('--vision',action='store_true',help='Open the embedded vision/panel workspace')
+    parser.add_argument('--camera',action='store_true',help='Start read-only D455 capture in the embedded workspace')
+    args=parser.parse_args()
     app=Console()
+    if args.vision or args.camera:
+        app.after(100,lambda:app.tabs.select(app.vision_panel_page))
+    if args.camera:
+        def start_camera():
+            if app.vision_panel_workspace is not None:app.vision_panel_workspace.vision_camera.start()
+            else:app.after(100,start_camera)
+        app.after(600,start_camera)
     app.mainloop()

@@ -1,5 +1,7 @@
 # 전기 판넬 SIM·REAL 통합 실행
 
+기존 MOMA 프로그램과 ArUco 영상까지 함께 사용하려면 `MOMA_Vision.cmd`를 실행하세요. [MOMA 통합 설명](MOMA_VISION_KO.md)을 참고하세요.
+
 `D455_Key_Panel_Twin.cmd`를 실행합니다. 자동 동작 없이 SIM 모드로 열립니다. 기존 `D455_Key_Panel.cmd`도 같은 통합 화면을 사용하며 SIM 데모를 자동 시작합니다.
 
 | 모드 | 동작 |

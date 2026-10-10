@@ -1,4 +1,5 @@
 """D455 marker pose preview. Camera coordinates only; never sends robot commands."""
+import base64
 import argparse
 import json
 import math
@@ -326,6 +327,11 @@ def self_test():
 
 
 def run(args):
+    from seer_control.camera_lease import camera_lease
+    with camera_lease(Path(__file__).resolve().parents[1]/'.delivery/d455_camera.lock'):_capture(args)
+
+
+def _capture(args):
     import pyrealsense2 as rs
     devices=list(rs.context().query_devices())
     if not devices:raise RuntimeError('D455가 없습니다. USB 연결과 Viewer의 장치 표시를 확인하세요.')
@@ -354,9 +360,10 @@ def run(args):
         depth_scale=profile.get_device().first_depth_sensor().get_depth_scale() if use_depth else None
         if args.log:
             args.log.parent.mkdir(parents=True,exist_ok=True);log=args.log.open('a',encoding='utf-8')
-        last_log=0.;count=0;start=time.monotonic();last_board_read=0.;board_config=None;board_error='기준판 등록 대기';filtering=VisionFilter();control_filter=VisionFilter(tau=.08,window=3,position_deadband=.0001,rotation_deadband_deg=.1)
+        last_preview=0.;last_log=0.;count=0;start=time.monotonic();last_board_read=0.;board_config=None;board_error='기준판 등록 대기';filtering=VisionFilter();control_filter=VisionFilter(tau=.08,window=3,position_deadband=.0001,rotation_deadband_deg=.1)
         window='D455 ArUco - camera frame only'
         while not args.probe or time.monotonic()-start<5:
+            if args.stop_file and args.stop_file.exists():break
             frames=pipeline.wait_for_frames(3000)
             if align:frames=align.process(frames)
             color=frames.get_color_frame();depth=frames.get_depth_frame()
@@ -411,8 +418,16 @@ def run(args):
                 if log:log.write(json.dumps(record,allow_nan=False)+'\n');log.flush()
                 last_log=now
             if args.probe:continue
-            cv2.imshow(window,render_preview(image,observations,pair))
-            if cv2.waitKey(1)&0xFF in (27,ord('q')) or cv2.getWindowProperty(window,cv2.WND_PROP_VISIBLE)<1:break
+            if now-last_preview>=.1:
+                preview=render_preview(image,observations,pair)
+                if args.preview_json:
+                    ok,jpeg=cv2.imencode('.jpg',preview[:,:image.shape[1]],[cv2.IMWRITE_JPEG_QUALITY,85])
+                    if ok:
+                        try:publish_frame(args.preview_json,dict(timestamp=record['timestamp'],jpeg_base64=base64.b64encode(jpeg).decode('ascii')))
+                        except OSError:pass
+                if not args.no_window:cv2.imshow(window,preview)
+                last_preview=now
+            if not args.no_window and (cv2.waitKey(1)&0xFF in (27,ord('q')) or cv2.getWindowProperty(window,cv2.WND_PROP_VISIBLE)<1):break
         if args.probe:
             if count<2:raise RuntimeError('카메라 프레임 수신 부족')
             print(f'PASS: RGB {"+ aligned depth" if use_depth else "only"}, {count} frames / 5 seconds; distortion={intr.model}; markers in last frame={len(observations)}')
@@ -428,6 +443,9 @@ def main():
     parser.add_argument('--marker-id',type=int,default=0)
     parser.add_argument('--generate-marker',type=Path)
     parser.add_argument('--list-devices',action='store_true')
+    parser.add_argument('--no-window',action='store_true',help='Capture for embedded MOMA UI without a separate OpenCV window')
+    parser.add_argument('--preview-json',type=Path,default=Path(__file__).resolve().parents[1]/'.delivery/d455_camera_preview.json')
+    parser.add_argument('--stop-file',type=Path)
     parser.add_argument('--probe',action='store_true',help='Read frames for 5 seconds without opening a window')
     parser.add_argument('--self-test',action='store_true')
     parser.add_argument('--serial')

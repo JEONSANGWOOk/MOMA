@@ -63,6 +63,10 @@ class OperatorMixin(RecipeMixin):
  def _role_apply(self):
   wanted=self.ui_role.get()
   if wanted not in ('사용자','개발자'):raise ValueError('지원하지 않는 모드')
+  from .moma_vision_ui import panel_link
+  vision_link=panel_link(self)
+  if wanted!=self.role_active and vision_link and (vision_link.plan or vision_link.busy):
+   self.ui_role.set(self.role_active);raise ValueError('비전·판넬 작업 정지와 요청 완료 후 모드를 변경하세요.')
   if wanted!=self.role_active and (self.studio_runner.active or self.held or self.arm_dev_sim.state in ('RUNNING','PAUSED')):
    self.ui_role.set(self.role_active);raise ValueError('주행과 팔 작업을 종료한 뒤 모드를 변경하세요.')
   self._pad_stop();self.release_drive();self.pad_enabled.set(False);self.manual.set(False);self.role_active=wanted;self.voice_epoch+=1;self.voice_pending=None;self.operator_pending=None

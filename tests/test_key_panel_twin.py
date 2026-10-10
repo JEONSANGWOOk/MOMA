@@ -63,6 +63,19 @@ class CoordinationTests(unittest.TestCase):
         self.link.tick(self.record)
         self.assertIsNone(self.link.plan);self.assertNotEqual(self.link.feedback['tcp_mm_deg'],[999]*6)
 
+    def test_moma_guard_blocks_start_before_any_physical_send(self):
+        self.link.set_mode('SIM+REAL')
+        def blocked():raise ValueError('MOMA moving')
+        self.link.motion_guard=blocked
+        with self.assertRaisesRegex(ValueError,'MOMA moving'):self.link.start(self.record)
+        self.assertIsNone(self.link.plan);self.assertFalse(self.client.calls)
+
+    def test_moma_guard_interrupts_active_plan(self):
+        self.link.set_mode('SIM+REAL');self.link.start(self.record)
+        def blocked():raise ValueError('MOMA moving')
+        self.link.motion_guard=blocked;self.link.tick(self.record)
+        self.assertIsNone(self.link.plan)
+
     def test_mode_change_requires_stopping_active_plan(self):
         self.link.set_mode('SIM+REAL');self.link.start(self.record)
         with self.assertRaises(ValueError):self.link.set_mode('SIM')
