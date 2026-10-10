@@ -27,10 +27,28 @@ def detect_all(image):
             for polygon,marker_id,index in zip(corners,ids.ravel(),indices.ravel())]
 
 
+def orientation_degrees(rotation_vector):
+    # IPPE's marker Y points up and Z faces the camera. A front-facing marker
+    # therefore has Rx=180 degrees in raw PnP; remove that fixed convention.
+    matrix=cv2.Rodrigues(np.asarray(rotation_vector,dtype=np.float64).reshape(3))[0]
+    aligned=matrix@np.diag([1.,-1.,-1.])
+    cosine=math.hypot(float(aligned[0,0]),float(aligned[1,0]))
+    singular=cosine<1e-6
+    ry=math.atan2(-float(aligned[2,0]),cosine)
+    if singular:
+        rx=math.atan2(-float(aligned[1,2]),float(aligned[1,1]));rz=0.
+    else:
+        rx=math.atan2(float(aligned[2,1]),float(aligned[2,2]))
+        rz=math.atan2(float(aligned[1,0]),float(aligned[0,0]))
+    tilt=math.acos(max(-1.,min(1.,float(aligned[2,2]))))
+    return dict(tilt_deg=math.degrees(tilt),rx_deg=math.degrees(rx),
+                ry_deg=math.degrees(ry),rz_deg=math.degrees(rz),euler_singular=singular)
+
+
 def render_preview(image,observations):
     # Keep details outside the camera image; OpenCV's default blue ID labels
     # are deliberately replaced with white text on opaque, dark backgrounds.
-    height,width=image.shape[:2];row_height=76;panel_width=400;header=64
+    height,width=image.shape[:2];row_height=124;panel_width=420;header=64
     rows=max(1,(height-header-30)//row_height)
     columns=max(1,math.ceil(len(observations)/rows))
     canvas=np.full((height,width+columns*panel_width,3),(24,24,24),dtype=np.uint8)
@@ -60,12 +78,19 @@ def render_preview(image,observations):
             cv2.putText(canvas,badge,(bx+6,by+th+4),cv2.FONT_HERSHEY_SIMPLEX,.55,(255,255,255),2,cv2.LINE_AA)
             occupied.append(rect);break
         col,row=divmod(index,rows);left=width+col*panel_width+16;top=header+row*row_height
-        cv2.rectangle(canvas,(left,top),(left+5,top+62),color,-1)
+        cv2.rectangle(canvas,(left,top),(left+5,top+106),color,-1)
         cv2.putText(canvas,f'#{number}  ID {item["id"]}',(left+16,top+19),cv2.FONT_HERSHEY_SIMPLEX,.65,(255,255,255),2,cv2.LINE_AA)
         cv2.putText(canvas,item['dictionary'].removeprefix('DICT_'),(left+16,top+39),cv2.FONT_HERSHEY_SIMPLEX,.46,(220,220,220),1,cv2.LINE_AA)
         xyz=item['camera_xyz_m']
         text=f'X {xyz[0]*1000:.0f}  Y {xyz[1]*1000:.0f}  Z {xyz[2]*1000:.0f} mm' if xyz is not None else 'Position unavailable'
         cv2.putText(canvas,text,(left+16,top+60),cv2.FONT_HERSHEY_SIMPLEX,.46,(255,255,255),1,cv2.LINE_AA)
+        angles=item.get('orientation_deg')
+        tilt=f'Tilt: {angles["tilt_deg"]:.1f} deg  (front = 0)' if angles else 'Angle unavailable'
+        cv2.putText(canvas,tilt,(left+16,top+81),cv2.FONT_HERSHEY_SIMPLEX,.48,(0,230,255),1,cv2.LINE_AA)
+        if angles:
+            text=(f'RX {angles["rx_deg"]:+.1f}  RY {angles["ry_deg"]:+.1f}  RZ {angles["rz_deg"]:+.1f} deg'
+                  if not angles['euler_singular'] else 'RX/RZ ambiguous near RY +/-90 deg')
+            cv2.putText(canvas,text,(left+16,top+102),cv2.FONT_HERSHEY_SIMPLEX,.45,(255,255,255),1,cv2.LINE_AA)
     cv2.putText(canvas,f'ArUco markers: {len(observations)}',(width+16,27),cv2.FONT_HERSHEY_SIMPLEX,.65,(255,255,255),2,cv2.LINE_AA)
     cv2.putText(canvas,'Camera coordinates / marker size: see settings',(width+16,48),cv2.FONT_HERSHEY_SIMPLEX,.42,(200,200,200),1,cv2.LINE_AA)
     cv2.putText(canvas,'ESC / Q: close',(width+16,height-12),cv2.FONT_HERSHEY_SIMPLEX,.48,(220,220,220),1,cv2.LINE_AA)
@@ -122,6 +147,21 @@ def pose_inputs(rs,intr,polygon,camera,distortion):
 
 
 def self_test():
+    front=np.diag([1.,-1.,-1.])
+    def angles_for(rx,ry,rz):
+        x,y,z=np.radians([rx,ry,rz])
+        a=np.array([[1,0,0],[0,math.cos(x),-math.sin(x)],[0,math.sin(x),math.cos(x)]])
+        b=np.array([[math.cos(y),0,math.sin(y)],[0,1,0],[-math.sin(y),0,math.cos(y)]])
+        c=np.array([[math.cos(z),-math.sin(z),0],[math.sin(z),math.cos(z),0],[0,0,1]])
+        return orientation_degrees(cv2.Rodrigues(c@b@a@front)[0])
+    for expected in [(0,0,0),(30,0,0),(-30,0,0),(0,25,0),(0,-25,0),(0,0,45),(20,-25,35)]:
+        angles=angles_for(*expected)
+        assert np.allclose([angles[k] for k in ('rx_deg','ry_deg','rz_deg')],expected,atol=1e-6),(angles,expected)
+        expected_tilt=math.degrees(math.acos(math.cos(math.radians(expected[0]))*math.cos(math.radians(expected[1]))))
+        assert abs(angles['tilt_deg']-expected_tilt)<1e-6
+    assert angles_for(0,90,0)['euler_singular']
+    assert angles_for(0,-90,0)['euler_singular']
+    print('PASS: front-facing zero, signed RX/RY/RZ, combined tilt, +/-90 degree Euler singularity')
     marker=cv2.aruco.generateImageMarker(DICTIONARY,0,300)
     canvas=cv2.copyMakeBorder(marker,60,60,60,60,cv2.BORDER_CONSTANT,value=255)
     detections=detect_all(canvas)
@@ -203,7 +243,7 @@ def run(args):
                 for polygon,marker_id,dictionary in detections:
                     observation=dict(id=marker_id,dictionary=dictionary,corners_px=polygon.reshape(4,2).tolist(),
                         marker_size_mm=args.marker_mm,pose_valid=False,camera_xyz_m=None,
-                        rotation_vector_rad=None,reprojection_px=None,depth_z_m=None,
+                        rotation_vector_rad=None,orientation_deg=None,reprojection_px=None,depth_z_m=None,
                         coordinate_frame='camera_optical',robot_control=False)
                     observations.append(observation)
                     prepared,k,d,draw_axes=pose_inputs(rs,intr,polygon,camera,distortion)
@@ -213,7 +253,7 @@ def run(args):
                     cx,cy=np.rint(polygon.reshape(4,2).mean(axis=0)).astype(int)
                     patch=depth_image[max(0,cy-2):min(depth_image.shape[0],cy+3),max(0,cx-2):min(depth_image.shape[1],cx+3)] if depth_image is not None else np.array([])
                     valid=patch[patch>0];depth_m=float(np.median(valid)*depth_scale) if valid.size else None
-                    observation.update(pose_valid=True,camera_xyz_m=xyz.tolist(),rotation_vector_rad=rotation.ravel().tolist(),reprojection_px=error,depth_z_m=depth_m)
+                    observation.update(pose_valid=True,camera_xyz_m=xyz.tolist(),rotation_vector_rad=rotation.ravel().tolist(),orientation_deg=orientation_degrees(rotation),reprojection_px=error,depth_z_m=depth_m)
             count+=1;now=time.monotonic()
             if now-last_log>=.2:
                 record=dict(timestamp=time.time(),detected=bool(observations),marker_count=len(observations),markers=observations)
