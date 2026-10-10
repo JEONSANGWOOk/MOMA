@@ -24,6 +24,18 @@ class StreamTests(unittest.TestCase):
             publish_frame(live,dict(timestamp=100.1,board=dict(valid=False,reason='lost')))
             self.assertFalse(read_frame(log,live,now=100.1)['board']['valid'])
 
+    def test_transient_snapshot_failure_does_not_rewind_to_older_archive(self):
+        with tempfile.TemporaryDirectory() as folder:
+            live=Path(folder)/'live.json';log=Path(folder)/'archive.jsonl'
+            log.write_text(json.dumps(dict(timestamp=100,board=dict(valid=True)))+'\n',encoding='utf-8')
+            previous=dict(timestamp=100.1,board=dict(valid=True))
+            live.write_text('{',encoding='utf-8')
+            self.assertEqual(read_frame(log,live,now=100.12,previous=previous)['timestamp'],100.1)
+            publish_frame(live,dict(timestamp=100.2,board=dict(valid=False,reason='lost')))
+            self.assertFalse(read_frame(log,live,now=100.2,previous=previous)['board']['valid'])
+            live.unlink()
+            self.assertEqual(read_frame(log,live,now=101,previous=previous)['timestamp'],100)
+
     def test_missing_or_partial_snapshot_falls_back_to_archive(self):
         with tempfile.TemporaryDirectory() as folder:
             live=Path(folder)/'live.json';log=Path(folder)/'archive.jsonl'

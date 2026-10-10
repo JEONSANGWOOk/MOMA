@@ -49,6 +49,8 @@ class ArmCanvas(tk.Canvas):
   if mode=='실기 + SIM 비교':assets.append((self.sim.kin.asset,self.sim.kin.positions(self.sim.q),identity(),'#319fea',.42))
   show=getattr(self.app,'arm_collision_bounds',None)
   physical_faces,physical_lines=self.sim.physics.geometry(self.sim.q,show.get() if show else False) if mode!='실기 자세' else ([],[])
+  decorate=getattr(self.app,'arm_scene_geometry',None)
+  if decorate and mode!='실기 자세':physical_faces,physical_lines=decorate(physical_faces,physical_lines)
   if mode!='실기 자세' and self.sim.physics.forecast_q is not None:assets.append((self.sim.kin.asset,self.sim.kin.positions(self.sim.physics.forecast_q),identity(),'#ef4e55',.22))
   if renderer:
    from PIL import ImageTk

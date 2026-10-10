@@ -12,7 +12,7 @@ def publish_frame(path,record):
     pending.replace(path)
 
 
-def read_frame(log_path,live_path=None,now=None):
+def read_frame(log_path,live_path=None,now=None,previous=None):
     now=time.time() if now is None else now
     record=None
     if live_path is not None:
@@ -21,6 +21,10 @@ def read_frame(log_path,live_path=None,now=None):
             if -.1<=now-candidate['timestamp']<=.7:record=candidate
         except (OSError,ValueError,KeyError,TypeError):pass
     if record is None:record=latest_record(log_path)
+    # A Windows snapshot read can briefly fail during replacement. An older archive
+    # must not rewind the controller clock; keep the last fresh frame without moving.
+    if previous is not None and -.1<=now-previous['timestamp']<=.7:
+        if record is None or record.get('timestamp',0)<previous['timestamp']:record=previous
     if record and 'control_board' in record:
         record=dict(record,board=record['control_board'])
     return record

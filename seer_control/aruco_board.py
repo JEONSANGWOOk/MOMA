@@ -75,7 +75,7 @@ class BoardArmMission:
         self.sim=sim;self.journal=journal;self.config=None;self.latest=None
         self.stable=0;self.stamp=None;self.reference=None;self.running=False
         self.status='기준판 등록 대기';self.targets={};self.goal_sample=None
-        self.last_step=None
+        self.last_step=None;self.tool_offset_mm=0.
 
     def report(self,conclusion,evidence=None,action='가상 팔 현재 위치 유지'):
         self.status=conclusion
@@ -118,6 +118,8 @@ class BoardArmMission:
         fk=self.sim.kin.fk(self.sim.q);tool=[list(row[:3]) for row in fk[:3]]
         board_r=matmul(tool,FRONT);normal=[row[2] for row in board_r]
         tcp=self.sim.kin.pose(self.sim.q)
+        tip=apply(tool,[0.,0.,self.tool_offset_mm])
+        tcp[:3]=[tcp[i]+tip[i] for i in range(3)]
         self.reference=dict(camera=copy.deepcopy(self.latest),q=list(self.sim.q),
             board_rotation=board_r,center_mm=[tcp[i]-normal[i]*standby_mm for i in range(3)],
             transform=matmul(board_r,transpose(rotation(self.latest['rotation_vector_rad']))),asset=self.sim.kin.asset)
@@ -139,7 +141,7 @@ class BoardArmMission:
         if not 20<=approach<standby<=300:raise ValueError('20mm ≤ 접근 거리 < 대기 거리 ≤ 300mm이어야 합니다.')
         center,r=self.virtual_board();tool=matmul(r,FRONT)
         target_center=[center[i]+r[i][0]*offset[0]+r[i][1]*offset[1] for i in range(3)]
-        targets={name:pose_from_matrix(tool,[target_center[i]+r[i][2]*distance for i in range(3)])
+        targets={name:pose_from_matrix(tool,[target_center[i]+r[i][2]*distance-tool[i][2]*self.tool_offset_mm for i in range(3)])
                  for name,distance in [('align',standby),('approach',approach),('retract',standby)]}
         return dict(asset=self.sim.kin.asset,q=list(self.sim.q),physics=self.sim.physics.snapshot(),
                     targets=targets,home_q=list(self.reference['q']),action=action,sample=copy.deepcopy(self.latest))
