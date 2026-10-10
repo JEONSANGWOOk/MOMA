@@ -1,5 +1,6 @@
 """SIM/REAL coordinator. Measured feedback and predicted joints remain separate."""
 import copy,math,queue,socket,threading,time
+from .panel_handle_model import settings,handle_meshes,socket_meshes,key_meshes
 from .fairino_api import profile,vector
 from .fairino_client import FairinoClient
 from .key_panel_real import RealKeyPlan,calibration,socket_frame,pose_matrix
@@ -16,7 +17,7 @@ def metres(t):return tuple(tuple(v/1000 if j==3 and i<3 else v for j,v in enumer
 class KeyTwin:
     def __init__(self,asset):
         self.sim=ArmSimulator(asset);self.tool=None;self.socket=None;self.c=None
-        self.command=None;self.fitted=False
+        self.command=None;self.fitted=False;self.model=settings()
 
     def fit(self,feedback):
         joints=vector(feedback['joints_rad'],'실제 관절 rad');tcp=metres(pose_matrix(feedback['tcp_mm_deg']))
@@ -50,21 +51,20 @@ class KeyTwin:
         if self.socket:
             s=metres(self.socket)
             for local,size,color,name in [((-.17,.05,-.107),(.6,.8,.15),'#a8b1b9','twin_panel'),
-                 ((-.17,.05,-.031),(.592,.792,.002),'#d0d6da','twin_door'),
-                 ((0,.076,-.017),(.038,.118,.026),'#202b36','twin_handle')]:
+                 ((-.17,.05,-.031),(.592,.792,.002),'#d0d6da','twin_door')]:
                 mesh(multiply(s,transform(local)),size,color,name)
             turn=0.
             if self.fitted and self.c:
                 z=multiply(self.socket,self.c['T_socket_key_zero_mm']);key=tip if tip is not None else self.tcp()
                 r=[[sum(z[k][i]*key[k][j] for k in range(3)) for j in range(3)] for i in range(3)]
                 turn=math.atan2(r[1][0],r[0][0])
-            cylinder=multiply(s,transform(rpy=(0,0,-turn)))
-            for local,size in [((-.0066,0,-.013),(.010,.030,.026)),((.0066,0,-.013),(.010,.030,.026)),((0,.010,-.013),(.0032,.010,.026)),((0,-.010,-.013),(.0032,.010,.026))]:
-                mesh(multiply(cylinder,transform(local)),size,'#c7d2dc','twin_slot')
+            for polygons,color,name in handle_meshes(self.model)+socket_meshes(self.model,turn):
+                result.extend((tuple(point(s,p) for p in f),color,name) for f in polygons)
         if self.fitted:
             t=tip if tip is not None else self.tcp()
-            for local,size,color,name in [((0,0,-.0275),(.008,.0022,.055),'#dba633','predicted_key'),((0,0,-.070),(.028,.003,.030),'#dba633','key_bow'),((0,0,-.140),(.09,.06,.05),'#49657d','gripper_reference')]:
-                mesh(multiply(t,transform(local)),size,color,name)
+            for polygons,color,name in key_meshes(self.model):
+                result.extend((tuple(point(t,p) for p in f),color,name) for f in polygons)
+            mesh(multiply(t,transform((0,0,-.140))),(.09,.06,.05),'#49657d','gripper_reference')
         return result,lines
 
 

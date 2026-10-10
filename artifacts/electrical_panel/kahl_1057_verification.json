@@ -1,0 +1,51 @@
+{
+  "model": "KAHL-1057-B(R)",
+  "dimension_source": "photo_estimate",
+  "focused_tests_passed": 45,
+  "sim_regression_tests_passed": 6,
+  "sim_cycle": {
+    "depth_mm": 21.99999995364776,
+    "turn_deg": 89.98966483470194,
+    "unlocked": true
+  },
+  "moma_gui": {
+    "gui_errors": [],
+    "embedded": true,
+    "camera_requested": true,
+    "live_preview_frames": 16,
+    "tabs": [
+      "지도 / 제어",
+      "노드 / 경로",
+      "Taskchain",
+      "실시간 데이터",
+      "로봇 운영 정보",
+      "연결 / API",
+      "이벤트 로그",
+      "확장 도구",
+      "로봇팔 개발",
+      "음성 / LLM 명령",
+      "작업 운영",
+      "운영 미션 구성",
+      "비전 · 판넬 작업"
+    ],
+    "mode": "SIM",
+    "physical_robot_connected": false,
+    "real_motion_active": false,
+    "sim_pose": [
+      -0.005985083640129457,
+      -1.308516813243272,
+      2.229423718535027,
+      -4.061867538293685,
+      -1.5647985661292156,
+      -3.143896164095741e-05
+    ],
+    "visited_existing_map": true,
+    "visited_modes": [
+      "REAL",
+      "SIM+REAL",
+      "SIM"
+    ]
+  },
+  "hardware_motion_verified": false,
+  "original_photo_published": false
+}

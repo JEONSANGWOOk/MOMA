@@ -8,7 +8,7 @@ from tools.window_capture import capture_window
 
 
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('--camera',action='store_true');args=parser.parse_args()
+    parser=argparse.ArgumentParser();parser.add_argument('--camera',action='store_true');parser.add_argument('--model-preview',action='store_true');args=parser.parse_args()
     app=Console();errors=[];stamps=set();start=time.monotonic();visited=[]
     def callback_error(typ,value,tb):
         import traceback
@@ -29,6 +29,7 @@ def main():
         for mode,at in [('REAL',2),('SIM+REAL',3),('SIM',4)]:
             if elapsed>at and mode not in visited:
                 workspace.key_panel_modes.mode.set(mode);workspace.key_panel_modes.change();visited.append(mode)
+                if mode=='SIM' and args.model_preview:workspace.key_model_preview()
         if elapsed>4 and 'map' not in visited:
             app.tabs.select(app.operation_page);visited.append('map');app.after(250,lambda:app.tabs.select(app.vision_panel_page))
         if elapsed>6 and (not args.camera or len(stamps)>=3) or elapsed>18:

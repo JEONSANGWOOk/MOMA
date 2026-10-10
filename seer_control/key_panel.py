@@ -1,5 +1,6 @@
 """Generic cabinet lock and pre-gripped key. All coordinates/control are SIM only."""
 import math
+from .panel_handle_model import settings,handle_meshes,socket_meshes,key_meshes
 from .geometry3d import box,cylinder,multiply,point,transform
 from .aruco_board import FRONT,apply,matmul,transpose
 from .aruco_arm_follow import rotation
@@ -18,10 +19,13 @@ class KeyTool:
         p=self.sim.physics;p.configure(dict(kind='finger',force_n=100.))
         self.offset_mm=p.config['mount_offset_m']*1000+self.length_mm
         mission.tool_offset_mm=self.offset_mm
-        self.key=p.add_object('파지된 열쇠','box',[.028,.003,.085],.03,[0]*6)
-        self.key['collision_parts']=[dict(matrix=transform((0,0,-.0275)),size=[.028,.003,.030]),
-                                     dict(matrix=transform((0,0,.015)),size=[.008,.0022,.055])]
-        p.held=self.key;p.relative=transform((0,0,.1225));p.opening=.028;p.force=100.
+        self.model=settings();c=self.model
+        extent=c['key_shaft_mm']+20+c['key_bow_length_mm']/2
+        center=self.length_mm-extent/2
+        self.key=p.add_object('파지된 원통형 열쇠','box',[c['key_bow_width_mm']/1000,c['key_outer_radius_mm']*.002,extent/1000],.03,[0]*6)
+        self.key['collision_parts']=[dict(matrix=transform((0,0,(self.length_mm-c['key_shaft_mm']-20-center)/1000)),size=[c['key_bow_width_mm']/1000,.003,c['key_bow_length_mm']/1000]),
+                                     dict(matrix=transform((0,0,(self.length_mm-c['key_shaft_mm']/2-center)/1000)),size=[c['key_outer_radius_mm']*.002,c['key_outer_radius_mm']*.002,c['key_shaft_mm']/1000])]
+        p.held=self.key;p.relative=transform((0,0,center/1000));p.opening=.028;p.force=100.
         self.sync()
 
     def sync(self):self.key['matrix']=multiply(self.sim.physics.tcp(self.sim.q),self.sim.physics.relative)
@@ -50,16 +54,31 @@ class KeyPanelPhysics(ArmPhysics):
         old=[o['matrix'] for o in scene.walls]
         feedback=scene.feedback(q)
         if scene.can_turn(feedback):scene.place_walls(feedback['turn_deg'])
-        try:return super().contacts(q)
+        try:
+            risks,near=super().contacts(q)
+            # The tubular key's coarse OBB has a filled center. Replace only its
+            # bore contacts with an annular clearance check, preserving robot,
+            # gripper, handle and rear-stop collision checks.
+            bore={o['name'] for o in scene.walls}
+            risks=[pair for pair in risks if not (pair[0]==scene.tool.key['name'] and pair[1] in bore)]
+            near=[pair for pair in near if not (pair[0]==scene.tool.key['name'] and pair[1] in bore)]
+            if feedback['depth_mm']>0:
+                c=scene.model;overlap=min(feedback['depth_mm'],c['key_shaft_mm'])
+                eccentric=feedback['lateral_mm']+overlap*math.sin(math.radians(feedback['axis_error_deg']))
+                clearance=min(c['socket_radius_mm']-c['key_outer_radius_mm'],c['key_inner_radius_mm']-c['pin_radius_mm'])
+                if eccentric>clearance or feedback['depth_mm']>c['barrel_depth_mm']:
+                    risks.append((scene.tool.key['name'],'원통 슬롯 내외경 간섭'))
+            return risks,near
         finally:
             for o,t in zip(scene.walls,old):o['matrix']=t
 
 
 class KeyPanelScene:
     width_mm=600.;height_mm=800.;depth_mm=150.
-    mouth_mm=32.;insertion_mm=22.;slot_mm=(3.2,10.)
+    mouth_mm=32.;insertion_mm=22.
     def __init__(self,mission,tool):
         self.mission=mission;self.tool=tool;self.sim=mission.sim
+        self.model=tool.model;self.insertion_mm=self.model['insertion_mm']
         self.offset=[0.,100.];self.parts=[];self.walls=[];self.rotor_deg=0.;self.unlocked=False;self.correct_key=True
         self.center=None;self.r=None;self.meshes=[]
         self.sim.physics.scene=self
@@ -79,7 +98,8 @@ class KeyPanelScene:
         tilt=math.degrees(math.acos(max(-1.,min(1.,sum(current[i][2]*(-self.r[i][2]) for i in range(3))))))
         return dict(tip_world_mm=p,tip_local_mm=local,lateral_mm=math.dist(local[:2],self.offset),
                     depth_mm=self.mouth_mm-local[2],turn_deg=turn,axis_error_deg=tilt,
-                    correct_key=self.correct_key,unlocked=self.unlocked)
+                    correct_key=self.correct_key,unlocked=self.unlocked,model_product=self.model['product'],dimension_source=self.model['dimension_source'],
+                    annular_clearance_mm=min(self.model['socket_radius_mm']-self.model['key_outer_radius_mm'],self.model['key_inner_radius_mm']-self.model['pin_radius_mm']))
 
     def can_turn(self,f):
         return self.correct_key and f['depth_mm']>=self.insertion_mm-.3 and f['depth_mm']<=self.insertion_mm+.5 and f['lateral_mm']<=.25 and f['axis_error_deg']<=.5
@@ -93,13 +113,19 @@ class KeyPanelScene:
         self.add('판넬 문',(592,792,2),[-170,150,1],'#d0d6da')
         for y in (-100,400):self.add('힌지 '+str(y),(18,70,12),[-455,y,7],'#717d88')
         x,y=self.offset
-        self.add('검정 손잡이',(38,118,26),[x,y+76,15],'#202b36')
-        self.add('손잡이 받침',(48,165,8),[x,y+53,5],'#37414a')
-        # A true rectangular void, not a painted hole on a solid block.
-        for name,size,pos in [('좌',(10,30,26),(-6.6,0,19)),('우',(10,30,26),(6.6,0,19)),
-                              ('상',(3.2,10,26),(0,10,19)),('하',(3.2,10,26),(0,-10,19))]:
-            self.walls.append(self.add('실린더 슬롯 '+name,size,[x+pos[0],y+pos[1],pos[2]],'#bbc7d3'))
-        self.add('슬롯 뒷면',(23.2,30,2),[x,y,5],'#687683')
+        c=self.model
+        self.add('은색 테이퍼 손잡이',(30,c['handle_length_mm']-35,14),[x,y-(c['handle_length_mm']+15)/2,22],'#cbd6de')
+        # Eight bounding cheeks around the circular annulus. The center post is
+        # intentionally separate so the empty key center is part of the model.
+        radius=(c['barrel_radius_mm']+c['socket_radius_mm'])/2
+        for i in range(8):
+            angle=i*math.tau/8
+            wall=self.add('원통 실린더 슬롯 '+str(i),(c['barrel_radius_mm']-c['socket_radius_mm'],radius*.82,c['barrel_depth_mm']),
+                [x+radius*math.cos(angle),y+radius*math.sin(angle),self.mouth_mm-c['barrel_depth_mm']/2],'#bbc7d3')
+            wall['slot_angle_rad']=angle;self.walls.append(wall)
+        pin=self.add('원통 슬롯 중앙 핀',(c['pin_radius_mm']*2**.5,c['pin_radius_mm']*2**.5,c['barrel_depth_mm']-1),
+            [x,y,self.mouth_mm-(c['barrel_depth_mm']-1)/2],'#8798a6');self.walls.append(pin)
+        self.add('슬롯 뒷면',(23.2,30,2),[x,y,self.mouth_mm-c['barrel_depth_mm']-1],'#687683')
 
     def place_walls(self,angle):
         rz=rotation([0,0,-math.radians(angle)]);r=matmul(self.r,rz)
@@ -107,7 +133,7 @@ class KeyPanelScene:
             if o not in self.walls:continue
             delta=[local[0]-self.offset[0],local[1]-self.offset[1],local[2]]
             d=apply(rz,delta);p=self.world([self.offset[0]+d[0],self.offset[1]+d[1],d[2]])
-            o['matrix']=matrix(r,p)
+            o['matrix']=matrix(matmul(r,rotation([0,0,o.get('slot_angle_rad',0)])),p)
 
     def sync(self):
         self.center,self.r=self.mission.virtual_board()
@@ -130,35 +156,19 @@ class KeyPanelScene:
         def mesh(t,polygons,color,name):
             faces.extend((tuple(point(t,p) for p in face),color,name) for face in polygons)
         for o,_,color in self.meshes:
-            if o not in self.walls:mesh(o['matrix'],box(o['size']),color,o['name'])
-        # Chrome bezel ring leaves the slot unobstructed; polygon annulus in board XY.
+            if o not in self.walls and o['name']!='은색 테이퍼 손잡이':mesh(o['matrix'],box(o['size']),color,o['name'])
         if self.r:
-            t=matrix(matmul(self.r,rotation([0,0,-math.radians(self.rotor_deg)])),self.hole())
-            for i in range(40):
-                a=i*math.tau/40;b=(i+1)*math.tau/40
-                def rim(ang,z):return (.019*math.cos(ang),.019*math.sin(ang),z)
-                def slot(ang,z):
-                    c,s=math.cos(ang),math.sin(ang);rad=min(.0016/max(abs(c),1e-12),.005/max(abs(s),1e-12))
-                    return (rad*c,rad*s,z)
-                mesh(t,[[rim(a,0),rim(b,0),slot(b,0),slot(a,0)]],'#e3e9ee','chrome_bezel')
-                mesh(t,[[rim(a,0),rim(a,-.026),rim(b,-.026),rim(b,0)]],'#9cabb9','chrome_barrel')
-                mesh(t,[[slot(a,0),slot(b,0),slot(b,-.026),slot(a,-.026)]],'#546473','slot_inner_wall')
+            t=matrix(self.r,self.hole())
+            for polygons,color,name in handle_meshes(self.model)+socket_meshes(self.model,math.radians(self.rotor_deg)):
+                mesh(t,polygons,color,name)
             # Visual marker plates establish their actual metric centers, no invented IDs.
             for index,m in enumerate(self.mission.config['markers']):
                 local=[(-1 if index==0 else 1)*self.mission.config['spacing_mm']/2,0,2.2]
                 t=matrix(self.r,self.world(local));s=m['side_mm']/1000
                 mesh(t,box((s,s,.0004)),'#f2f3f4','marker_paper')
                 mesh(multiply(t,transform((0,0,.0003))),box((s*.8,s*.8,.0002)),'#182431','marker_border')
-        t=self.sim.physics.tcp(self.sim.q)
-        # Flat brass key blade with generic teeth, bow with a visible central hole.
-        profile=[(-.004,.110),(.004,.110),(.004,.150),(.002,.152),(.004,.154),(.001,.157),(.004,.159),(.004,.165),(-.004,.165)]
-        for yy in (-.0011,.0011):mesh(t,[[(x,yy,z) for x,z in profile]],'#dca936','key_blade')
-        for i,(x,z) in enumerate(profile):
-            nx,nz=profile[(i+1)%len(profile)];mesh(t,[[(x,-.0011,z),(nx,-.0011,nz),(nx,.0011,nz),(x,.0011,z)]],'#b88623','key_edge')
-        for i in range(32):
-            a=i*math.tau/32;b=(i+1)*math.tau/32
-            for yy in (-.0015,.0015):
-                mesh(t,[[(rad*math.cos(ang),yy,.095+rad*math.sin(ang)) for rad,ang in ((.014,a),(.014,b),(.005,b),(.005,a))]],'#dca936','key_bow')
+        t=multiply(self.sim.kin.fk(self.sim.q),transform((0,0,self.tool.offset_mm/1000)))
+        for polygons,color,name in key_meshes(self.model):mesh(t,polygons,color,name)
         return faces,lines
 
 

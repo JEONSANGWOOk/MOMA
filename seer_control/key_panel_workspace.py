@@ -29,7 +29,7 @@ def build_workspace(parent=None,args=None):
     else:root.pack(fill='both',expand=True)
     journal=DecisionJournal(ROOT/'.delivery/d455_key_panel')
     source=tk.StringVar(value='내장 모의 카메라' if standalone else 'D455 실시간');moving=tk.BooleanVar(value=False);lost=tk.BooleanVar(value=False);correct=tk.BooleanVar(value=True)
-    status=tk.StringVar(value='기준 마커 준비 중');feedback=tk.StringVar();record=None;requested=False;last_draw=0.;started=time.time()
+    status=tk.StringVar(value='기준 마커 준비 중');feedback=tk.StringVar();record=None;camera_record=None;requested=False;last_draw=0.;started=time.time()
     fields={k:tk.StringVar(value=v) for k,v in [('x','0'),('y','100'),('speed','120'),('insert','10'),('turn','30')]}
     sim=ArmSimulator(RobotDescription.load(installed(Path.home()/'.seer_amr_console') or ROOT/'examples/fairino_fr5.urdf'),decision_journal=journal)
     initialize_panel_arm(sim);sim.physics=KeyPanelPhysics(sim.kin)
@@ -58,7 +58,7 @@ def build_workspace(parent=None,args=None):
         r=matmul(t,FRONT);origin=[t[i][3]*1000+t[i][2]*100 for i in range(3)]
         twin.socket=[list(r[i])+[origin[i]] for i in range(3)]+[[0,0,0,1]]
     top=ttk.Frame(root,padding=10);top.pack(fill='x')
-    ttk.Label(top,text='전기 판넬 · 열쇠 정렬 → 삽입 → 90° 회전 → 잠금해제',font=('맑은 고딕',16,'bold')).pack(anchor='w')
+    ttk.Label(top,text='전기 판넬 · 원통 열쇠 정렬 → 삽입 → 90° 회전 · SIM 실린더 해제',font=('맑은 고딕',16,'bold')).pack(anchor='w')
     ttk.Label(top,text='AMR: MOMA 상단 모드 · FR5: 아래 SIM/REAL/SIM+REAL | 파란 반투명: SIM 예측 · 원래 색: REAL 측정 | 실제 동작은 실측 보정값 사용').pack(anchor='w',pady=4)
     if args.smoke_compare:ttk.Label(top,text='GUI 검증용 합성 피드백 · 실제 로봇 연결 없음 · 실기 명령 전송 불가',foreground='#b33d35').pack(anchor='w')
     def mode_changed(mode):
@@ -121,6 +121,11 @@ def build_workspace(parent=None,args=None):
         if link.mode!='SIM':raise ValueError('SIM 모드에서 가상 판넬을 초기화하세요.')
         if servo.enabled:raise ValueError('먼저 정지하세요.')
         scene.reset_lock();switch()
+    def model_preview():
+        if link.mode!='SIM':raise ValueError('SIM 모드에서 사진 모델을 미리 보세요.')
+        source.set('내장 모의 카메라');switch()
+        root.after(500,lambda:view(True))
+    ttk.Button(buttons,text='사진 모델 미리보기 (SIM)',command=lambda:perform(model_preview)).pack(side='left',padx=4)
     ttk.Button(buttons,text='초기화',command=lambda:perform(reset)).pack(side='left',padx=4)
     ttk.Label(buttons,text='동시 실행: 동일 실측 TCP 목표를 가상 계산 → FR5 전송 → 실제 도달 확인').pack(side='left',padx=10)
     ttk.Label(root,textvariable=status,padding=(12,4),font=('맑은 고딕',12,'bold')).pack(fill='x')
@@ -141,10 +146,13 @@ def build_workspace(parent=None,args=None):
     right.bind('<Configure>',lambda e:detail_scroll.configure(scrollregion=detail_scroll.bbox('all')))
     detail_scroll.bind('<Configure>',lambda e:detail_scroll.itemconfigure(detail_window,width=e.width))
     if standalone and (args.smoke or args.smoke_compare):side_tabs.select(detail_page)
-    ttk.Label(right,text='판넬 형상 참고 이미지 · 실측 모델 아님').pack(anchor='w')
+    ttk.Label(right,text='KAHL-1057-B(R) · 사진 기반 추정 형상').pack(anchor='w')
     from PIL import Image,ImageTk
-    image=Image.open(ROOT/'artifacts/electrical_panel/panel_reference.png');image.thumbnail((340,170))
-    photo=ImageTk.PhotoImage(image,master=root);root.panel_reference_photo=photo;ttk.Label(right,image=photo).pack(pady=4)
+    reference=ROOT/'.delivery/kahl_1057_reference.jpg'
+    if reference.exists():
+        image=Image.open(reference);image.thumbnail((340,170))
+        photo=ImageTk.PhotoImage(image,master=root);root.panel_reference_photo=photo;ttk.Label(right,image=photo).pack(pady=4)
+    else:ttk.Label(right,text='첨부 제품 사진 기반 3D · 치수는 추정값',wraplength=320).pack(pady=4)
     detail=tk.Canvas(right,width=340,height=230,bg='white',highlightthickness=1,highlightbackground='#b2bfcb');detail.pack(fill='x',pady=6)
     ttk.Label(right,textvariable=feedback,justify='left',wraplength=335,font=('맑은 고딕',9)).pack(anchor='w')
     def view(close=False):
@@ -157,22 +165,24 @@ def build_workspace(parent=None,args=None):
         canvas.camera.yaw=-35;canvas.camera.pitch=16;canvas.render()
     ttk.Button(right,text='손잡이·열쇠 확대',command=lambda:view(True)).pack(fill='x',pady=3)
     ttk.Button(right,text='로봇 + 판넬 전체 보기',command=lambda:view(False)).pack(fill='x')
-    ttk.Label(root,text='두 마커는 판넬에 함께 고정 · 구멍 위치는 두 마커 중간점 기준 · 황금색 열쇠 / 은색 실린더 / 검정 손잡이\n왼쪽 드래그: 회전 · 오른쪽 드래그: 이동 · 휠: 확대 | 로그: .delivery/d455_key_panel | 잠금기구·삽입 접촉은 기하학적 SIM 모델',padding=10).pack(fill='x')
+    ttk.Label(root,text='두 마커는 판넬에 함께 고정 · 구멍 위치는 두 마커 중간점 기준 · KAHL-1057-B(R) 은색 손잡이 / 중공 원통 열쇠 · 치수는 SIM 추정값\n왼쪽 드래그: 회전 · 오른쪽 드래그: 이동 · 휠: 확대 | 로그: .delivery/d455_key_panel | 잠금기구·삽입 접촉은 기하학적 SIM 모델',padding=10).pack(fill='x')
     failures=[];root.report_callback_exception=lambda typ,value,tb:failures.append(str(value))
     def draw_detail(f):
         detail.delete('all');detail.create_text(12,12,anchor='nw',text='SIM FK 피드백 · 슬롯 정면 / 삽입 단면',fill='#24394e')
         a=-math.radians(scene.rotor_deg);cx,cy=85,90
         detail.create_oval(cx-38,cy-38,cx+38,cy+38,fill='#e0e5ea',outline='#728494',width=3)
-        corners=[(-6.4,-20),(6.4,-20),(6.4,20),(-6.4,20)]
-        xy=[(cx+x*math.cos(a)-y*math.sin(a),cy+x*math.sin(a)+y*math.cos(a)) for x,y in corners]
-        detail.create_polygon(*[v for p in xy for v in p],fill='#17222d')
+        detail.create_oval(cx-19,cy-19,cx+19,cy+19,fill='#17222d',outline='#728494')
+        detail.create_oval(cx-10,cy-10,cx+10,cy+10,fill='#99abb8',outline='#5b6e7d')
+        detail.create_line(cx+26*math.cos(a),cy+26*math.sin(a),cx+33*math.cos(a),cy+33*math.sin(a),fill='#384f64',width=3)
         detail.create_text(175,68,anchor='w',text=f"실린더 {scene.rotor_deg:.1f}°")
-        detail.create_text(175,94,anchor='w',text='잠금해제' if scene.unlocked else '잠김',fill='#159c61' if scene.unlocked else '#d47d1b',font=('맑은 고딕',13,'bold'))
+        detail.create_text(175,94,anchor='w',text='SIM 키 해제' if scene.unlocked else 'SIM 키 잠김',fill='#159c61' if scene.unlocked else '#d47d1b',font=('맑은 고딕',13,'bold'))
         mouth=180;scale=3.;depth=f['depth_mm'];tip=mouth+max(-45,min(24,depth))*scale
-        detail.create_rectangle(mouth,155,mouth+22*scale+8,192,fill='#c1ccd7',outline='#6b7c8d')
-        detail.create_rectangle(mouth,166,mouth+22*scale,181,fill='#202b36',outline='')
-        detail.create_rectangle(tip-70,169,tip,178,fill='#dfac36',outline='#94651d')
-        detail.create_line(mouth,150,mouth,200,fill='#e44b4b',dash=(3,2));detail.create_text(12,212,anchor='w',text=f'침투 깊이 {depth:+.2f} / 22 mm · 금색: 실제 열쇠 끝')
+        detail.create_rectangle(mouth,155,mouth+scene.model['barrel_depth_mm']*scale+8,192,fill='#c1ccd7',outline='#6b7c8d')
+        detail.create_rectangle(mouth,166,mouth+scene.model['barrel_depth_mm']*scale,181,fill='#202b36',outline='')
+        detail.create_rectangle(tip-scene.model['key_shaft_mm']*scale,165,tip,169,fill='#d8e2ea',outline='#8498a8')
+        detail.create_rectangle(tip-scene.model['key_shaft_mm']*scale,179,tip,183,fill='#d8e2ea',outline='#8498a8')
+        detail.create_rectangle(mouth,171,mouth+(scene.model['barrel_depth_mm']-1)*scale,177,fill='#9baebb',outline='')
+        detail.create_line(mouth,150,mouth,200,fill='#e44b4b',dash=(3,2));detail.create_text(12,212,anchor='w',text=f'침투 깊이 {depth:+.2f} / {scene.insertion_mm:g} mm · 은색 중공 키 / 중앙 핀 · SIM')
     closing=False;closed=False;timer=None
     def close():
         nonlocal closing,closed
@@ -185,17 +195,18 @@ def build_workspace(parent=None,args=None):
         if timer:root.after_cancel(timer)
         journal.close();root.destroy();return True
     if standalone:root.protocol('WM_DELETE_WINDOW',close)
-    root.key_panel_close=close;root.key_panel_stop=stop_all;root.key_panel_link=link;root.vision_camera=camera;root.key_panel_modes=pane;root.key_panel_status=status
+    root.key_panel_close=close;root.key_panel_stop=stop_all;root.key_panel_link=link;root.vision_camera=camera;root.key_panel_modes=pane;root.key_panel_status=status;root.key_model_preview=model_preview
     def update():
-        nonlocal record,requested,last_draw,timer
+        nonlocal record,camera_record,requested,last_draw,timer
         if closed:return
         now=time.time();scene.correct_key=correct.get()
+        camera_record=read_frame(ROOT/'.delivery/d455_aruco.jsonl',ROOT/'.delivery/d455_aruco_live.json',previous=camera_record)
         if source.get()=='내장 모의 카메라':
             elapsed=now-started;motion=math.sin(elapsed*.35) if moving.get() else 0.
             record=dict(timestamp=now,vision_source='built_in_demo',board=dict(valid=not lost.get(),revision=mission.config['revision'],markers_used=2,
                 geometry_source='depth_estimate',camera_xyz_m=[motion*.006,0,.6],rotation_vector_rad=[math.pi-motion*.01,0,0],reprojection_px=.1))
-        else:record=read_frame(ROOT/'.delivery/d455_aruco.jsonl',ROOT/'.delivery/d455_aruco_live.json',previous=record)
-        link.tick(record);pane.refresh();camera.show_record(record)
+        else:record=camera_record
+        link.tick(record);pane.refresh();camera.show_record(camera_record)
         fresh=link.client.connected and time.monotonic()-link.rx<=.6
         app.fr5_feedback=link.feedback;app.fr5_rx=link.rx if fresh else 0.
         if (args.smoke_ui or args.smoke_compare) and now-started>2.5:
@@ -238,7 +249,7 @@ def build_workspace(parent=None,args=None):
         servo.tick(record,now=now);tool.sync()
         if scene.r:
             f=scene.feedback()
-            feedback.set(f"영상: {source.get()}\n단계: {servo.stage}\n좌우·상하 오차: {f['lateral_mm']:.3f} mm\n삽입 깊이: {f['depth_mm']:+.3f} / 22 mm\n열쇠 SIM 회전: {f['turn_deg']:.2f} / 90°\n축 기울기: {f['axis_error_deg']:.3f}°\n잠금 상태: {'해제' if scene.unlocked else '잠김'}\n열쇠 코드: {'일치' if correct.get() else '불일치'}\n그리퍼 앞 TCP: +{tool.offset_mm:.0f} mm\n접촉·토크: 기하학 모델, 센서 측정 아님")
+            feedback.set(f"KAHL-1057-B(R) · 치수 추정 SIM\n영상: {source.get()}\n단계: {servo.stage}\n좌우·상하 오차: {f['lateral_mm']:.3f} mm\n삽입 깊이: {f['depth_mm']:+.3f} / {scene.insertion_mm:g} mm\n열쇠 SIM 회전: {f['turn_deg']:.2f} / 90°\n축 기울기: {f['axis_error_deg']:.3f}°\n잠금 상태: {'해제' if scene.unlocked else '잠김'}\n열쇠 코드: {'일치' if correct.get() else '불일치'}\n그리퍼 앞 TCP: +{tool.offset_mm:.0f} mm\n접촉·토크: 기하학 모델, 센서 측정 아님")
             if now-last_draw>=.1 and root.winfo_viewable():
                 canvas.render();draw_detail(f);last_draw=now
                 w,h=canvas.winfo_width(),canvas.winfo_height()
