@@ -45,14 +45,54 @@ def orientation_degrees(rotation_vector):
                 ry_deg=math.degrees(ry),rz_deg=math.degrees(rz),euler_singular=singular)
 
 
-def render_preview(image,observations):
+def marker_center(polygon):
+    # The diagonal intersection is the projected square center. Averaging the
+    # four corners is biased when the marker is viewed obliquely.
+    points=np.column_stack((np.asarray(polygon).reshape(4,2),np.ones(4)))
+    center=np.cross(np.cross(points[0],points[2]),np.cross(points[1],points[3]))
+    if abs(center[2])<1e-9:return None
+    return (center[:2]/center[2]).tolist()
+
+
+def center_pair(observations):
+    if len(observations)!=2 or any(m.get('center_px') is None for m in observations):return None
+    indices=sorted(range(2),key=lambda i:observations[i]['center_px'][0])
+    a,b=[observations[i] for i in indices]
+    pixel_delta=np.subtract(b['center_px'],a['center_px']);pixel_distance=float(np.linalg.norm(pixel_delta))
+    pair=dict(marker_indices=indices,direction='image_left_to_right',valid_3d=False,
+              source=None,center_distance_px=pixel_distance,
+              image_line_deg=math.degrees(math.atan2(pixel_delta[1],pixel_delta[0])) if pixel_distance>1e-9 else None,
+              center_distance_m=None,delta_xyz_m=None,midpoint_xyz_m=None,
+              midpoint_range_m=None,line_depth_deg=None,line_inplane_deg=None)
+    # Always use the same metric source for both centers; never mix depth and PnP.
+    for field,source in [('depth_camera_xyz_m','aligned_depth'),('camera_xyz_m','pnp_marker_size')]:
+        values=[m.get(field) for m in (a,b)]
+        if any(v is None or len(v)!=3 or not np.isfinite(v).all() or v[2]<=0 for v in values):continue
+        delta=np.subtract(values[1],values[0]);midpoint=np.mean(values,axis=0)
+        distance=float(np.linalg.norm(delta));xy=math.hypot(delta[0],delta[1])
+        pair.update(valid_3d=True,source=source,center_distance_m=distance,delta_xyz_m=delta.tolist(),
+                    midpoint_xyz_m=midpoint.tolist(),midpoint_range_m=float(np.linalg.norm(midpoint)),
+                    line_depth_deg=math.degrees(math.atan2(delta[2],xy)) if distance>1e-9 else None,
+                    line_inplane_deg=math.degrees(math.atan2(delta[1],delta[0])) if xy>1e-9 else None)
+        break
+    return pair
+
+
+def render_preview(image,observations,pair=None):
     # Keep details outside the camera image; OpenCV's default blue ID labels
     # are deliberately replaced with white text on opaque, dark backgrounds.
-    height,width=image.shape[:2];row_height=124;panel_width=420;header=64
+    height,width=image.shape[:2];row_height=148;panel_width=420;header=64
     rows=max(1,(height-header-30)//row_height)
     columns=max(1,math.ceil(len(observations)/rows))
-    canvas=np.full((height,width+columns*panel_width,3),(24,24,24),dtype=np.uint8)
+    pair_width=430 if pair else 0
+    canvas=np.full((height,width+columns*panel_width+pair_width,3),(24,24,24),dtype=np.uint8)
     canvas[:,:width]=image
+    if pair:
+        centers=[tuple(np.rint(observations[i]['center_px']).astype(int)) for i in pair['marker_indices']]
+        cv2.line(canvas,*centers,(255,255,0),1,cv2.LINE_AA)
+        for center in centers:
+            cv2.circle(canvas,center,4,(0,0,0),-1)
+            cv2.circle(canvas,center,2,(255,255,255),-1)
     colors=[(0,230,255),(80,255,120),(255,180,80),(220,120,255),(180,255,255)]
     boxes=[];occupied=[]
     for item in observations:
@@ -78,22 +118,49 @@ def render_preview(image,observations):
             cv2.putText(canvas,badge,(bx+6,by+th+4),cv2.FONT_HERSHEY_SIMPLEX,.55,(255,255,255),2,cv2.LINE_AA)
             occupied.append(rect);break
         col,row=divmod(index,rows);left=width+col*panel_width+16;top=header+row*row_height
-        cv2.rectangle(canvas,(left,top),(left+5,top+106),color,-1)
+        cv2.rectangle(canvas,(left,top),(left+5,top+128),color,-1)
         cv2.putText(canvas,f'#{number}  ID {item["id"]}',(left+16,top+19),cv2.FONT_HERSHEY_SIMPLEX,.65,(255,255,255),2,cv2.LINE_AA)
         cv2.putText(canvas,item['dictionary'].removeprefix('DICT_'),(left+16,top+39),cv2.FONT_HERSHEY_SIMPLEX,.46,(220,220,220),1,cv2.LINE_AA)
         xyz=item['camera_xyz_m']
-        text=f'X {xyz[0]*1000:.0f}  Y {xyz[1]*1000:.0f}  Z {xyz[2]*1000:.0f} mm' if xyz is not None else 'Position unavailable'
+        text=f'PnP X {xyz[0]*1000:.0f}  Y {xyz[1]*1000:.0f}  Z {xyz[2]*1000:.0f} mm' if xyz is not None else 'PnP position unavailable'
         cv2.putText(canvas,text,(left+16,top+60),cv2.FONT_HERSHEY_SIMPLEX,.46,(255,255,255),1,cv2.LINE_AA)
+        depth_xyz=item.get('depth_camera_xyz_m')
+        text=(f'Depth X {depth_xyz[0]*1000:.0f}  Y {depth_xyz[1]*1000:.0f}  Z {depth_xyz[2]*1000:.0f} mm'
+              if depth_xyz is not None else 'Depth center unavailable')
+        cv2.putText(canvas,text,(left+16,top+81),cv2.FONT_HERSHEY_SIMPLEX,.46,(255,255,255),1,cv2.LINE_AA)
         angles=item.get('orientation_deg')
         tilt=f'Tilt: {angles["tilt_deg"]:.1f} deg  (front = 0)' if angles else 'Angle unavailable'
-        cv2.putText(canvas,tilt,(left+16,top+81),cv2.FONT_HERSHEY_SIMPLEX,.48,(0,230,255),1,cv2.LINE_AA)
+        cv2.putText(canvas,tilt,(left+16,top+102),cv2.FONT_HERSHEY_SIMPLEX,.48,(0,230,255),1,cv2.LINE_AA)
         if angles:
             text=(f'RX {angles["rx_deg"]:+.1f}  RY {angles["ry_deg"]:+.1f}  RZ {angles["rz_deg"]:+.1f} deg'
                   if not angles['euler_singular'] else 'RX/RZ ambiguous near RY +/-90 deg')
-            cv2.putText(canvas,text,(left+16,top+102),cv2.FONT_HERSHEY_SIMPLEX,.45,(255,255,255),1,cv2.LINE_AA)
+            cv2.putText(canvas,text,(left+16,top+123),cv2.FONT_HERSHEY_SIMPLEX,.45,(255,255,255),1,cv2.LINE_AA)
     cv2.putText(canvas,f'ArUco markers: {len(observations)}',(width+16,27),cv2.FONT_HERSHEY_SIMPLEX,.65,(255,255,255),2,cv2.LINE_AA)
     cv2.putText(canvas,'Camera coordinates / marker size: see settings',(width+16,48),cv2.FONT_HERSHEY_SIMPLEX,.42,(200,200,200),1,cv2.LINE_AA)
     cv2.putText(canvas,'ESC / Q: close',(width+16,height-12),cv2.FONT_HERSHEY_SIMPLEX,.48,(220,220,220),1,cv2.LINE_AA)
+    if pair:
+        left=width+columns*panel_width+18
+        def label(text,y,color=(255,255,255),scale=.5):
+            cv2.putText(canvas,text,(left,y),cv2.FONT_HERSHEY_SIMPLEX,scale,color,1,cv2.LINE_AA)
+        ids=pair['marker_indices']
+        label(f'Center pair: #{ids[0]+1} -> #{ids[1]+1}',28,scale=.65)
+        label('Image left -> right / camera coordinates',51,scale=.43)
+        angle=pair['image_line_deg']
+        label(f'Image line: {angle:+.1f} deg' if angle is not None else 'Image line: unavailable',83)
+        label(f'Pixel spacing: {pair["center_distance_px"]:.1f} px',108)
+        if pair['valid_3d']:
+            label('Source: aligned D455 depth' if pair['source']=='aligned_depth' else 'Source: PnP / assumed marker size',146,(0,230,255),.46)
+            label(f'Center distance: {pair["center_distance_m"]*1000:.1f} mm',179,scale=.57)
+            dx,dy,dz=[v*1000 for v in pair['delta_xyz_m']]
+            label(f'DX {dx:+.1f}  DY {dy:+.1f} mm',212)
+            label(f'DZ (front/back): {dz:+.1f} mm',239)
+            angle=pair['line_depth_deg']
+            label(f'Line depth angle: {angle:+.1f} deg' if angle is not None else 'Line depth angle: unavailable',272)
+            label(f'Midpoint Z: {pair["midpoint_xyz_m"][2]*1000:.1f} mm',305)
+            label(f'Midpoint range: {pair["midpoint_range_m"]*1000:.1f} mm',332)
+        else:label('Metric distance: unavailable',146,(0,230,255))
+        label('DY+: lower / DZ+: farther from camera',385,scale=.43)
+        label('Two centers define a line, not full plane pose.',409,scale=.43)
     return canvas
 
 
@@ -182,6 +249,21 @@ def self_test():
     points=np.array([[-.05,.05,0],[.05,.05,0],[.05,-.05,0],[-.05,-.05,0]])
     rotation=np.array([3.,.1,.2]);translation=np.array([.02,-.03,.8])
     pixels=cv2.projectPoints(points,rotation,translation,camera,np.zeros(5))[0]
+    expected_center=cv2.projectPoints(np.zeros((1,3)),rotation,translation,camera,np.zeros(5))[0].ravel()
+    assert np.allclose(marker_center(pixels),expected_center,atol=1e-7)
+    assert not np.allclose(pixels.reshape(4,2).mean(axis=0),expected_center,atol=1e-3)
+    a=dict(center_px=[100.,100.],depth_camera_xyz_m=[0.,0.,.6],camera_xyz_m=[0.,0.,.5])
+    b=dict(center_px=[200.,110.],depth_camera_xyz_m=[.12,.03,.64],camera_xyz_m=[.1,0.,.5])
+    pair=center_pair([b,a])
+    assert pair['source']=='aligned_depth' and pair['marker_indices']==[1,0]
+    assert np.allclose(pair['delta_xyz_m'],[.12,.03,.04]) and abs(pair['center_distance_m']-.13)<1e-9
+    assert abs(pair['line_depth_deg']-math.degrees(math.atan2(.04,math.hypot(.12,.03))))<1e-9
+    b['depth_camera_xyz_m']=None
+    pair=center_pair([a,b])
+    assert pair['source']=='pnp_marker_size' and abs(pair['center_distance_m']-.1)<1e-9
+    b['camera_xyz_m']=None
+    assert not center_pair([a,b])['valid_3d'] and center_pair([a]) is None
+    print('PASS: perspective-correct centers, two-center distance/angles, depth priority, consistent PnP fallback, missing marker')
     result=estimate(pixels,.1,camera,np.zeros(5))
     assert result and result[0]<1e-5
     assert np.allclose(result[2].ravel(),translation,atol=1e-5)
@@ -242,25 +324,33 @@ def run(args):
             if detections:
                 for polygon,marker_id,dictionary in detections:
                     observation=dict(id=marker_id,dictionary=dictionary,corners_px=polygon.reshape(4,2).tolist(),
+                        center_px=marker_center(polygon),depth_camera_xyz_m=None,
                         marker_size_mm=args.marker_mm,pose_valid=False,camera_xyz_m=None,
                         rotation_vector_rad=None,orientation_deg=None,reprojection_px=None,depth_z_m=None,
                         coordinate_frame='camera_optical',robot_control=False)
                     observations.append(observation)
+                    center=observation['center_px']
+                    if center is not None:
+                        cx,cy=np.rint(center).astype(int)
+                        patch=depth_image[max(0,cy-2):min(depth_image.shape[0],cy+3),max(0,cx-2):min(depth_image.shape[1],cx+3)] if depth_image is not None else np.array([])
+                        valid=patch[patch>0];depth_m=float(np.median(valid)*depth_scale) if valid.size else None
+                        if depth_m is not None:
+                            depth_xyz=rs.rs2_deproject_pixel_to_point(intr,center,depth_m)
+                            if np.isfinite(depth_xyz).all():
+                                observation.update(depth_z_m=depth_m,depth_camera_xyz_m=depth_xyz)
                     prepared,k,d,draw_axes=pose_inputs(rs,intr,polygon,camera,distortion)
                     result=estimate(prepared,args.marker_mm/1000,k,d)
                     if result is None:continue
                     error,rotation,translation=result;xyz=translation.ravel()
-                    cx,cy=np.rint(polygon.reshape(4,2).mean(axis=0)).astype(int)
-                    patch=depth_image[max(0,cy-2):min(depth_image.shape[0],cy+3),max(0,cx-2):min(depth_image.shape[1],cx+3)] if depth_image is not None else np.array([])
-                    valid=patch[patch>0];depth_m=float(np.median(valid)*depth_scale) if valid.size else None
-                    observation.update(pose_valid=True,camera_xyz_m=xyz.tolist(),rotation_vector_rad=rotation.ravel().tolist(),orientation_deg=orientation_degrees(rotation),reprojection_px=error,depth_z_m=depth_m)
+                    observation.update(pose_valid=True,camera_xyz_m=xyz.tolist(),rotation_vector_rad=rotation.ravel().tolist(),orientation_deg=orientation_degrees(rotation),reprojection_px=error)
+            pair=center_pair(observations)
             count+=1;now=time.monotonic()
             if now-last_log>=.2:
-                record=dict(timestamp=time.time(),detected=bool(observations),marker_count=len(observations),markers=observations)
+                record=dict(timestamp=time.time(),detected=bool(observations),marker_count=len(observations),markers=observations,center_pair=pair)
                 if log:log.write(json.dumps(record,allow_nan=False)+'\n');log.flush()
                 last_log=now
             if args.probe:continue
-            cv2.imshow(window,render_preview(image,observations))
+            cv2.imshow(window,render_preview(image,observations,pair))
             if cv2.waitKey(1)&0xFF in (27,ord('q')) or cv2.getWindowProperty(window,cv2.WND_PROP_VISIBLE)<1:break
         if args.probe:
             if count<2:raise RuntimeError('카메라 프레임 수신 부족')
