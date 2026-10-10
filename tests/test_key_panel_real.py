@@ -104,7 +104,7 @@ class RealTests(unittest.TestCase):
         self.assertEqual(self.engine.panel_status()['status'],'RUNNING')
 
     def test_sdk_rechecks_limits_tool_force_lease_and_done(self):
-        for mode in ('large','tool','force','expired','moving','emergency'):
+        for mode in ('large','tool','force','expired','moving','emergency','camera_stale'):
             self.setUp();spec=self.spec()
             if mode=='large':spec['target'][2]=623.
             if mode=='tool':self.robot.GetActualTCPNum.return_value=(0,2)
@@ -112,6 +112,7 @@ class RealTests(unittest.TestCase):
             if mode=='expired':spec['expires']=time.monotonic()-1
             if mode=='moving':self.robot.done=0
             if mode=='emergency':self.robot.emergency=1
+            if mode=='camera_stale':spec['camera_timestamp']=time.time()-1
             with self.subTest(mode=mode):
                 with self.assertRaises(ValueError):self.engine.panel_step(spec)
                 self.robot.MoveL.assert_not_called()

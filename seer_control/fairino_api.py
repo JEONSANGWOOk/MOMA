@@ -208,6 +208,9 @@ class SDKEngine:
             f=vector(state.get('force_torque'),'힘/토크 센서')
             if norm(f[:3])>=c['force_limit_n'] or norm(f[3:])>=c['torque_limit_nm']:raise ValueError('힘/토크 보호 임계값 초과')
         if time.monotonic()>expires:raise ValueError('실기 명령 유효시간 초과')
+        camera_stamp=spec.get('camera_timestamp')
+        if camera_stamp is not None:
+            if type(camera_stamp) not in (int,float) or not math.isfinite(camera_stamp) or not -.1<=time.time()-camera_stamp<=.25:raise ValueError('전송 직전 D455 영상 250 ms 유효시간 초과')
         checked(self.robot.MoveL(target,tool=c['tool'],user=0,vel=1.,acc=10.,ovl=10.,blendR=0.),'MoveL')
         self.target=('MoveL',target);self.operation='key_panel_'+stage;self.command_time=time.monotonic()
         self.canceled=False;self.paused=False

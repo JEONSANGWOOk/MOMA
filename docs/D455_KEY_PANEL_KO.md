@@ -30,6 +30,6 @@
 개발 검증: `py -3 -m unittest tests.test_key_panel` 및 `py -3 tools/d455_key_panel.py --smoke`. GUI 검증 결과와 캡처는 `.delivery/d455_key_panel_verification.json`, `.delivery/d455_key_panel.png`입니다.
 
 
-## FR5 실기 연결
+## FR5 실기 연결 및 동시 실행
 
-`D455_Key_Panel_Real.cmd` 및 SIM 화면의 실기 연결 버튼에서 192.168.57.2 로봇 상태를 읽고, 실측 보정 파일로 실기 정렬·접근을 준비할 수 있습니다. 실제 삽입·회전은 접촉 보호 조건을 검증해야 합니다. [실기 사용 설명](D455_KEY_PANEL_REAL_KO.md)을 참고하세요.
+`D455_Key_Panel_Twin.cmd`로 같은 화면에서 SIM / REAL / SIM+REAL을 선택할 수 있습니다. [통합 실행 설명](D455_KEY_PANEL_TWIN_KO.md)과 [실기 보정 설명](D455_KEY_PANEL_REAL_KO.md)을 참고하세요. `D455_Key_Panel_Real.cmd`는 기존 별도 실기 콘솔용으로 유지합니다.
