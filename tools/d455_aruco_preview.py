@@ -27,6 +27,51 @@ def detect_all(image):
             for polygon,marker_id,index in zip(corners,ids.ravel(),indices.ravel())]
 
 
+def render_preview(image,observations):
+    # Keep details outside the camera image; OpenCV's default blue ID labels
+    # are deliberately replaced with white text on opaque, dark backgrounds.
+    height,width=image.shape[:2];row_height=76;panel_width=400;header=64
+    rows=max(1,(height-header-30)//row_height)
+    columns=max(1,math.ceil(len(observations)/rows))
+    canvas=np.full((height,width+columns*panel_width,3),(24,24,24),dtype=np.uint8)
+    canvas[:,:width]=image
+    colors=[(0,230,255),(80,255,120),(255,180,80),(220,120,255),(180,255,255)]
+    boxes=[];occupied=[]
+    for item in observations:
+        p=np.asarray(item['corners_px'])
+        lo=p.min(axis=0);hi=p.max(axis=0)
+        boxes.append((lo[0]-3,lo[1]-3,hi[0]+3,hi[1]+3))
+    def overlaps(a,b):return a[0]<b[2] and a[2]>b[0] and a[1]<b[3] and a[3]>b[1]
+    for index,item in enumerate(observations):
+        color=colors[index%len(colors)];number=index+1
+        polygon=np.rint(item['corners_px']).astype(np.int32)
+        cv2.polylines(canvas,[polygon],True,color,2,cv2.LINE_AA)
+        # Only a compact reference number near the marker; do not cover another
+        # marker or badge when the camera sees closely packed printed sheets.
+        badge=f'#{number}';(tw,th),base=cv2.getTextSize(badge,cv2.FONT_HERSHEY_SIMPLEX,.55,2)
+        bw,bh=tw+12,th+base+8;x0,y0,x1,y1=boxes[index]
+        candidates=[(x0,y0-bh-4),(x1+4,y0),(x0,y1+4),(x0-bw-4,y0)]
+        for bx,by in candidates:
+            bx=int(bx);by=int(by);rect=(bx,by,bx+bw,by+bh)
+            if bx<0 or by<0 or rect[2]>width or rect[3]>height:continue
+            if any(overlaps(rect,b) for b in boxes+occupied):continue
+            cv2.rectangle(canvas,(bx,by),(bx+bw,by+bh),(0,0,0),-1)
+            cv2.rectangle(canvas,(bx,by),(bx+bw,by+bh),color,1)
+            cv2.putText(canvas,badge,(bx+6,by+th+4),cv2.FONT_HERSHEY_SIMPLEX,.55,(255,255,255),2,cv2.LINE_AA)
+            occupied.append(rect);break
+        col,row=divmod(index,rows);left=width+col*panel_width+16;top=header+row*row_height
+        cv2.rectangle(canvas,(left,top),(left+5,top+62),color,-1)
+        cv2.putText(canvas,f'#{number}  ID {item["id"]}',(left+16,top+19),cv2.FONT_HERSHEY_SIMPLEX,.65,(255,255,255),2,cv2.LINE_AA)
+        cv2.putText(canvas,item['dictionary'].removeprefix('DICT_'),(left+16,top+39),cv2.FONT_HERSHEY_SIMPLEX,.46,(220,220,220),1,cv2.LINE_AA)
+        xyz=item['camera_xyz_m']
+        text=f'X {xyz[0]*1000:.0f}  Y {xyz[1]*1000:.0f}  Z {xyz[2]*1000:.0f} mm' if xyz is not None else 'Position unavailable'
+        cv2.putText(canvas,text,(left+16,top+60),cv2.FONT_HERSHEY_SIMPLEX,.46,(255,255,255),1,cv2.LINE_AA)
+    cv2.putText(canvas,f'ArUco markers: {len(observations)}',(width+16,27),cv2.FONT_HERSHEY_SIMPLEX,.65,(255,255,255),2,cv2.LINE_AA)
+    cv2.putText(canvas,'Camera coordinates / marker size: see settings',(width+16,48),cv2.FONT_HERSHEY_SIMPLEX,.42,(200,200,200),1,cv2.LINE_AA)
+    cv2.putText(canvas,'ESC / Q: close',(width+16,height-12),cv2.FONT_HERSHEY_SIMPLEX,.48,(220,220,220),1,cv2.LINE_AA)
+    return canvas
+
+
 def estimate(corners, size_m, camera, distortion):
     half=size_m/2
     points=np.array([[-half,half,0],[half,half,0],[half,-half,0],[-half,-half,0]],dtype=np.float64)
@@ -155,16 +200,12 @@ def run(args):
             depth_image=np.asanyarray(depth.get_data()) if depth else None
             detections=detect_all(image);observations=[]
             if detections:
-                cv2.aruco.drawDetectedMarkers(image,[item[0] for item in detections],np.array([[item[1]] for item in detections],dtype=np.int32))
                 for polygon,marker_id,dictionary in detections:
                     observation=dict(id=marker_id,dictionary=dictionary,corners_px=polygon.reshape(4,2).tolist(),
                         marker_size_mm=args.marker_mm,pose_valid=False,camera_xyz_m=None,
                         rotation_vector_rad=None,reprojection_px=None,depth_z_m=None,
                         coordinate_frame='camera_optical',robot_control=False)
                     observations.append(observation)
-                    px,py=np.rint(polygon.reshape(4,2).min(axis=0)).astype(int)
-                    label_at=(max(0,int(px)),max(60,int(py)-8))
-                    cv2.putText(image,f'{dictionary.removeprefix("DICT_")} ID {marker_id}',label_at,cv2.FONT_HERSHEY_SIMPLEX,.42,(0,255,255),1)
                     prepared,k,d,draw_axes=pose_inputs(rs,intr,polygon,camera,distortion)
                     result=estimate(prepared,args.marker_mm/1000,k,d)
                     if result is None:continue
@@ -173,18 +214,13 @@ def run(args):
                     patch=depth_image[max(0,cy-2):min(depth_image.shape[0],cy+3),max(0,cx-2):min(depth_image.shape[1],cx+3)] if depth_image is not None else np.array([])
                     valid=patch[patch>0];depth_m=float(np.median(valid)*depth_scale) if valid.size else None
                     observation.update(pose_valid=True,camera_xyz_m=xyz.tolist(),rotation_vector_rad=rotation.ravel().tolist(),reprojection_px=error,depth_z_m=depth_m)
-                    if draw_axes:cv2.drawFrameAxes(image,camera,distortion,rotation,translation,args.marker_mm/2000)
-                    label=f'XYZ {xyz[0]*1000:.0f} {xyz[1]*1000:.0f} {xyz[2]*1000:.0f} mm'
-                    cv2.putText(image,label,(label_at[0],label_at[1]+18),cv2.FONT_HERSHEY_SIMPLEX,.42,(0,255,0),1)
             count+=1;now=time.monotonic()
             if now-last_log>=.2:
                 record=dict(timestamp=time.time(),detected=bool(observations),marker_count=len(observations),markers=observations)
                 if log:log.write(json.dumps(record,allow_nan=False)+'\n');log.flush()
                 last_log=now
             if args.probe:continue
-            cv2.putText(image,'Camera: X right / Y down / Z forward. No robot commands.',(8,20),cv2.FONT_HERSHEY_SIMPLEX,.43,(0,255,255),1)
-            cv2.putText(image,f'Markers: {len(observations)} / all ArUco families / ESC or Q: close',(8,42),cv2.FONT_HERSHEY_SIMPLEX,.45,(0,255,255),1)
-            cv2.imshow(window,image)
+            cv2.imshow(window,render_preview(image,observations))
             if cv2.waitKey(1)&0xFF in (27,ord('q')) or cv2.getWindowProperty(window,cv2.WND_PROP_VISIBLE)<1:break
         if args.probe:
             if count<2:raise RuntimeError('카메라 프레임 수신 부족')
