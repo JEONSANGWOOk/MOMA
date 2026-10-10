@@ -10,6 +10,7 @@ import cv2
 import numpy as np
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from seer_control.aruco_board import validate_board,object_points,make_board
+from seer_control.vision_filter import VisionFilter
 
 DICTIONARY=cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
 PARAMETERS=cv2.aruco.DetectorParameters()
@@ -352,7 +353,7 @@ def run(args):
         depth_scale=profile.get_device().first_depth_sensor().get_depth_scale() if use_depth else None
         if args.log:
             args.log.parent.mkdir(parents=True,exist_ok=True);log=args.log.open('a',encoding='utf-8')
-        last_log=0.;count=0;start=time.monotonic();last_board_read=0.;board_config=None;board_error='기준판 등록 대기'
+        last_log=0.;count=0;start=time.monotonic();last_board_read=0.;board_config=None;board_error='기준판 등록 대기';filtering=VisionFilter()
         window='D455 ArUco - camera frame only'
         while not args.probe or time.monotonic()-start<5:
             frames=pipeline.wait_for_frames(3000)
@@ -393,9 +394,14 @@ def run(args):
                 except (OSError,ValueError,TypeError,KeyError) as error:
                     board_config=None;board_error='기준판 설정 없음/오류: '+str(error)
             board=estimate_board(board_config,observations,rs,intr,camera,distortion) if board_config else dict(valid=False,reason=board_error,markers_used=0)
+            raw_observations=observations;raw_pair=pair;raw_board=board
+            observations=filtering.markers(raw_observations,now,orientation_degrees)
+            pair=filtering.pair(center_pair(observations),now)
+            board=filtering.board(raw_board,now,orientation_degrees)
             count+=1;now=time.monotonic()
             if now-last_log>=.2:
-                record=dict(timestamp=time.time(),detected=bool(observations),marker_count=len(observations),markers=observations,center_pair=pair,board=board)
+                record=dict(timestamp=time.time(),detected=bool(observations),marker_count=len(observations),markers=observations,center_pair=pair,board=board,
+                            raw_markers=raw_observations,raw_center_pair=raw_pair,raw_board=raw_board,filter_profile='median5_ema250ms_pos0.5mm_rot0.4deg')
                 if log:log.write(json.dumps(record,allow_nan=False)+'\n');log.flush()
                 last_log=now
             if args.probe:continue

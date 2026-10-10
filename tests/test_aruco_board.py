@@ -82,5 +82,14 @@ class BoardTests(unittest.TestCase):
         self.assertAlmostEqual(rotated[0][0],-.115)
         self.assertAlmostEqual(rotated[0][1],-.05)
 
+    def test_raw_movement_stops_even_if_filtered_pose_is_unchanged(self):
+        snapshot=self.mission.snapshot([0,0],200,100);config=BoardArmMission.prepare(snapshot)
+        self.mission.launch(snapshot,config)
+        self.record['raw_board']=copy.deepcopy(self.record['board'])
+        self.record['raw_board']['camera_xyz_m'][0]=.02
+        self.mission.inspect(self.record,now=self.record['timestamp'])
+        self.assertFalse(self.mission.running)
+        self.assertEqual(self.sim.q,self.home)
+
 
 if __name__=='__main__':unittest.main()

@@ -97,8 +97,9 @@ class BoardArmMission:
         if self.stamp!=stamp:self.stable+=1;self.stamp=stamp
         self.latest=board
         if self.running and self.goal_sample:
-            distance=math.dist(board['camera_xyz_m'],self.goal_sample['camera_xyz_m'])*1000
-            angle=math.degrees(math.sqrt(sum(v*v for v in rotation_error(rotation(board['rotation_vector_rad']),rotation(self.goal_sample['rotation_vector_rad'])))))
+            raw=record.get('raw_board',board)
+            distance=math.dist(raw['camera_xyz_m'],self.goal_sample['camera_xyz_m'])*1000
+            angle=math.degrees(math.sqrt(sum(v*v for v in rotation_error(rotation(raw['rotation_vector_rad']),rotation(self.goal_sample['rotation_vector_rad'])))))
             if distance>10 or angle>3:self.stop('실행 중 기준판/카메라 이동 · 재계획 필요',dict(translation_mm=distance,rotation_deg=angle))
         return board
 
