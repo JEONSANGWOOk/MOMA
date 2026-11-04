@@ -99,3 +99,49 @@ def get_field(value,path):
     for key in path.split('.'):
         value=value[int(key)] if isinstance(value,list) else value[key]
     return value
+
+
+def seer_io_operations():
+    """SEER NetProtocol L 1.2.1, IO query and ordinary digital output."""
+    return {
+        'read_io': dict(verified=True, role='read', api=1013, port=19204,
+                        response_type=11013, payload={}, di_path='DI', do_path='DO',
+                        di_valid_path='DI_valid'),
+        'set_do': dict(verified=True, role='write', api=6001, port=19210,
+                       response_type=16001, payload={'id':'${channel}', 'status':'${value}'}),
+    }
+
+
+def io_channels(value):
+    """Preserve channel IDs; never interpret strings or records by truthiness."""
+    if not isinstance(value, (dict, list)):
+        raise ValueError('I/O 응답은 객체 또는 배열이어야 합니다.')
+    out = {}
+    for key, item in (value.items() if isinstance(value, dict) else enumerate(value)):
+        if isinstance(item, dict):
+            key, item = item.get('id', key), item.get('status')
+        if isinstance(key, bool) or not str(key).isdigit():
+            raise ValueError('I/O 채널 번호 오류')
+        channel = int(key)
+        if not 0 <= channel < 64:
+            raise ValueError('I/O 채널: 0~63')
+        if type(item) is not bool and not (type(item) is int and item in (0, 1)):
+            raise ValueError('I/O 상태는 boolean 또는 0/1이어야 합니다.')
+        if channel in out:
+            raise ValueError('I/O 채널 중복')
+        out[channel] = bool(item)
+    return out
+
+
+def parse_io(result, spec):
+    parsed = {}
+    for kind in ('di', 'do'):
+        path = spec.get(kind + '_path', kind)
+        try:
+            value = get_field(result, path)
+        except KeyError:
+            value = []  # Optional banks are unknown, not OFF.
+        parsed[kind] = io_channels(value)
+    valid_path = spec.get('di_valid_path')
+    valid = io_channels(get_field(result, valid_path)) if valid_path and valid_path in result else {}
+    return parsed, valid

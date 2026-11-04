@@ -14,7 +14,7 @@ from .smap import path_record_geometry, make_path_record, make_area_record
 from .studio_core import (EditHistory, Recorder, MissionRunner, ACTION_DEFAULTS,
                           flatten_actions, validate_actions, validate_model,
                           rigid_calibration, finite, point_segment_distance)
-from .studio_devices import DeviceBridge, tcp_operation, arm_call, validate_operation, get_field
+from .studio_devices import DeviceBridge, tcp_operation, arm_call, validate_operation, get_field, seer_io_operations, parse_io
 from .fairino_ui import FairinoUIMixin
 from .fairino_api import validate as validate_fr5
 from .fairino_programs import expand_actions
@@ -325,9 +325,12 @@ class StudioMixin(FairinoUIMixin,ObstacleUIMixin):
                 loaded=json.loads(SETTINGS.read_text(encoding='utf-8'));self.studio_config.update(loaded)
                 self.studio_config['robot_model']=validate_model(self.studio_config['robot_model'])
         except Exception as e:self.log('ERROR','확장 설정 읽기 실패: '+str(e))
+        for name,spec in seer_io_operations().items():
+            self.studio_config['peripherals'].setdefault('operations',{}).setdefault(name,spec)
         self.studio_history=EditHistory();self._studio_snapshot=self.studio_history.capture(self.map)
         self._studio_map=self.map;self.studio_bridge=DeviceBridge();self.studio_results={};self.studio_jobs={}
         self.studio_token_generation={}
+        self._studio_io_pending=None;self._studio_io_generation=None;self._studio_io_valid={};self._studio_io_message='조회 대기'
         self.studio_io=dict(di={},do={});self.studio_recorder=Recorder();self.studio_alarms=[];self._studio_alarm_active={}
         self.studio_arm_safe=True
         self._fr5_init()
@@ -517,12 +520,18 @@ class StudioMixin(FairinoUIMixin,ObstacleUIMixin):
         tk.Checkbutton(row,text='ON',variable=self.studio_io_bool,bg=PANEL,fg=INK,selectcolor=PANEL).pack(side='left')
         self.button(row,'SIM DI 설정',lambda:self.guarded(self._studio_set_di)).pack(side='left',padx=4)
         self.button(row,'DO 설정',lambda:self.guarded(self._studio_set_do)).pack(side='left',padx=4)
+        self.button(row,'SEER 기본 API 적용',lambda:self.guarded(self._studio_seer_io)).pack(side='left',padx=4)
+        row=self._studio_row(page)
+        self.button(row,'DO ON',lambda:self.guarded(lambda:self._studio_io_output(True))).pack(side='left',padx=4)
+        self.button(row,'DO OFF',lambda:self.guarded(lambda:self._studio_io_output(False))).pack(side='left',padx=4)
         self.button(row,'실기 I/O 조회',lambda:self.guarded(self._studio_read_io)).pack(side='left',padx=4)
+        self.studio_io_status=self.label(page,'조회 대기',bg=PANEL);self.studio_io_status.pack(anchor='w',padx=12)
         self.studio_io_tree=ttk.Treeview(page,columns=('channel','di','do'),show='headings',height=15)
         for key,title in [('channel','채널'),('di','DI 입력'),('do','DO 출력')]:self.studio_io_tree.heading(key,text=title)
         for i in range(64):self.studio_io_tree.insert('','end',iid=str(i),values=(i,'—','—'))
+        self.studio_io_tree.bind('<<TreeviewSelect>>',lambda e:self.studio_channel.set(self.studio_io_tree.selection()[0]) if self.studio_io_tree.selection() else None)
         self.studio_io_tree.pack(fill='both',expand=True,padx=12,pady=8)
-        self._studio_note(page,'실기 I/O는 장비 연결 탭에 검증된 read_io / set_do API를 등록하면 사용합니다. 실기 미션의 DI 값은 최근 조회값만 사용합니다.')
+        self._studio_note(page,'SEER 1013 조회 / 6001 일반 DO 출력. DI는 읽기 전용입니다. —는 미수신·만료, 비활성은 DI_valid=false입니다. ACK 후 실제 DO를 재조회합니다.')
 
     def _studio_charge_page(self,page):
         self.studio_charge_enabled=tk.BooleanVar(value=self.studio_config['auto_charge']['enabled'])
@@ -733,7 +742,17 @@ class StudioMixin(FairinoUIMixin,ObstacleUIMixin):
         if not self.real or not self.connected:raise ValueError('실기 연결이 필요합니다.')
         cfg=copy.deepcopy(self.studio_config['peripherals']);spec=validate_operation(cfg,name)
         if spec['role']=='write' and not self.control_enabled:raise ValueError('실기 제어권이 필요합니다.')
-        host=self.host.get();return self._studio_submit(lambda:tcp_operation(host,cfg,name,values),callback)
+        host=self.host.get();generation=self.generation;queued=time.monotonic()
+        def perform():
+            if generation!=self.generation or not self.real or not self.connected:
+                raise ValueError('연결 변경으로 요청을 취소했습니다.')
+            if spec['role']=='write':
+                if not self.control_enabled or time.monotonic()-queued>3 or time.monotonic()-self.last_state>3:
+                    raise ValueError('제어 모드 또는 상태 만료 · 출력하지 않음')
+                if self.live.get('emergency') or self.live.get('stopped'):
+                    raise ValueError('비상/정지 상태 · 출력하지 않음')
+            return tcp_operation(host,cfg,name,values)
+        return self._studio_submit(perform,callback)
     def _studio_submit(self,fn,callback=None):
         try:token=self.studio_bridge.submit(fn)
         except queue.Full:raise ValueError('장비 요청 큐가 가득 찼습니다.')
@@ -742,25 +761,45 @@ class StudioMixin(FairinoUIMixin,ObstacleUIMixin):
         return token
     def _studio_io_value(self,kind,channel):
         if not self.real:return getattr(self.sim,kind).get(channel)
-        if time.monotonic()-getattr(self,'_studio_io_rx',0)>3:return None
+        if not self.connected or self._studio_io_generation!=self.generation or time.monotonic()-getattr(self,'_studio_io_rx',0)>3:return None
+        if kind=='di' and self._studio_io_valid.get(channel) is False:return None
         return self.studio_io[kind].get(channel)
     def _studio_set_di(self):
         self.sim_required();channel=int(self.studio_channel.get())
         if not 0<=channel<64:raise ValueError('I/O 채널: 0~63')
         self.sim.di[channel]=self.studio_io_bool.get()
+    def _studio_seer_io(self):
+        if self._studio_io_pending is not None:raise ValueError('I/O 조회 완료 후 적용하세요.')
+        self.studio_config['peripherals'].setdefault('operations',{}).update(seer_io_operations())
+        self._studio_save_settings()
+        self._studio_io_message='SEER 기본 API 적용 완료'
+    def _studio_io_output(self,value):
+        self.studio_io_bool.set(value);self._studio_set_do()
     def _studio_set_do(self):
         channel=int(self.studio_channel.get());value=self.studio_io_bool.get()
         if not 0<=channel<64:raise ValueError('I/O 채널: 0~63')
-        if not self.real:self.sim.do[channel]=value
-        else:self._studio_device('set_do',dict(channel=channel,value=value),lambda r:self.studio_io['do'].update({channel:value}))
+        if not self.real:
+            self.sim.do[channel]=value;return
+        if self._studio_io_value('do',channel) is None:raise ValueError('해당 DO의 최신 조회값이 필요합니다.')
+        if time.monotonic()-self.last_state>3:raise ValueError('로봇 상태가 오래되었습니다.')
+        if self.live.get('emergency') or self.live.get('stopped') or abs(float(self.live.get('speed',0)))>.02:
+            raise ValueError('로봇 정지 및 비상정지 해제 상태를 확인하세요.')
+        if self.studio_runner.active or self.task_running:raise ValueError('미션 종료 후 수동 출력을 변경하세요.')
+        def accepted(result):
+            self.log('IO',f'DO {channel} {value} ACK · 실제 상태 재조회')
+            self._studio_io_message='출력 ACK · 상태 확인 대기'
+            self._studio_io_poll_at=0
+        self._studio_device('set_do',dict(channel=channel,value=value),accepted)
     def _studio_read_io(self):
+        if self._studio_io_pending is not None:return self._studio_io_pending
+        spec=copy.deepcopy(validate_operation(self.studio_config['peripherals'],'read_io'))
         def receive(result):
-            spec=self.studio_config['peripherals']['operations']['read_io']
-            for kind in ('di','do'):
-                value=get_field(result,spec.get(kind+'_path',kind))
-                self.studio_io[kind]={int(k):bool(v) for k,v in (value.items() if isinstance(value,dict) else enumerate(value))}
-            self._studio_io_rx=time.monotonic()
-        return self._studio_device('read_io',{},receive)
+            values,valid=parse_io(result,spec)
+            self.studio_io=values;self._studio_io_valid=valid
+            self._studio_io_rx=time.monotonic();self._studio_io_generation=self.generation
+            self._studio_io_message=f"수신 완료 · DI {len(values['di'])} / DO {len(values['do'])}"
+        self._studio_io_pending=self._studio_device('read_io',{},receive)
+        return self._studio_io_pending
     def _studio_save_settings(self):
         SETTINGS.parent.mkdir(parents=True,exist_ok=True)
         SETTINGS.write_text(json.dumps(self.studio_config,ensure_ascii=False,indent=2,allow_nan=False),encoding='utf-8')
@@ -964,6 +1003,9 @@ class StudioMixin(FairinoUIMixin,ObstacleUIMixin):
         while True:
             try:token,ok,result=self.studio_bridge.results.get_nowait()
             except queue.Empty:break
+            if token==self._studio_io_pending:
+                self._studio_io_pending=None
+                if not ok:self._studio_io_message='조회 실패: '+str(result)
             if self.studio_token_generation.pop(token,None)!=self.generation:
                 self.studio_jobs.pop(token,None);continue
             if token in self.studio_jobs:
@@ -971,7 +1013,9 @@ class StudioMixin(FairinoUIMixin,ObstacleUIMixin):
                 if generation!=self.generation:continue
                 if ok:
                     try:callback(result)
-                    except Exception as e:self.log('ERROR','장비 응답 처리 실패: '+str(e))
+                    except Exception as e:
+                        self._studio_io_message='응답 처리 실패: '+str(e)
+                        self.log('ERROR','장비 응답 처리 실패: '+str(e))
                 else:self.log('ERROR','장비 요청 실패: '+str(result))
             else:self.studio_results[token]=(ok,result)
         while len(self.studio_results)>128:self.studio_results.pop(next(iter(self.studio_results)))
@@ -1010,10 +1054,10 @@ class StudioMixin(FairinoUIMixin,ObstacleUIMixin):
             if value is None:
                 value=(self.raw.get('all',{}) if isinstance(self.raw,dict) else {}).get(key,[])
             self._studio_alarm(key,bool(value),title+': '+str(value))
-        if self.real and now-self._studio_io_poll_at>1 and 'read_io' in self.studio_config['peripherals'].get('operations',{}):
+        if self.real and self.connected and now-self._studio_io_poll_at>1 and 'read_io' in self.studio_config['peripherals'].get('operations',{}):
             self._studio_io_poll_at=now
             try:self._studio_read_io()
-            except Exception:pass
+            except Exception as e:self._studio_io_message='조회 실패: '+str(e)
         self.studio_recorder.recording=self.studio_record.get()
         if now-self._studio_record_at>=.2:
             self._studio_record_at=now
@@ -1034,9 +1078,11 @@ class StudioMixin(FairinoUIMixin,ObstacleUIMixin):
         if runner.active or runner.status in ('FAILED','COMPLETED'):self.mission_status.config(text=text[:110])
         self.studio_action_tree.delete(*self.studio_action_tree.get_children())
         for i,a in enumerate(runner.actions):self.studio_action_tree.insert('','end',values=(i+1,a['type'],a.get('goal',a.get('operation','')),a['status'],a['timeout_s']))
+        age=now-getattr(self,'_studio_io_rx',0)
+        self.studio_io_status.config(text=('REAL · '+self._studio_io_message+(' · 수신 만료' if age>3 or self._studio_io_generation!=self.generation or not self.connected else f' · {age:.1f}초 전')) if self.real else 'SIM · 모의 I/O')
         for i in range(64):
             di=self._studio_io_value('di',i);do=self._studio_io_value('do',i)
-            self.studio_io_tree.item(str(i),values=(i,'—' if di is None else 'ON' if di else 'OFF','—' if do is None else 'ON' if do else 'OFF'))
+            self.studio_io_tree.item(str(i),values=(i,'비활성' if self.real and self.connected and self._studio_io_generation==self.generation and age<=3 and self._studio_io_valid.get(i) is False else '—' if di is None else 'ON' if di else 'OFF','—' if do is None else 'ON' if do else 'OFF'))
         phase=self.sim.auto_charge['phase'] if not self.real else getattr(self,'_studio_real_charge_phase','IDLE')
         self.studio_charge_label.config(text=f"{'REAL' if self.real else 'SIM'} · {phase} · 배터리 {state.get('battery','—')}")
         if not self.real:arm_text=json.dumps(self.sim.arm,ensure_ascii=False)

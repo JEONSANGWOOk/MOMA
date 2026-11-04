@@ -26,7 +26,7 @@ def split_reference(start,reference):
 
 def alternate_route(model,start,goal,a,b,reference,radius,include_dynamic=False,safety_margin=.04,optimize=False):
     # Dynamic actors are waited for at execution, rather than closing map lanes.
-    scene=SimpleNamespace(walls=model.walls,virtual_walls=model.virtual_walls,area_records=model.area_records,
+    scene=SimpleNamespace(walls=model.walls,virtual_walls=model.virtual_walls,cad_walls=getattr(model,'cad_walls',[]),area_records=model.area_records,
         obstacles=[o for o in model.obstacles if include_dynamic or not o.get('dynamic')])
     original=adjacency(model);graph={key:[] for key in original}
     def clear(points):return bool(points) and all(clear_segment(scene,x,y,radius+safety_margin) for x,y in zip(points,points[1:]))

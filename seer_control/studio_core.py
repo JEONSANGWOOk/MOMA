@@ -56,7 +56,7 @@ def enabled(value):
 
 
 def collision_reason(model,x,y,radius):
-    for wall in list(model.walls)+list(getattr(model,'virtual_walls',[])):
+    for wall in list(model.walls)+list(getattr(model,'virtual_walls',[]))+list(getattr(model,'cad_walls',[])):
         if point_segment_distance(x,y,wall[:2],wall[2:])<=radius:return '벽/가상벽'
     for obs in getattr(model,'obstacles',[]):
         if math.hypot(x-obs['x'],y-obs['y'])<=radius+obs.get('radius',.25):

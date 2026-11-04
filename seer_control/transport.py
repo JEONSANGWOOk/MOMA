@@ -5,10 +5,17 @@ import json
 import socket
 import struct
 import time
+from contextlib import contextmanager
 
 HEADER = struct.Struct('>BBHIH6s')
 MAX_PAYLOAD = 8 * 1024 * 1024
 MAX_FILE_PAYLOAD = 128 * 1024 * 1024
+
+
+def configure_socket(sock):
+    # Small control/status packets must not wait for Nagle batching.
+    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
 
 
 def receive_exact(sock, size):
@@ -31,6 +38,8 @@ class ReadOnlyClient:
         self.profile = profile
         self.seq = 0
         self.timeout = 2.0
+        self.persistent_status = False
+        self._status_sockets = {}
         if not profile.get('status_queries'):
             raise ValueError('status_queries에 검증된 조회 API를 등록하세요.')
         for q in profile['status_queries']:
@@ -44,14 +53,43 @@ class ReadOnlyClient:
                 raise ValueError('port는 1 이상이어야 합니다.')
         self.fields = profile.get('fields', {})
 
+    def close(self):
+        sockets, self._status_sockets = self._status_sockets, {}
+        for sock in sockets.values():
+            sock.close()
+
+    @contextmanager
+    def _connection(self, query):
+        # Only explicitly read-only polling may reuse a connection. Commands
+        # retain their own connections and are never replayed after a failure.
+        reuse = self.persistent_status and query.get('read_only') is True
+        port = query['port']
+        sock = self._status_sockets.get(port) if reuse else None
+        try:
+            if sock is None:
+                sock = socket.create_connection((self.host, port), self.timeout)
+                if reuse:
+                    self._status_sockets[port] = sock
+            sock.settimeout(self.timeout)
+            configure_socket(sock)
+            yield sock
+        except Exception:
+            if reuse:
+                self._status_sockets.pop(port, None)
+            if sock is not None:
+                sock.close()
+            raise
+        finally:
+            if not reuse and sock is not None:
+                sock.close()
+
     def request(self, query):
         self.seq = (self.seq+1) % 65536
         seq = self.seq
         payload = query.get('payload')
         data = json.dumps(payload, separators=(',', ':'), ensure_ascii=True, allow_nan=False).encode('ascii') if payload else b''
         packet = HEADER.pack(0x5A, 1, seq, len(data), query['request_type'], b'\0'*6) + data
-        with socket.create_connection((self.host, query['port']), self.timeout) as sock:
-            sock.settimeout(self.timeout)
+        with self._connection(query) as sock:
             sock.sendall(packet)
             magic, version, rx_seq, length, kind, reserved = HEADER.unpack(receive_exact(sock, HEADER.size))
             if magic != 0x5A or version != 1 or rx_seq != seq:
@@ -117,6 +155,7 @@ class PersistentSeerSession:
         self.close()
         self.sock = socket.create_connection((self.host, self.port), self.timeout)
         self.sock.settimeout(self.timeout)
+        configure_socket(self.sock)
         return self
 
     def close(self):

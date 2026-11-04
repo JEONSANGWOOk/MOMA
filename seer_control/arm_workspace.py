@@ -291,9 +291,11 @@ class ArmWorkspaceMixin(ArmSceneMixin):
   self.arm_dev_sim.set_joints(q);self._aw_sync_main();self.arm_dev_canvas.render()
  def _aw_sync_main(self,render=True):
   sim=self.arm_dev_sim;view=self.world3d
-  if view.arm_asset is not sim.kin.asset:view.arm_asset=sim.kin.asset;view.arm_asset.synthetic=True;view.scales['arm']=1.
+  keep_extctrl=getattr(view.arm_asset,'name','')=='FAIRINO FR5 extctrl assembly'
+  if view.arm_asset is not sim.kin.asset and not keep_extctrl:view.arm_asset=sim.kin.asset;view.arm_asset.synthetic=True;view.scales['arm']=1.
   values=sim.kin.positions(sim.q)
   if not self.real:
+   if keep_extctrl:values={f'J{i+1}':q for i,q in enumerate(sim.q)}
    self.sim.arm['joint_positions']=dict(values);view.positions['arm']=dict(values)
    self.sim.arm['status']=sim.state;self.sim.arm['progress']=min(1.,sim.index/max(1,len(sim.actions)))
   if render and self.view_mode.get()=='3D' and view.winfo_ismapped():self._spatial_render()

@@ -75,13 +75,14 @@ class ArmPhysics:
   poses=self.kin.asset.link_transforms(self.kin.positions(q));robot=[(name,obb(multiply(poses[name],transform(center)),size)) for name,center,size in self.bounds]
   tools=[(name,obb(t,size)) for name,t,size in self.tool_boxes(q)]
   risks=[];near=[];margin=self.config['collision_margin_m']
+  vacuum_candidate=self._candidate(q)[0] if self.config['kind']=='vacuum' else None
   for o in self.objects:
    if o is self.held:continue
    target=obb(o['matrix'],o['size'])
    for name,bounds in robot+tools:
     gap=contact_gap(bounds,target,margin)
     # Movable workpiece contact with fingers/cup is the intentional grasp interface.
-    if name in ('finger','cup') and not o['static']:continue
+    if name in ('finger','cup') and (not o['static'] or name=='cup' and o is vacuum_candidate and o.get('vacuum_pickable')):continue
     if gap<=0:risks.append((name,o['name']))
     elif gap<margin:near.append((name,o['name'],gap))
   if self.held:
@@ -128,7 +129,7 @@ class ArmPhysics:
  def _candidate(self,q):
   inv=inverse(self.tcp(q));c=self.config;tip=.125 if c['kind']=='vacuum' else .095
   for o in self.objects:
-   if o['static'] or o is self.held:continue
+   if o is self.held or o['static'] and not (c['kind']=='vacuum' and o.get('vacuum_pickable') and o['sealable']):continue
    local=multiply(inv,o['matrix']);center=point(local,(0,0,0));corners=[point(local,p) for face in box(o['size']) for p in face]
    lo=[min(p[i] for p in corners) for i in range(3)];hi=[max(p[i] for p in corners) for i in range(3)]
    if c['kind']=='finger':

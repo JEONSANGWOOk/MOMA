@@ -852,7 +852,7 @@ class Simulator:
         c,s=math.cos(pose.theta),math.sin(pose.theta)
         x=pose.x+cfg['laser_x']*c-cfg['laser_y']*s
         y=pose.y+cfg['laser_x']*s+cfg['laser_y']*c
-        walls=list(self.map.walls)+list(getattr(self.map,'virtual_walls',[]))
+        walls=list(self.map.walls)+list(getattr(self.map,'virtual_walls',[]))+list(getattr(self.map,'cad_walls',[]))
         for area in getattr(self.map,'area_records',[]):
             if enabled((area.get('properties') or {}).get('forbidden')):
                 pts=area.get('points',[])

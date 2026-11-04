@@ -14,6 +14,8 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
 from .model import MapModel, Simulator, number
 from .transport import port_probe, PersistentSeerSession
+from .runtime_feedback import RuntimeArmFeedback
+from .ui_feedback import FeedbackQueue, focus_widget, display_has_focus
 from .live import SeerClient, points, laser_points, extract_laser_points, extract_laser_scans, COMMANDS
 from .smap import load_smap, load_smap_data, build_smap_from_model, validate_smap_edit, make_path_record, make_area_record, path_record_geometry
 from .pose_recovery import normalized_pose_record, save_pose, load_pose, map_matches, confidence_ok, nearest_reachable_node
@@ -91,7 +93,7 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
         self.last_state = 0.0
         self.profile = ROOT/'config/api_profile.json'
         self.map_path = ROOT/'maps/demo.json'
-        self.events = queue.Queue()
+        self.events = FeedbackQueue()
         self.worker_stop = None
         self.generation = 0
         self.logs = []
@@ -169,7 +171,7 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
         self.auto_apply_uploaded_map = tk.BooleanVar(value=True)
         self.edit_mode = tk.StringVar(value='선택')
         self.mode = tk.StringVar(value='시뮬레이션')
-        self.host = tk.StringVar(value='192.168.58.102')
+        self.host = tk.StringVar(value='192.168.30.13')
         self.manual = tk.BooleanVar(value=False)
         self.task_goal = tk.StringVar(value='LM4')
         self.speed = tk.StringVar(value='0.10')
@@ -297,6 +299,10 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
         top.pack(fill='x')
         self.label(top, 'AMR STUDIO', 14, WHITE, True, bg=CHROME).pack(side='left', padx=15, pady=9)
         self.label(top, 'ROBOT WORKSPACE', 9, '#98acc5', bg=CHROME).pack(side='left', padx=8)
+        self.robot_camera_button=self.button(top,'RealSense 실시간 보기',self.show_robot_camera,BLUE)
+        self.robot_camera_button.pack(side='left',padx=12,pady=5)
+        self.button(top,'전시 화면',lambda:self.guarded(self._exhibit_toggle),BLUE).pack(side='left',padx=5,pady=5)
+        self.button(top,'웹캠 실시간 보기',self.show_webcam_camera,BLUE).pack(side='left',padx=5,pady=5)
         self.badge = self.label(top, '● SIMULATION', 9, '#54ddb0', True, bg=CHROME)
         self.badge.pack(side='right', padx=16)
         bar = tk.Frame(self, bg=PANEL);self.connection_bar=bar
@@ -312,7 +318,7 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
         self.connection_text = self.label(bar, 'DEMO 연결됨 · TCP 전송 없음', 9, MUTED)
         self.connection_text.pack(side='left', padx=10)
         self.cards = {}
-        row = tk.Frame(self, bg=WHITE)
+        row = tk.Frame(self, bg=WHITE);self.status_cards_row=row
         row.pack(fill='x', pady=(1, 0))
         for i, (key, title) in enumerate([('mode','상태'), ('battery','배터리'),
                     ('pose','위치 · m'), ('localization','위치 신뢰도'),
@@ -338,7 +344,7 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
         self.navigation_buttons = {}
         work = tk.Frame(shell, bg=BG)
         work.pack(side='left',fill='both',expand=True)
-        titlebar = tk.Frame(work,bg=PANEL)
+        titlebar = tk.Frame(work,bg=PANEL);self.workspace_titlebar=titlebar
         titlebar.pack(fill='x')
         self.workspace_title = self.label(titlebar, '지도 / 제어', 11, INK, True)
         self.workspace_title.pack(side='left',padx=12,pady=7)
@@ -375,7 +381,7 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
         page.columnconfigure(0,weight=4,minsize=450)
         page.columnconfigure(1,weight=1,minsize=270)
         page.rowconfigure(1,weight=1)
-        ribbon = tk.Frame(page,bg=PANEL)
+        ribbon = tk.Frame(page,bg=PANEL);self.operation_ribbon=ribbon
         ribbon.grid(row=0,column=0,columnspan=2,sticky='ew',pady=(3,0))
         self.label(ribbon,'로봇 운행 · 목적지 선택 / 주행 / 재배치',10,INK,True).pack(side='left',padx=10,pady=2)
         self.map_focus=False
@@ -385,13 +391,13 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
         self.button(ribbon,'노드 / 경로 편집 열기',lambda:self.tabs.select(self.nodes_page)).pack(side='right',padx=6,pady=3)
         left = tk.Frame(page,bg=PANEL)
         left.grid(row=1,column=0,sticky='nsew',pady=2,padx=(0,3))
-        toolbar = tk.Frame(left,bg=PANEL)
+        toolbar = tk.Frame(left,bg=PANEL);self.operation_toolbar=toolbar
         toolbar.pack(fill='x',padx=6,pady=2)
         self.label(toolbar,'MAP',9,bold=True).pack(side='left',padx=(0,6))
         for title, command in [('맞춤',self.fit_map),('LiDAR 정합',self.align_lidar_to_map),
                               ('＋',lambda:self.change_zoom(1.2)),('−',lambda:self.change_zoom(1/1.2))]:
             self.button(toolbar,title,command).pack(side='left',padx=2)
-        layers=tk.Frame(left,bg=PANEL);layers.pack(fill='x',padx=6,pady=(0,3))
+        layers=tk.Frame(left,bg=PANEL);self.operation_layers=layers;layers.pack(fill='x',padx=6,pady=(0,3))
         self.operation_layer_buttons={}
         for name,var in self.layers.items():
             button=tk.Checkbutton(layers,text=name,variable=var,bg=PANEL,command=self.draw_map)
@@ -414,7 +420,7 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
         self.canvas.bind('<Button-4>',lambda e:self.change_zoom(1.12))
         self.canvas.bind('<Button-5>',lambda e:self.change_zoom(1/1.12))
         self._spatial_build(toolbar,viewport)
-        info_bar=tk.Frame(left,bg=PANEL);info_bar.pack(fill='x',padx=6,pady=1)
+        info_bar=tk.Frame(left,bg=PANEL);self.operation_info_bar=info_bar;info_bar.pack(fill='x',padx=6,pady=1)
         self.button(info_bar,'상세',self._map_info_dialog).pack(side='right')
         self.map_info = self.label(info_bar,'',8,MUTED,anchor='w')
         self.map_info.pack(side='left',fill='x',expand=True)
@@ -504,6 +510,10 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
         self.command_status = self.label(b,'아직 전송된 명령 없음',9,MUTED,anchor='w',justify='left',wraplength=285)
         self.command_status.pack(fill='x')
         self.button(b,'상세 명령 로그 보기',lambda:self.tabs.select(self.logs_page)).pack(fill='x',pady=(6,0))
+
+    def _exhibit_toggle(self):
+        from .exhibition_ui import toggle
+        toggle(self)
 
     def _map_info_dialog(self):
         messagebox.showinfo('지도 상태 / 조작 안내',self._map_info_details,parent=self)
@@ -933,7 +943,7 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
         self.guarded(run)
 
     def key_press(self,event):
-        if self.focus_get() not in (self.operation_canvas,self.world3d) or not self.manual.get():return
+        if focus_widget(self) not in (self.operation_canvas,self.world3d) or not self.manual.get():return
         direction={'w':'forward','s':'back','a':'left','d':'right'}.get(event.keysym.lower())
         if direction:self.press_drive(direction)
 
@@ -1007,6 +1017,11 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
         # Keep status polling and control commands on independent TCP clients/threads.
         # A slow command response (notably 3051) must never starve the live-state heartbeat.
         state_client = client
+        state_client.persistent_status = True
+        runtime_url = self.studio_config.get('viewer3d', {}).get('runtime_url', 'http://192.168.30.13:8000/runtime.html')
+        self.runtime_arm_feedback = RuntimeArmFeedback(runtime_url)
+        threading.Thread(target=self.runtime_arm_feedback.run, args=(stop,), daemon=True,
+                         name='moma-arm-feedback').start()
         command_client = SeerClient(host,json.loads(self.profile.read_text(encoding='utf-8-sig')))
         command_client.timeout = 8.0
         # Jog uses a persistent connection, matching SEER's official Python control example.
@@ -1016,14 +1031,28 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
         jog_wakeup = self._jog_wakeup
 
         def state_work():
-            while not stop.is_set():
-                try:
-                    state,raw = state_client.snapshot()
-                    self.events.put(('state',generation,(state,raw,time.monotonic())))
-                except Exception as e:
-                    self.events.put(('error',generation,'상태 조회 실패: '+str(e)))
-                    break
-                stop.wait(.2)
+            try:
+                failures=0
+                while not stop.is_set():
+                    started=time.monotonic()
+                    try:
+                        state,raw = state_client.snapshot()
+                        if stop.is_set():break
+                        self.events.put(('state',generation,(state,raw,time.monotonic())))
+                        failures=0
+                    except OSError as e:
+                        failures+=1
+                        if failures==1:
+                            self.events.put(('state_retry',generation,str(e)))
+                        stop.wait(min(2.,.2*2**min(failures-1,4)))
+                        continue
+                    except Exception as e:
+                        self.events.put(('error',generation,'상태 조회 실패: '+str(e)))
+                        break
+                    stop.wait(max(0.,.2-(time.monotonic()-started)))
+            finally:
+                state_client.close()
+
 
         def command_work():
             while not stop.is_set():
@@ -1034,6 +1063,8 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
                         continue
                     try:
                         started=time.monotonic()
+                        if started-self.last_state>3:
+                            raise ValueError('State is stale; queued command was not sent.')
                         if command in ('stations','maps','maps_for_pull'):
                             api = 1301 if command=='stations' else 1300
                             port = 19204
@@ -1128,7 +1159,6 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
             session=PersistentSeerSession(host,19204,timeout=2.0)
             last_error=''
             try:
-                session.connect()
                 while not stop.is_set():
                     try:
                         result=session.request(1101,None)
@@ -1138,8 +1168,6 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
                         text=str(e)
                         if text != last_error:
                             self.events.put(('sensor1101_error',generation,text)); last_error=text
-                        try: session.connect()
-                        except Exception: pass
                     stop.wait(.15)
             finally:
                 session.close()
@@ -1153,7 +1181,6 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
             apis=(1000,1002,1007,1020,1021,1022)
             last_errors={}
             try:
-                session.connect()
                 while not stop.is_set():
                     bundle={}
                     for api in apis:
@@ -1167,8 +1194,6 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
                             if last_errors.get(api)!=msg:
                                 self.events.put(('operation_api_error',generation,(api,msg)))
                                 last_errors[api]=msg
-                            try: session.connect()
-                            except Exception: pass
                     if bundle:
                         self.events.put(('operation_info',generation,bundle))
                     stop.wait(1.5)
@@ -1180,7 +1205,6 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
             session=PersistentSeerSession(host,19204,timeout=2.0)
             last_error=''
             try:
-                session.connect()
                 while not stop.is_set():
                     try:
                         result=session.request(1009,None)
@@ -1190,8 +1214,6 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
                         text=str(e)
                         if text != last_error:
                             self.events.put(('laser_error',generation,text)); last_error=text
-                        try: session.connect()
-                        except Exception: pass
                     stop.wait(.35)
             finally:
                 session.close()
@@ -1327,6 +1349,7 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
             try:
                 from .live import SeerClient
                 client=SeerClient(host,profile_data)
+                client.timeout=20.0
                 total=time.monotonic()
                 map_name=known_map
                 t1300=0.0
@@ -2060,8 +2083,20 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
             return
         self.sim.v = self.sim.w = self.sim.lease = 0
 
+    def show_robot_camera(self):
+        from .robot_camera import show_camera
+        return show_camera(self)
+
+    def show_webcam_camera(self):
+        from .robot_camera import show_webcam
+        return show_webcam(self)
+
+    def show_webcam_doors(self):
+        from .webcam_doors_ui import show_webcam_doors
+        return show_webcam_doors(self)
+
     def focus_guard(self):
-        if self.focus_displayof() is None:
+        if not display_has_focus(self):
             if self.held or self.manual.get():decide(self,'입력.포커스 안전',snapshot(self),dict(focused=False,held=self.held),'앱 포커스 소실','조종 해제 · 수동 이동 미션 일시정지 검토',force=True)
             if hasattr(self,'studio_runner') and self.studio_runner.active:
                 actions=self.studio_runner.actions
@@ -4304,7 +4339,7 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
         self.tracking_label.configure(text='신규 추적: '+str(sum(r['state']=='추적 중' for r in records))+' / 미관측: '+str(sum(r['state']=='미관측' for r in records)))
         goals=list(self.sim.skipped_goals)
         self.skipped_label.configure(text='패스 목적지: '+(', '.join(goals[:6])+(' …' if len(goals)>6 else '') if goals else '없음'))
-        while True:
+        for _event_index in range(64):
             try:kind,generation,payload=self.events.get_nowait()
             except queue.Empty:break
             if kind=='probe':
@@ -4474,7 +4509,7 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
                     if isinstance(bat,dict):
                         if isinstance(bat.get('battery_level'),(int,float)): self.live['battery']=float(bat['battery_level'])*100.0
                         if 'charging' in bat: self.live['charging']=bat.get('charging')
-                self.connected=True
+                # Only the primary state heartbeat can restore connected status.
             elif kind=='operation_api_error':
                 api,msg=payload
                 self.log('API',f'운영정보 API {api} 미지원/조회 실패 · {msg}')
@@ -4527,7 +4562,7 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
                     if (not self._sensor1101_logged) or now-self.lidar_last_diag>2.0:
                         self._sensor1101_logged=True; self.lidar_last_diag=now
                         keys=list(payload.keys())[:24]
-                        
+
                         if not beams and 'lasers' in payload:
                             self.log('SENSOR',f'1101 lasers shape={_shape_summary(payload.get("lasers"))}')
                         self.log('SENSOR',f'1101 RX keys={keys} · source={source or "NONE"} · LiDAR={len(beams)} pts · blocked={payload.get("blocked")}')
@@ -4567,7 +4602,7 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
                 now=time.monotonic()
                 if (not self._laser_shape_logged) or (not self.real_laser_points and now-self.lidar_last_diag>2.0):
                     self._laser_shape_logged=True
-                    
+
                     if isinstance(payload,dict) and not pts and 'lasers' in payload:
                         self.log('LASER',f'1009 lasers shape={_shape_summary(payload.get("lasers"))}')
                     self.log('LASER',f'1009 RX keys={list(payload.keys())[:24] if isinstance(payload,dict) else type(payload).__name__} · source={source or "NONE"} · parsed={len(pts)}')
@@ -4641,6 +4676,9 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
                         self.real_mapping_active=False
                 if self.connected:
                     self.connection_text.config(text='실기 연결됨 · 명령 응답 지연/실패 · 상태 모니터링 유지')
+            elif kind=='state_retry':
+                self.connection_text.config(text='TCP 응답 지연 · 자동 재연결 중')
+                self.log('WARN',payload)
             elif kind=='error':
                 self.downloading_map=False
                 self.control_enabled=False
@@ -4648,11 +4686,18 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
                 self.connection_text.config(text='TCP 오류 · 연결 해제됨')
                 self.log('ERROR',payload)
         if self.real and self.connected and now-self.last_state>3:
-            decide(self,'REAL.상태 유효기간',snapshot(self),dict(age_s=now-self.last_state,max_age_s=3),'상태 수신 기한 초과','연결/제어 활성 해제 · worker 종료 요청',force=True)
+            decide(self,'REAL.상태 유효기간',snapshot(self),dict(age_s=now-self.last_state,max_age_s=3),'상태 수신 기한 초과','제어 활성 해제 · 상태 자동 재연결 유지',force=True)
             self.connected=False
             self.control_enabled=False
-            if self.worker_stop:self.worker_stop.set()
-            self.connection_text.config(text='응답 지연 · 상태 유효기간 초과')
+            # Keep telemetry workers alive; restore monitoring on a fresh snapshot.
+            # Never replay queued commands or resume manual motion after recovery.
+            with self._jog_lock:self._jog_desired=None
+            if self._jog_wakeup:self._jog_wakeup.set()
+            while True:
+                try:self.commands.get_nowait()
+                except queue.Empty:break
+            self.connection_text.config(text='상태 수신 지연 · 제어 차단 · 자동 재연결 중')
+
         if self.real and self.connected and self.task_running and not self.studio_runner.active:
             self._mission_advance_real(now)
             if hasattr(self,'mission_status') and self.task_running:
@@ -4690,6 +4735,7 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
                     else:sim_next()
                 self.refresh_tasks()
             if now-self.last_scan>.2:
+                if hasattr(self,'_spatial_sync_cad_lidar'):self._spatial_sync_cad_lidar()
                 self.scan_points=self.sim.scan();self.last_scan=now
         self._studio_tick(now,dt)
         state=self.current_state() if self.connected else {}
@@ -4722,12 +4768,13 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
             self.telemetry.config(state='normal');self.telemetry.delete('1.0','end')
             self.telemetry.insert('end',json.dumps(data,ensure_ascii=False,indent=2));self.telemetry.config(state='disabled')
         if self.tabs.select() in (str(self.operation_page),str(self.nodes_page)):
-            interval=.04 if self.view_mode.get()=='3D' and self.canvas is self.operation_canvas else (.25 if self.real and self.current_robot_map else .10)
+            interval=.03 if self.view_mode.get()=='3D' and self.canvas is self.operation_canvas else (.25 if self.real and self.current_robot_map else .10)
             if now-self._last_operation_draw>=interval:
                 self.draw_map();self._last_operation_draw=now
         if self.pose_autosave.get() and now-self._last_pose_save_at>=1.0 and (self.real or self.sim_powered):
             self.save_last_pose()
-        period=50 if self.view_mode.get()=='3D' and self.tabs.select()==str(self.operation_page) else 100
+        self._spatial_publish_door_state()
+        period=33 if self.view_mode.get()=='3D' and self.tabs.select()==str(self.operation_page) else 100
         self.after(max(10,round(period-(time.monotonic()-now)*1000)),self.tick)
 
     def close(self):

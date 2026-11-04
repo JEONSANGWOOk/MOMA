@@ -12,6 +12,19 @@ COMMANDS = {'navigate': (19206,3051), 'navigate_free': (19206,3050), 'pause': (1
             'slam_start': (19210,6100), 'slam_stop': (19210,6101)}
 TASKS = ['NONE','WAITING','RUNNING','SUSPENDED','COMPLETED','FAILED','CANCELED']
 
+def _beam_angle_scale(beams, owner=None):
+    """Choose one unit for a whole scan, including angles close to zero."""
+    owner=owner if isinstance(owner,dict) else {}
+    unit=str(owner.get('angle_unit',owner.get('angleUnit',''))).lower()
+    if unit in ('deg','degree','degrees'):return math.pi/180.
+    if unit in ('rad','radian','radians'):return 1.
+    for beam in beams:
+        if isinstance(beam,dict):
+            angle=beam.get('angle',beam.get('theta'))
+            if type(angle) in (int,float) and math.isfinite(angle) and abs(angle)>2*math.pi+.25:
+                return math.pi/180.
+    return 1.
+
 class SeerClient(ReadOnlyClient):
     def query(self, api, payload=None):
         if not (1000 <= int(api) <= 1999):
@@ -108,15 +121,17 @@ def extract_laser_points(payload, pose=None, prefer_world=False):
                 if finite(x) and finite(y): out.append((float(x),float(y)))
         return out
 
-    def polar_array(arr):
+    def polar_array(arr, owner=None):
         out=[]
         if not isinstance(arr,list): return out
+        scale=_beam_angle_scale(arr,owner)
         for item in arr:
             if not isinstance(item,dict): continue
             a=item.get('angle',item.get('theta'))
             r=item.get('range',item.get('distance',item.get('dist')))
             if finite(a) and finite(r) and float(r)>0:
-                out.append((float(r)*math.cos(float(a)),float(r)*math.sin(float(a))))
+                if item.get('valid',True) is False:continue
+                out.append((float(r)*math.cos(float(a)*scale),float(r)*math.sin(float(a)*scale)))
         return out
 
     def ranges_obj(obj):
@@ -182,7 +197,7 @@ def extract_laser_points(payload, pose=None, prefer_world=False):
                     pts=xy_array(arr)
                     if pts:
                         return normalize_cartesian(pts,key,path)
-                    pol=polar_array(arr)
+                    pol=polar_array(arr,obj)
                     if pol:
                         return transform_local(pol),(path+'.'+key).strip('.')+'@POLAR_LOCAL->WORLD'
                 pts=ranges_obj(obj)
@@ -263,6 +278,7 @@ def extract_laser_scans(payload, pose=None, mount_overrides=None):
         """
         vals=[]
         if not isinstance(arr,list): return [], {'raw':0,'hits':0,'dropped':0,'min':None,'max':None,'cutoff':None}
+        angle_scale=_beam_angle_scale(arr,owner)
         for b in arr:
             if not isinstance(b,dict):
                 continue
@@ -272,11 +288,7 @@ def extract_laser_scans(payload, pose=None, mount_overrides=None):
             if valid is False:
                 continue
             if finite(a) and finite(r) and float(r)>0:
-                av=float(a)
-                # RBK lasers[].beams on this controller reports angles in degrees
-                # (e.g. -120, -119.5 ...), while some variants use radians.
-                if abs(av) > (2*math.pi + 0.25):
-                    av=math.radians(av)
+                av=float(a)*angle_scale
                 vals.append((av,float(r)))
         if not vals:
             return [], {'raw':0,'hits':0,'dropped':0,'min':None,'max':None,'cutoff':None}

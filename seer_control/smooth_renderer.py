@@ -37,7 +37,7 @@ class SmoothRenderer:
     def __init__(self):
         if sys.platform!='win32':raise RuntimeError('Windows OpenGL renderer')
         from PIL import Image
-        self.Image=Image;self.cache={};self.size=None;self.closed=False
+        self.Image=Image;self.cache={};self.mesh_cache={};self.size=None;self.closed=False
         self.user=C.WinDLL('user32',use_last_error=True);self.gdi=C.WinDLL('gdi32',use_last_error=True);self.gl=C.WinDLL('opengl32',use_last_error=True)
         def api(dll,name,args,result=None):
             fn=getattr(dll,name);fn.argtypes=args;fn.restype=result;return fn
@@ -60,15 +60,15 @@ class SmoothRenderer:
          'glViewport':([I,I,I,I],None),'glMatrixMode':([U],None),'glLoadIdentity':([],None),'glFrustum':([D]*6,None),'glOrtho':([D]*6,None),
          'glLoadMatrixf':([C.POINTER(F)],None),'glMultMatrixf':([C.POINTER(F)],None),'glPushMatrix':([],None),'glPopMatrix':([],None),
          'glBegin':([U],None),'glEnd':([],None),'glVertex3f':([F,F,F],None),'glNormal3f':([F,F,F],None),'glColor4f':([F]*4,None),
-         'glLightfv':([U,U,C.POINTER(F)],None),'glMaterialfv':([U,U,C.POINTER(F)],None),'glMaterialf':([U,U,F],None),'glColorMaterial':([U,U],None),
+         'glLightfv':([U,U,C.POINTER(F)],None),'glLightModeli':([U,I],None),'glMaterialfv':([U,U,C.POINTER(F)],None),'glMaterialf':([U,U,F],None),'glColorMaterial':([U,U],None),
          'glShadeModel':([U],None),'glGenLists':([I],U),'glNewList':([U,U],None),'glEndList':([],None),'glCallList':([U],None),'glDeleteLists':([U,I],None),
          'glReadPixels':([I,I,I,I,U,U,H],None),'glReadBuffer':([U],None),'glPixelStorei':([U,I],None),'glFinish':([],None),
          'glBlendFunc':([U,U],None),'glDepthMask':([C.c_ubyte],None),'glLineWidth':([F],None),'glGetString':([U],C.c_char_p)}
         for name,(args,result) in specs.items():setattr(self,name,api(self.gl,name,args,result))
         self.backend=self.glGetString(0x1F01).decode(errors='replace')
         self.glEnable(0x0B71);self.glEnable(0x0BA1);self.glShadeModel(0x1D01);self.glEnable(0x0B50);self.glEnable(0x4000)
-        self.glColorMaterial(0x0408,0x1602);self.glEnable(0x0B57)
-        self.glLightfv(0x4000,0x1200,(F*4)(.24,.24,.24,1));self.glLightfv(0x4000,0x1201,(F*4)(.85,.85,.85,1))
+        self.glColorMaterial(0x0408,0x1602);self.glEnable(0x0B57);self.glLightModeli(0x0B52,1)
+        self.glLightfv(0x4000,0x1200,(F*4)(.38,.38,.38,1));self.glLightfv(0x4000,0x1201,(F*4)(.65,.65,.65,1))
         self.glMaterialfv(0x0408,0x1202,(F*4)(.25,.25,.25,1));self.glMaterialf(0x0408,0x1601,48.)
         self.glPixelStorei(0x0D05,1)
     def matrix(self,m):return (C.c_float*16)(*(m[i][j] for j in range(4) for i in range(4)))
@@ -86,7 +86,22 @@ class SmoothRenderer:
                         for i in (0,j,j+1):self.glNormal3f(*values[i]);self.glVertex3f(*face[i])
                 self.glEnd();self.glEndList();rows.append((name,local,color,display))
         self.cache[key]=(asset,rows);return rows
-    def render(self,camera,width,height,assets=(),faces=(),lines=(),grid=False):
+    def mesh(self,asset,tint):
+        key=(id(asset),tint,tuple(sorted(getattr(asset,'material_overrides',{}).items())))
+        if key in self.mesh_cache:return self.mesh_cache[key][1]
+        grouped=defaultdict(list);overrides=getattr(asset,'material_overrides',{})
+        for face,material in zip(asset.faces,asset.face_materials):grouped[(getattr(asset,'material_colors',{}).get(material,overrides.get(material,tint)),1.)].append(face)
+        glass=getattr(asset,'transparent_faces',())
+        if glass:grouped[('#8bd9eb',.30)].extend(glass)
+        rows=[]
+        for (color,alpha),faces in grouped.items():
+            display=self.glGenLists(1);self.glNewList(display,0x1300);self.glBegin(0x0004)
+            for face in faces:
+                normal=flat_normal(face);self.glNormal3f(*normal)
+                for vertex in face:self.glVertex3f(*vertex)
+            self.glEnd();self.glEndList();rows.append((display,color,alpha))
+        self.mesh_cache[key]=(asset,rows);return rows
+    def render(self,camera,width,height,assets=(),meshes=(),faces=(),lines=(),grid=False):
         if not self.make_current(self.dc,self.context):raise RuntimeError('OpenGL context 전환 실패')
         # Native pixels avoid four times the readback and a CPU Lanczos resize
         # on every frame. Source mesh geometry and smooth shading are retained.
@@ -99,12 +114,31 @@ class SmoothRenderer:
         else:self.glOrtho(-w*camera.distance/(small*3.2),w*camera.distance/(small*3.2),-h*camera.distance/(small*3.2),h*camera.distance/(small*3.2),.02,20000.)
         eye,right,up,forward=camera.basis();view=tuple(tuple((*right,-sum(a*b for a,b in zip(right,eye))) if i==0 else (*up,-sum(a*b for a,b in zip(up,eye))) if i==1 else (*(-v for v in forward),sum(a*b for a,b in zip(forward,eye))) if i==2 else (0,0,0,1)) for i in range(4))
         self.glMatrixMode(0x1700);self.glLoadMatrixf(self.matrix(view));self.glLightfv(0x4000,0x1203,(C.c_float*4)(-2,-3,5,0));self.glEnable(0x0B50)
-        for vertices,color,tag in faces:
-            self.glColor4f(*(int(color[i:i+2],16)/255 for i in (1,3,5)),1)
+        opaque_faces=[];transparent_faces=[]
+        for item in faces:
+            vertices,color,tag=item[:3];alpha=item[3] if len(item)>3 else 1.
+            (opaque_faces if alpha>=1 else transparent_faces).append((vertices,color,alpha))
+        def draw_face(vertices,color,alpha):
+            self.glColor4f(*(int(color[i:i+2],16)/255 for i in (1,3,5)),alpha)
             normal=flat_normal(vertices);self.glBegin(0x0004);self.glNormal3f(*normal)
             for j in range(1,len(vertices)-1):
                 for i in (0,j,j+1):self.glVertex3f(*vertices[i])
             self.glEnd()
+        for vertices,color,alpha in opaque_faces:draw_face(vertices,color,alpha)
+        if transparent_faces:
+            self.glEnable(0x0BE2);self.glBlendFunc(0x0302,0x0303);self.glDepthMask(0)
+            def face_depth(row):
+                depths=[projected[2] for p in row[0] if (projected:=camera.project(p,width,height)) is not None]
+                return sum(depths)/max(1,len(depths))
+            transparent_faces.sort(key=face_depth,reverse=True)
+            for vertices,color,alpha in transparent_faces:draw_face(vertices,color,alpha)
+            self.glDepthMask(1);self.glDisable(0x0BE2)
+        for asset,world,tint in meshes:
+            for display,color,alpha in self.mesh(asset,tint):
+                if alpha<1:self.glEnable(0x0BE2);self.glBlendFunc(0x0302,0x0303);self.glDepthMask(0)
+                else:self.glDisable(0x0BE2);self.glDepthMask(1)
+                self.glColor4f(*(int(color[i:i+2],16)/255 for i in (1,3,5)),alpha)
+                self.glPushMatrix();self.glMultMatrixf(self.matrix(world));self.glCallList(display);self.glPopMatrix()
         opaque=[row for row in assets if row[4]>=1];transparent=[row for row in assets if row[4]<1]
         for asset,positions,world,tint,alpha in opaque+transparent:
             if alpha<1:self.glEnable(0x0BE2);self.glBlendFunc(0x0302,0x0303);self.glDepthMask(0)
@@ -121,12 +155,17 @@ class SmoothRenderer:
             self.glColor4f(*(int(color[i:i+2],16)/255 for i in (1,3,5)),1);self.glLineWidth(line_width*factor);self.glBegin(1);self.glVertex3f(*a);self.glVertex3f(*b);self.glEnd()
         self.glFinish();self.glReadBuffer(0x0405);data=C.create_string_buffer(w*h*3);self.glReadPixels(0,0,w,h,0x1907,0x1401,data)
         img=self.Image.frombytes('RGB',(w,h),data.raw).transpose(self.Image.Transpose.FLIP_TOP_BOTTOM)
-        return img if img.size==(width,height) else img.resize((width,height),self.Image.Resampling.LANCZOS)
+        # Canvas dimensions may be fractional on some Tk/DPI combinations.
+        # Keep Home's OpenGL viewport sizing and round only the PIL target.
+        target=(max(1,int(round(float(width)))),max(1,int(round(float(height)))))
+        return img if img.size==target else img.resize(target,self.Image.Resampling.LANCZOS)
     def close(self):
         if self.closed:return
         self.closed=True;self.make_current(self.dc,self.context)
         for asset,rows in self.cache.values():
             for row in rows:self.glDeleteLists(row[3],1)
+        for asset,rows in self.mesh_cache.values():
+            for display,_,_ in rows:self.glDeleteLists(display,1)
         self.make_current(None,None);self.delete_context(self.context);self.releasedc(self.window,self.dc);self.destroy(self.window)
 
 

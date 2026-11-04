@@ -1,5 +1,6 @@
 """Small dependency-free geometry/FK helpers. Units are metres and radians."""
 import math
+import json
 import struct
 from pathlib import Path
 import xml.etree.ElementTree as ET
@@ -37,6 +38,11 @@ def axis_rotation(axis,angle):
 def transform(xyz=(0.,0.,0.),rpy=(0.,0.,0.)):
     rotation=multiply(multiply(axis_rotation((0,0,1),rpy[2]),axis_rotation((0,1,0),rpy[1])),axis_rotation((1,0,0),rpy[0]))
     return tuple(tuple(xyz[i] if j==3 and i<3 else rotation[i][j] for j in range(4)) for i in range(4))
+
+
+def euler_xyz_transform(rpy=(0.,0.,0.)):
+    """Three.js Euler XYZ rotation matrix for GLB scene transforms."""
+    return multiply(multiply(axis_rotation((1,0,0),rpy[0]),axis_rotation((0,1,0),rpy[1])),axis_rotation((0,0,1),rpy[2]))
 
 
 def box(size):
@@ -86,7 +92,27 @@ def simplify_faces(faces,budget):
     return best[:budget]
 
 
-def load_mesh(path,max_faces=3000):
+def _split_simple_whole_glass(asset):
+    """Separate the upper outward-facing enclosure shell into tinted glass."""
+    points=[p for face in asset.faces for p in face]
+    lo=[min(p[i] for p in points) for i in range(3)];hi=[max(p[i] for p in points) for i in range(3)]
+    ground=-lo[2];glass=[];solid=[];glass_materials=[];solid_materials=[]
+    for face,material in zip(asset.faces,asset.face_materials):
+        a,b,c=face;u=tuple(b[i]-a[i] for i in range(3));v=tuple(c[i]-a[i] for i in range(3))
+        normal=(u[1]*v[2]-u[2]*v[1],u[2]*v[0]-u[0]*v[2],u[0]*v[1]-u[1]*v[0])
+        length=max(1e-12,math.sqrt(sum(x*x for x in normal)));normal=tuple(x/length for x in normal)
+        center=tuple(sum(p[i] for p in face)/3 for i in range(3));upper=center[2]+ground>=.82
+        on_x=(abs(center[0]-lo[0])<=.025 or abs(center[0]-hi[0])<=.025) and abs(normal[0])>=.78
+        on_y=(abs(center[1]-lo[1])<=.025 or abs(center[1]-hi[1])<=.025) and abs(normal[1])>=.78
+        if material in (32,34,35) or (upper and (on_x or on_y)):glass.append(face);glass_materials.append(material)
+        else:solid.append(face);solid_materials.append(material)
+    asset.faces=solid;asset.face_materials=solid_materials
+    asset.transparent_faces=glass;asset.transparent_face_materials=glass_materials
+    asset.material_overrides={36:'#e7edf1'}
+    return asset
+
+
+def load_mesh(path,max_faces=3000,rotation=(0.,0.,0.)):
     path=Path(path)
     if path.stat().st_size>64*1024*1024:raise ValueError('3D 미리보기 파일은 64 MB 이하로 가져오세요.')
     faces=[]
@@ -115,16 +141,272 @@ def load_mesh(path,max_faces=3000):
                 if parts and parts[0].lower()=='vertex':vertices.append(vector(' '.join(parts[1:])))
             if len(vertices)%3:raise ValueError('ASCII STL 정점 수가 비정상입니다.')
             faces=[tuple(vertices[i:i+3]) for i in range(0,len(vertices),3)]
-    else:raise ValueError('미리보기 메시 형식: STL / OBJ. STEP/IGES는 STL/OBJ로 내보내세요.')
+    elif path.suffix.lower()=='.glb':
+        asset=load_glb(path,max_faces,rotation)
+        if path.stem.lower()=='simple_whole':
+            asset=_split_simple_whole_glass(asset)
+            if max_faces>=100000:
+                lod=_split_simple_whole_glass(load_glb(path,30000,rotation))
+                asset.lod_faces=lod.faces;asset.lod_face_materials=lod.face_materials
+                asset.lod_transparent_faces=lod.transparent_faces
+                asset.lod_door_parts=lod.door_parts
+        return asset
+    else:raise ValueError('미리보기 메시 형식: STL / OBJ / GLB. STEP/IGES는 STL/OBJ로 내보내세요.')
     if not faces or not all(math.isfinite(v) for face in faces for p in face for v in p):raise ValueError('유효한 3D 면이 없습니다.')
     count=len(faces)
     return MeshAsset(path.name,simplify_faces(faces,max_faces),count,faces)
 
 
+def _glb_face_lod(vertices,ids,mode,face_count,budget,world,extra):
+    """Spatially simplify one GLB primitive while keeping its visible shell."""
+    if face_count<=budget:
+        stride=1
+    else:stride=max(1,math.ceil(face_count/max(1,budget)))
+    if stride==1:
+        selected=range(face_count)
+        result=[]
+        for fi in selected:
+            if mode==4:a,b,c=ids[fi*3:fi*3+3]
+            elif mode==5:
+                a,b,c=ids[fi:fi+3]
+                if fi%2:a,b=b,a
+            else:a,b,c=ids[0],ids[fi+1],ids[fi+2]
+            result.append(tuple(point(extra,point(world,vertices[i][:3])) for i in (a,b,c)))
+        return result
+    lo=tuple(min(p[i] for p in vertices) for i in range(3));hi=tuple(max(p[i] for p in vertices) for i in range(3))
+    extent=max(hi[i]-lo[i] for i in range(3));resolution=max(3,int(math.sqrt(max(1,budget)/2)))
+    if extent<1e-12:return []
+    cell_sums={};cell_counts={};triangles=[];seen=set()
+    def key_for(index):
+        p=vertices[index][:3]
+        key=tuple(max(0,min(resolution-1,int((p[i]-lo[i])/extent*resolution))) for i in range(3))
+        if key not in cell_sums:
+            cell_sums[key]=[float(p[0]),float(p[1]),float(p[2])];cell_counts[key]=1
+        else:
+            acc=cell_sums[key];acc[0]+=p[0];acc[1]+=p[1];acc[2]+=p[2];cell_counts[key]+=1
+        return key
+    for fi in range(face_count):
+        if mode==4:a,b,c=ids[fi*3:fi*3+3]
+        elif mode==5:
+            a,b,c=ids[fi:fi+3]
+            if fi%2:a,b=b,a
+        else:a,b,c=ids[0],ids[fi+1],ids[fi+2]
+        keys=(key_for(a),key_for(b),key_for(c))
+        if len(set(keys))<3:continue
+        canonical=tuple(sorted(keys))
+        if canonical in seen:continue
+        seen.add(canonical);triangles.append(keys)
+    centers={key:tuple(value/cell_counts[key] for value in sums) for key,sums in cell_sums.items()}
+    result=[tuple(point(extra,point(world,centers[k])) for k in triangle) for triangle in triangles]
+    if len(result)>budget*1.5:result=result[::math.ceil(len(result)/budget)]
+    return result
+
+
+def load_glb(path,max_faces=3000,rotation=(0.,0.,0.)):
+    """Read triangle meshes from a binary glTF scene without external packages."""
+    path=Path(path)
+    if path.stat().st_size>64*1024*1024:raise ValueError('3D 미리보기 파일은 64 MB 이하로 가져오세요.')
+    data=path.read_bytes()
+    if len(data)<20 or data[:4]!=b'glTF':raise ValueError('Binary glTF(GLB) 헤더가 유효하지 않습니다.')
+    version,total=struct.unpack_from('<II',data,4)
+    if version!=2 or total>len(data):raise ValueError('GLB 2.0 파일만 지원합니다.')
+    offset=12;document=None;binary=None
+    while offset+8<=total:
+        length,kind=struct.unpack_from('<II',data,offset);offset+=8
+        chunk=data[offset:offset+length];offset+=length
+        if kind==0x4E4F534A:document=json.loads(chunk.decode('utf-8').rstrip('\x00 '))
+        elif kind==0x004E4942:binary=chunk
+    if not isinstance(document,dict) or binary is None:raise ValueError('GLB JSON/BIN chunk가 없습니다.')
+    buffers=document.get('buffers',[])
+    if not buffers or buffers[0].get('uri'):raise ValueError('External buffer를 사용하는 GLB는 지원하지 않습니다.')
+    views=document.get('bufferViews',[]);accessors=document.get('accessors',[]);meshes=document.get('meshes',[]);nodes=document.get('nodes',[])
+    component={5121:('B',1),5123:('H',2),5125:('I',4),5126:('f',4)}
+    type_size={'SCALAR':1,'VEC2':2,'VEC3':3,'VEC4':4,'MAT4':16}
+    def accessor_values(index):
+        item=accessors[index];view=views[item['bufferView']];fmt,size=component[item['componentType']];width=type_size[item['type']]
+        stride=view.get('byteStride',size*width);start=view.get('byteOffset',0)+item.get('byteOffset',0)
+        return [struct.unpack_from('<'+fmt*width,binary,start+i*stride) for i in range(item['count'])]
+    def trs(node):
+        if 'matrix' in node:
+            values=node['matrix'];return tuple(tuple(float(values[c*4+r]) for c in range(4)) for r in range(4))
+        t=node.get('translation',(0.,0.,0.));s=node.get('scale',(1.,1.,1.));q=node.get('rotation',(0.,0.,0.,1.));x,y,z,w=q
+        rot=((1-2*(y*y+z*z),2*(x*y-z*w),2*(x*z+y*w),0.),(2*(x*y+z*w),1-2*(x*x+z*z),2*(y*z-x*w),0.),(2*(x*z-y*w),2*(y*z+x*w),1-2*(x*x+y*y),0.),(0.,0.,0.,1.))
+        scaled=tuple(tuple(rot[r][c]*s[c] if c<3 else rot[r][c] for c in range(4)) for r in range(4))
+        return multiply(transform(tuple(t)),scaled)
+    extra=euler_xyz_transform(tuple(math.radians(float(v)) for v in rotation))
+    selected=document.get('scenes',[{}])[document.get('scene',0)].get('nodes',[]) if document.get('scenes') else list(range(len(nodes)))
+    plans=[];total_faces=0;visited=set()
+    def visit(node_index,parent,door_name=None):
+        nonlocal total_faces
+        if node_index in visited:return
+        visited.add(node_index)
+        node=nodes[node_index];world=multiply(parent,trs(node));name=str(node.get('name',''))
+        if name.upper().startswith('SIMPLE_SASSY-DOOR'):door_name=name
+        if 'mesh' in node:
+            for primitive in meshes[node['mesh']].get('primitives',[]):
+                if 'POSITION' not in primitive.get('attributes',{}):continue
+                mode=primitive.get('mode',4)
+                if mode not in (4,5,6):continue
+                vertex_count=accessors[primitive['attributes']['POSITION']]['count']
+                index_count=accessors[primitive['indices']]['count'] if 'indices' in primitive else vertex_count
+                face_count=index_count//3 if mode==4 else max(0,index_count-2)
+                total_faces+=face_count;plans.append((primitive,world,mode,face_count,primitive.get('material'),door_name,name))
+        for child in node.get('children',[]):visit(child,world,door_name)
+    identity_matrix=identity()
+    for root in selected:visit(root,identity_matrix)
+    # Some CAD exports leave tool subassemblies (notably the hook bracket)
+    # as orphan scene roots. Include those roots so the viewer matches the
+    # complete authored assembly instead of silently dropping the gripper.
+    parents={child for node in nodes for child in node.get('children',[])}
+    for root in range(len(nodes)):
+        if root not in parents and root not in visited:visit(root,identity_matrix)
+    for node_index in range(len(nodes)):
+        if node_index not in visited:visit(node_index,identity_matrix)
+    if total_faces==0:raise ValueError('GLB 안에 유효한 triangle mesh가 없습니다.')
+    budget=max(1,int(max_faces));reserve=min(120,max(1,budget//max(1,len(plans))))
+    allocations=[min(count,reserve) for _,_,_,count,_,_,_ in plans]
+    remaining=max(0,budget-sum(allocations))
+    while remaining:
+        capacity=[max(0,count-allocated) for allocated,(_,_,_,count,_,_,_) in zip(allocations,plans)]
+        total_capacity=sum(capacity)
+        if not total_capacity:break
+        before=remaining
+        for i,room in enumerate(capacity):
+            if not room or not remaining:continue
+            share=max(1,int(before*room/total_capacity))
+            amount=min(room,share,remaining);allocations[i]+=amount;remaining-=amount
+    faces=[];face_materials=[];face_nodes=[];door_geometry={}
+    for (primitive,world,mode,face_count,material,door_name,node_name),allocation in zip(plans,allocations):
+        if allocation<=0:continue
+        vertices=accessor_values(primitive['attributes']['POSITION'])
+        indices=accessor_values(primitive['indices']) if 'indices' in primitive else [(i,) for i in range(len(vertices))]
+        ids=[value[0] for value in indices]
+        generated=_glb_face_lod(vertices,ids,mode,face_count,allocation,world,extra)
+        if door_name:
+            part=door_geometry.setdefault(door_name,([],[]));part[0].extend(generated);part[1].extend([material]*len(generated))
+        else:
+            faces.extend(generated);face_materials.extend([material]*len(generated));face_nodes.extend([node_name]*len(generated))
+    asset=MeshAsset(path.name,faces,total_faces,faces);asset.face_materials=face_materials;asset.face_nodes=face_nodes
+    def source_color(material):
+        rgb=material.get('pbrMetallicRoughness',{}).get('baseColorFactor',[1,1,1,1])[:3]
+        def channel(v):
+            v=max(0.,min(1.,float(v)))
+            return round(255*(12.92*v if v<=.0031308 else 1.055*v**(1/2.4)-.055))
+        return '#'+''.join(f'{channel(v):02x}' for v in rgb)
+    asset.material_colors={i:source_color(m) for i,m in enumerate(document.get('materials',[]))}
+    asset.door_parts=[]
+    for name,(part_faces,part_materials) in door_geometry.items():
+        if not part_faces:continue
+        xs=[p[0] for face in part_faces for p in face];ys=[p[1] for face in part_faces for p in face]
+        hinge_x=min(xs) if name.endswith(':1') else max(xs);hinge_y=(min(ys)+max(ys))/2
+        solid=[];solid_materials=[];glass=[]
+        for face,material in zip(part_faces,part_materials):
+            if material in (32,34,35):glass.append(face)
+            else:solid.append(face);solid_materials.append(material)
+        part_asset=MeshAsset(name,solid,len(part_faces),solid);part_asset.face_materials=solid_materials
+        part_asset.transparent_faces=glass;part_asset.material_overrides={}
+        part_asset.material_colors=dict(asset.material_colors)
+        asset.door_parts.append(dict(name=name,asset=part_asset,pivot=(hinge_x,hinge_y,0.),sign=-1. if name.endswith(':1') else 1.))
+    return asset
+
+
+def load_glb_static_robot(path,max_faces=12000,rotation=(0.,0.,0.),color='#8292a1',offset=(0.,0.,0.)):
+    """Load a static GLB assembly as a renderer-friendly single-link robot."""
+    mesh=load_glb(path,max_faces=max_faces,rotation=rotation)
+    if not mesh.faces:raise ValueError('GLB 메시가 비어 있습니다.')
+    if any(offset):mesh.faces=[tuple(tuple(p[i]+offset[i] for i in range(3)) for p in face) for face in mesh.faces]
+    groups={}
+    for face,name in zip(mesh.faces,getattr(mesh,'face_nodes',())):groups.setdefault(name,[]).append(face)
+    by_color={}
+    for face,material in zip(mesh.faces,mesh.face_materials):
+        shade=mesh.material_colors.get(material,color)
+        by_color.setdefault(shade,[]).append(face)
+    links={'base_link':[(faces,identity(),shade) for shade,faces in by_color.items()]}
+    asset=RobotDescription(Path(path).stem,links,[],['base_link'])
+    asset.full_visuals={('base_link',i):faces for i,(faces,_,_) in enumerate(links['base_link'])}
+    asset.component_faces={name:len(faces) for name,faces in groups.items()}
+    return asset
+
+
+def load_glb_robot(path,max_faces=3000):
+    """Load the extctrl FR5 assembly GLB as an articulated 6-axis robot."""
+    path=Path(path);data=path.read_bytes()
+    if len(data)>64*1024*1024 or len(data)<20 or data[:4]!=b'glTF':raise ValueError('유효한 FR5 GLB 파일이 아닙니다.')
+    version,total=struct.unpack_from('<II',data,4)
+    if version!=2 or total>len(data):raise ValueError('GLB 2.0 파일만 지원합니다.')
+    offset=12;document=None;binary=None
+    while offset+8<=total:
+        length,kind=struct.unpack_from('<II',data,offset);offset+=8;chunk=data[offset:offset+length];offset+=length
+        if kind==0x4E4F534A:document=json.loads(chunk.decode('utf-8').rstrip('\x00 '))
+        elif kind==0x004E4942:binary=chunk
+    if not isinstance(document,dict) or binary is None:raise ValueError('GLB JSON/BIN 데이터가 없습니다.')
+    nodes=document.get('nodes',[]);meshes=document.get('meshes',[]);views=document.get('bufferViews',[]);accessors=document.get('accessors',[])
+    component={5121:('B',1),5123:('H',2),5125:('I',4),5126:('f',4)};widths={'SCALAR':1,'VEC2':2,'VEC3':3,'VEC4':4,'MAT4':16}
+    def values(index):
+        item=accessors[index];view=views[item['bufferView']];fmt,size=component[item['componentType']];width=widths[item['type']]
+        start=view.get('byteOffset',0)+item.get('byteOffset',0);stride=view.get('byteStride',size*width)
+        return [struct.unpack_from('<'+fmt*width,binary,start+i*stride) for i in range(item['count'])]
+    def node_transform(node):
+        if 'matrix' in node:
+            m=node['matrix'];return tuple(tuple(float(m[c*4+r]) for c in range(4)) for r in range(4))
+        t=node.get('translation',(0.,0.,0.));s=node.get('scale',(1.,1.,1.));x,y,z,w=node.get('rotation',(0.,0.,0.,1.))
+        rot=((1-2*(y*y+z*z),2*(x*y-z*w),2*(x*z+y*w),0.),(2*(x*y+z*w),1-2*(x*x+z*z),2*(y*z-x*w),0.),(2*(x*z-y*w),2*(y*z+x*w),1-2*(x*x+y*y),0.),(0.,0.,0.,1.))
+        scaled=tuple(tuple(rot[r][c]*s[c] if c<3 else rot[r][c] for c in range(4)) for r in range(4))
+        return multiply(transform(tuple(t)),scaled)
+    def inverse(m):
+        rows=[list(m[r])+[1. if r==c else 0. for c in range(4)] for r in range(4)]
+        for col in range(4):
+            pivot=max(range(col,4),key=lambda r:abs(rows[r][col]))
+            if abs(rows[pivot][col])<1e-12:raise ValueError('FR5 GLB 노드 변환을 역산할 수 없습니다.')
+            rows[col],rows[pivot]=rows[pivot],rows[col];scale=rows[col][col];rows[col]=[v/scale for v in rows[col]]
+            for r in range(4):
+                if r==col:continue
+                factor=rows[r][col];rows[r]=[a-factor*b for a,b in zip(rows[r],rows[col])]
+        return tuple(tuple(rows[r][c+4] for c in range(4)) for r in range(4))
+    roots=document.get('scenes',[{}])[document.get('scene',0)].get('nodes',[]) if document.get('scenes') else range(len(nodes))
+    world={}
+    def visit(index,parent):
+        node=nodes[index];pose=multiply(parent,node_transform(node));name=node.get('name')
+        if name:world[name]=(index,pose)
+        for child in node.get('children',[]):visit(child,pose)
+    for root in roots:visit(root,identity())
+    parts=('BASE','J1','J2','J3','J4','J5','J6')
+    if any(name not in world for name in parts):raise ValueError('FR5 GLB에 BASE/J1~J6 파트가 모두 있어야 합니다.')
+    links={};full_visuals={};budget=max(7,int(max_faces));lod_budget=max(1,budget//7)
+    for name in parts:
+        index,_=world[name];node=nodes[index];source_faces=[]
+        if 'mesh' in node:
+            for primitive in meshes[node['mesh']].get('primitives',[]):
+                attrs=primitive.get('attributes',{});mode=primitive.get('mode',4)
+                if 'POSITION' not in attrs or mode not in (4,5,6):continue
+                vertices=values(attrs['POSITION']);ids=[v[0] for v in values(primitive['indices'])] if 'indices' in primitive else list(range(len(vertices)))
+                face_count=len(ids)//3 if mode==4 else max(0,len(ids)-2)
+                for fi in range(face_count):
+                    if mode==4:a,b,c=ids[fi*3:fi*3+3]
+                    elif mode==5:
+                        a,b,c=ids[fi:fi+3]
+                        if fi%2:a,b=b,a
+                    else:a,b,c=ids[0],ids[fi+1],ids[fi+2]
+                    source_faces.append(tuple(tuple(float(v) for v in vertices[i][:3]) for i in (a,b,c)))
+        if not source_faces:raise ValueError(f'FR5 GLB mesh missing for {name}.')
+        full_visuals[(name,0)]=source_faces
+        faces=simplify_faces(source_faces,lod_budget) if len(source_faces)>lod_budget else source_faces
+        links[name]=[(faces,identity(),'#9ba8b5')]
+    limits={'J1':(-175,175),'J2':(-265,85),'J3':(-150,150),'J4':(-265,85),'J5':(-175,175),'J6':(-175,175)}
+    joints=[]
+    for i,name in enumerate(parts[1:]):
+        parent=parts[i];origin=multiply(inverse(world[parent][1]),world[name][1]);lo,hi=limits[name]
+        joints.append(dict(name=name,type='revolute',parent=parent,child=name,origin=origin,axis=(0.,0.,1.),lower=math.radians(lo),upper=math.radians(hi),mimic=None,multiplier=1.,offset=0.))
+    asset=RobotDescription('FAIRINO FR5 extctrl assembly',links,joints,['BASE']);asset.full_visuals=full_visuals
+    return asset
+
+
 class MeshAsset:
-    def __init__(self,name,faces,total=None,full_faces=None):self.name=name;self.faces=faces;self.total=total or len(faces);self.full_faces=full_faces or faces
-    def draw_faces(self,world=identity(),scale=(1,1,1),color='#b7c4d3'):
-        return [(tuple(point(world,tuple(p[i]*scale[i] for i in range(3))) for p in face),color,self.name) for face in self.faces]
+    def __init__(self,name,faces,total=None,full_faces=None):self.name=name;self.faces=faces;self.total=total or len(faces);self.full_faces=full_faces or faces;self.face_materials=[None]*len(faces)
+    def draw_faces(self,world=identity(),scale=(1,1,1),color='#b7c4d3',faces=None,materials=None):
+        overrides=getattr(self,'material_overrides',{});faces=self.faces if faces is None else faces
+        materials=getattr(self,'face_materials',()) if materials is None else materials
+        return [(tuple(point(world,tuple(p[i]*scale[i] for i in range(3))) for p in face),getattr(self,'material_colors',{}).get(material,overrides.get(material,color)),self.name) for face,material in zip(faces,materials)]
 
 
 class RobotDescription:

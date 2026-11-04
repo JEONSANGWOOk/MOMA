@@ -67,7 +67,8 @@ class GamepadMixin:
             threading.Thread(target=stop,daemon=False,name='pad-arm-stop').start()
 
     def _pad_arm_process(self,sample,now):
-        focus=self.focus_get();page=self.tabs.select()
+        from .ui_feedback import focus_widget
+        focus=focus_widget(self);page=self.tabs.select()
         allowed=(self.pad_enabled.get() and self.manual.get() and focus is not None and focus.winfo_toplevel()==self and
                  page in (str(self.operation_page),str(self.arm_workspace_page)) and not self.reloc_mode and
                  not self.task_running and not self.studio_runner.active)
@@ -185,7 +186,8 @@ class GamepadMixin:
 
     def _pad_process(self,sample,now):
         if self.pad_target.get()=='로봇팔':return self._pad_arm_process(sample,now)
-        focus=self.focus_get()
+        from .ui_feedback import focus_widget
+        focus=focus_widget(self)
         allowed=(self.pad_enabled.get() and self.manual.get() and self.connected and
                  self.tabs.select()==str(self.operation_page) and focus is not None and focus.winfo_toplevel()==self and
                  not self.reloc_mode and not self.task_running and not self.studio_runner.active and self.studio_arm_safe)

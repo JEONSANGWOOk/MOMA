@@ -1,2 +1,5 @@
 # Smooth Windows OpenGL rendering uses Pillow to display GPU frames in Tk.
 Pillow>=11
+
+# Desktop PC webcam live viewer
+opencv-python>=4.10,<5

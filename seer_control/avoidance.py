@@ -73,7 +73,7 @@ def detour(model,start,goal,radius,max_cells=24000,safety_margin=.04,grid_step=N
     speed=getattr(model,'robot_model',{}).get('maxspeed',.45)
     if clear_segment(model,start,goal,radius) and (not risk_aware or not projected_conflict(model,start,[goal],radius,speed)):return [start,goal]
     points=[start,goal]+[(n['x'],n['y']) for n in model.nodes.values()]
-    points.extend((w[i],w[i+1]) for w in list(model.walls)+list(getattr(model,'virtual_walls',[])) for i in (0,2))
+    points.extend((w[i],w[i+1]) for w in list(model.walls)+list(getattr(model,'virtual_walls',[]))+list(getattr(model,'cad_walls',[])) for i in (0,2))
     points.extend((o['x'],o['y']) for o in getattr(model,'obstacles',[]))
     margin=max(1.,radius*3);xs,ys=zip(*points)
     x0,y0=min(xs)-margin,min(ys)-margin;x1,y1=max(xs)+margin,max(ys)+margin

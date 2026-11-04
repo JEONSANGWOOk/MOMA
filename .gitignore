@@ -16,3 +16,8 @@ dist/
 .delivery/
 release/
 artifacts/fairino_tree.json
+
+.tools/
+web_control/node_modules/
+web_control/dist/
+web_control/.runtime/
