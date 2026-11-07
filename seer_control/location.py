@@ -56,7 +56,9 @@ class LocationTracker:
                 if current in nodes:
                     nearby = current
                 distance = math.hypot(x-nodes[nearby]['x'], y-nodes[nearby]['y']) if nearby else math.inf
-                if distance <= .18 and (not self.latched or nearby == self.latched):
+                from .arrival_pose import arrival_pose
+                aligned=bool(nearby) and arrival_pose(nodes[nearby],state)['ok']
+                if aligned and (not self.latched or nearby == self.latched):
                     if nearby != self.candidate:
                         self.candidate, self.since = nearby, now
                     if now-self.since >= .30:

@@ -1,0 +1,82 @@
+{
+    "MODEL_TYPE": "MoMa",
+    "ROBOT": {
+        "type": 1,
+        "api": "FAIRINO",
+        "maker": "FAIRINO",
+        "param": "params/robot/FR5.json"
+    },
+    "AMR": {
+        "type": 0,
+        "api": "SEER",
+        "maker": "SEER",
+        "param": "params/amr/SEER_SBA400EU.json"
+    },
+    "MODEL_CONFIG": {
+        "ROBOT": {
+            "path": "models/robot/FR5_Assembly.glb",
+            "parts": [ "BASE", "J1", "J2", "J3", "J4", "J5", "J6" ],
+            "transform": {
+                "position": {"x": 0.35, "y": 0.0, "z": 0.5085},
+                "rotation": {"x": 0.0, "y": 0.0, "z": 135.0},
+                "scale":    {"x": 1.0, "y": 1.0, "z": 1.0}
+            },
+            "flange": {
+                "position": {"x": 0.0, "y": 0.0, "z": 0.1},
+                "rotation": {"x": 0.0, "y": 0.0, "z": 0.0}
+            }
+        },
+        "AMR": {
+            "//path": "",
+            "path": "models/amr/SDC-400EU-light.glb",
+            "transform": {
+                "position": { "x": 0, "y": 0, "z": 0 },
+                "rotation": { "x": 0, "y": 90, "z": 90 },
+                "scale": { "x": 1, "y": 1, "z": 1 }
+            }
+        },
+        "TOOL": {
+            "//path": "",
+            "path": "models/gripper/EndEffector V3_EndOnly_Change1-org.glb",
+            "transform": {
+                "position": { "x": 0.0, "y": 0.0, "z": 0.0 },
+                "rotation": { "x": -90.0, "y": 0.0, "z": 0.0 },
+                "scale": { "x": 1, "y": 1, "z": 1 }
+            }
+        }
+    },
+    "JOINT_CONFIG": [
+        {"name": "J1", "axis": "z", "default": 0, "min": -175, "max": 175, "step": 0.001, "unit": "deg"},
+        {"name": "J2", "axis": "z", "default": 0, "min": -265, "max": 85, "step": 0.001, "unit": "deg"},
+        {"name": "J3", "axis": "z", "default": 0, "min": -150, "max": 150, "step": 0.001, "unit": "deg"},
+        {"name": "J4", "axis": "z", "default": 0, "min": -265, "max": 85, "step": 0.001, "unit": "deg"},
+        {"name": "J5", "axis": "z", "default": 0, "min": -175, "max": 175, "step": 0.001, "unit": "deg"},
+        {"name": "J6", "axis": "z", "default": 0, "min": -175, "max": 175, "step": 0.001, "unit": "deg"}
+    ],
+    "TCP_CONFIG": [
+        {"name": "x", "default": 0, "min": -1000, "max": 1000, "step": 0.001, "unit": "mm"},
+        {"name": "y", "default": 0, "min": -1000, "max": 1000, "step": 0.001, "unit": "mm"},
+        {"name": "z", "default": 0, "min": -1000, "max": 1200, "step": 0.001, "unit": "mm"},
+        {"name": "rz", "default": 0, "min": -180, "max": 180, "step": 0.001, "unit": "deg"},
+        {"name": "ry", "default": 0, "min": -90, "max": 90, "step": 0.001, "unit": "deg"},
+        {"name": "rx", "default": 0, "min": -180, "max": 180, "step": 0.001, "unit": "deg"}
+    ],
+    "AMR_TO_ROBOT": {
+        "x": 350.0, "y": 0.0, "z": 508.5,
+        "rx": 0.0, "ry": 0.0, "rz": 135.0
+    },
+    "CAMERA_CONFIG": {
+        "pos": {"x": -2.0, "y": 2.0, "z": 2.0},
+        "lookat": {"x": 0.0, "y": 0.0, "z": 0.0}
+    },
+    "DEFAULT_IP": {
+        "ROBOT": { "ADDR": "192.168.57.2", "PORT": "None" },
+        "AMR"  : { "ADDR": "192.168.58.102", "PORT": "None" }
+    },
+    "VELOCITY_PARAM": [
+        { "name": "Fac", "label": "VelocityFactor (%)", "min": 1, "max": 100, "step": 0.001, "default": 50 },
+        { "name": "Vel", "label": "Velocity (%)",       "min": 0.001, "max": 100, "step": 0.001, "default": 20 },
+        { "name": "Acc", "label": "Acceleration (%)",   "min": 0.001, "max": 100, "step": 0.001, "default": 20 },
+        { "name": "Dec", "label": "Deceleration (%)",   "min": 0.001, "max": 100, "step": 0.001, "default": 20 }
+    ]
+}

@@ -21,7 +21,7 @@ install -d -m 0755 /opt/moma-amr-relay
 install -m 0644 "$SCRIPT_DIR/relay.py" /opt/moma-amr-relay/relay.py
 cat > /etc/systemd/system/moma-amr-relay.service <<'UNIT'
 [Unit]
-Description=MoMa AMR TCP relay for desktop 192.168.30.12
+Description=MoMa AMR TCP relay for clients 192.168.30.0/24
 Wants=network-online.target
 After=network-online.target
 
@@ -44,4 +44,4 @@ systemctl enable moma-amr-relay.service
 systemctl restart moma-amr-relay.service
 systemctl --no-pager --full status moma-amr-relay.service
 echo 'Relay installed. Set desktop GUI AMR host to 192.168.30.13.'
-echo 'If UFW is active, allow TCP 19204,19205,19206,19207,19210 from 192.168.30.12.'
+echo 'If UFW is active, allow TCP 19204,19205,19206,19207,19210 from 192.168.30.0/24.'

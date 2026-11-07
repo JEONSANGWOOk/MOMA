@@ -1,0 +1,26 @@
+--- a/viewer_moma.py
++++ b/viewer_moma.py
+@@ -301,6 +301,15 @@
+     pose = moma.GetDrivePose(exc.DATATYPE.REF)
+     return { "x": pose.x(), "y": pose.y(), "w": pose.angle() }
+ 
++def read_vacuum_io(moma):
++    # Read-only overload: deliberately never pass a value argument.
++    try:
++        outputs={str(i):moma.OutputSignal(moma.CNTMOD.CNTROB,i) for i in (2,3,4,5)}
++        if any(type(v) is not bool for v in outputs.values()):
++            raise ValueError('Unexpected vacuum output feedback type')
++        return {'valid':True,'outputs':outputs,'sample_time':time.monotonic()}
++    except Exception:
++        return {'valid':False,'outputs':{},'sample_time':time.monotonic()}
+ 
+ 
+ def get_moma_status():
+@@ -317,6 +326,7 @@
+         sv_state = moma.ServoState()
+         return {
+             "robot": {
++                "vacuum_io": read_vacuum_io(moma),
+                 "joint": jdata,
+                 "tcp_rbase": _get_tcp(moma, exc.COORD.RBASE),
+                 "tcp_world": _get_tcp(moma, exc.COORD.WORLD),

@@ -10,6 +10,14 @@ spec.loader.exec_module(module)
 
 
 class RelayTests(unittest.IsolatedAsyncioTestCase):
+    def test_subnet_accepts_changing_client_ips(self):
+        for address in ('192.168.30.9','192.168.30.12','192.168.30.14','192.168.30.254'):
+            self.assertTrue(module.client_allowed(address,'192.168.30.0/24'))
+        for address in ('192.168.31.9','10.0.0.9','invalid'):
+            self.assertFalse(module.client_allowed(address,'192.168.30.0/24'))
+        self.assertTrue(module.client_allowed('192.168.30.9','192.168.30.9'))
+        self.assertFalse(module.client_allowed('192.168.30.14','192.168.30.9'))
+
     async def test_large_payload_and_delayed_reply_after_half_close(self):
         received=[]
         async def backend(reader,writer):

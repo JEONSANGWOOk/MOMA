@@ -43,9 +43,19 @@ class BackendTests(unittest.IsolatedAsyncioTestCase):
     async def test_mission_completion_needs_new_target_feedback(self):
         c=Control();c.mode='control';c.connected=True;c.rx=time.monotonic()
         c.mission={'status':'RUNNING','goals':['LM2'],'index':0,'awaiting':True,'sent_at':time.monotonic(),'rx_at_send':c.rx}
-        c.state={'task':'COMPLETED','target':'LM2'}
+        c.map.nodes['LM2'].update(x=1.,y=2.,r=.5)
+        c.state={'task':'COMPLETED','target':'LM2','x':1.,'y':2.,'theta':.5}
         await c.mission_tick();self.assertEqual(c.mission['status'],'RUNNING')
         c.rx+=.1;await c.mission_tick();self.assertEqual(c.mission['status'],'COMPLETED')
+    async def test_completed_task_with_wrong_theta_does_not_advance(self):
+        c=Control();c.mode='control';c.connected=True;c.rx=time.monotonic()
+        c.map.nodes['LM2'].update(x=1.,y=2.,r=.5)
+        c.mission={'status':'RUNNING','goals':['LM2'],'index':0,'awaiting':True,'sent_at':time.monotonic(),'rx_at_send':c.rx-.1}
+        c.state={'task':'COMPLETED','target':'LM2','x':1.,'y':2.,'theta':.6}
+        await c.mission_tick();self.assertEqual(c.mission['status'],'RUNNING')
+        c.state['theta']=.5;c.rx+=.1
+        await c.mission_tick();self.assertEqual(c.mission['status'],'COMPLETED')
+
     async def test_slow_command_does_not_starve_telemetry(self):
         c=Control();c.mode='control';c.connected=True;c.rx=time.monotonic()
         c.state={'emergency':False,'blocked':False}

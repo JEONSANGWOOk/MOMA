@@ -86,3 +86,32 @@ def refine(outline, cloud, initial):
                     candidates.append((quality(outline,cloud,p)['score'],p))
         pose=min(candidates)[1]
     return pose
+
+
+def polygon_gap(first,second):
+    """Shortest XY distance between convex outlines, zero for overlap."""
+    if len(first)<3 or len(second)<3:raise ValueError('거리 계산 외곽이 부족합니다.')
+    separated=False
+    for polygon in (first,second):
+        for a,b in zip(polygon,polygon[1:]+polygon[:1]):
+            nx,ny=-(b[1]-a[1]),b[0]-a[0]
+            p=[x*nx+y*ny for x,y in first];q=[x*nx+y*ny for x,y in second]
+            if max(p)<min(q) or max(q)<min(p):separated=True
+    if not separated:return 0.
+    return min(distance_segment(p,a,b) for source,target in ((first,second),(second,first))
+               for p in source for a,b in zip(target,target[1:]+target[:1]))
+
+
+def body_outline(app,view):
+    body=getattr(view,'body_asset',None);vertices=[]
+    if body is not None and hasattr(body,'links'):
+        vertices=[point(local,p) for visuals in body.links.values() for faces,local,_ in visuals for face in faces for p in face]
+    if vertices:
+        scale=view.scales.get('amr',1.)
+        lo=[min(p[i] for p in vertices)*scale for i in range(2)]
+        hi=[max(p[i] for p in vertices)*scale for i in range(2)]
+    else:
+        model=getattr(app.map,'robot_model',{})
+        length=float(model.get('length',.95));width=float(model.get('width',.63))
+        lo=[-length/2,-width/2];hi=[length/2,width/2]
+    return [(lo[0],lo[1]),(hi[0],lo[1]),(hi[0],hi[1]),(lo[0],hi[1])]

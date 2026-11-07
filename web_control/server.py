@@ -120,6 +120,7 @@ class Control:
         self.scene_lock=asyncio.Lock();self.scene_data=None;self.arm_model=None
         self.follower=None;self.placement_confirmed=bool(self.viewer.get('cad_placement_confirmation'))
         self.mission={'status':'IDLE','goals':[],'index':0,'awaiting':False}
+        self.navigation_cancel_seq=0
         self.camera_source=self.config.get('camera_source','realsense_remote')
         runtime_url=self.config.get('runtime_url',self.viewer.get('runtime_url','http://192.168.30.13:8000/runtime.html'))
         self.camera_url=(realsense_url(self.viewer,runtime_url) if self.camera_source=='realsense_remote' else self.config.get('camera_url',''))
@@ -306,6 +307,8 @@ class Control:
         for name,a in self.follower.angles.items():
             side='left' if name.endswith(':1') else 'right';self.doors[side]=math.degrees(a)
     async def send(self,cmd,mission=False):
+        if cmd.name in ('cancel','pause'):
+            self.navigation_cancel_seq+=1
         if self.command_lock.locked():raise ValueError('이전 명령 응답 대기 중')
         if cmd.name not in ('navigate','pause','resume','cancel','set_do','lock_control','unlock_control'):
             raise ValueError('지원하지 않는 명령')
@@ -314,7 +317,10 @@ class Control:
         if cmd.name=='navigate':
             if cmd.goal not in self.map.nodes:raise ValueError('현재 지도에 없는 목적지')
             if self.mode!='sim' and not hasattr(self.map,'smap_source'):raise ValueError('실제 로봇 지도를 먼저 받으세요.')
-            if self.mode!='sim':self.arm_travel_guard()
+            if self.mode!='sim':
+                self.arm_travel_guard()
+                node=self.map.nodes[cmd.goal];heading=node.get('r',node.get('angle',node.get('theta')))
+                if type(heading) not in (int,float) or not math.isfinite(heading):raise ValueError('목적지 세타 설정이 필요합니다.')
         async with self.command_lock:
             started=time.monotonic();self.command_state={'name':cmd.name,'status':'SENDING'}
             try:
@@ -331,7 +337,7 @@ class Control:
                         result=await asyncio.to_thread(tcp_operation,self.host,{'operations':seer_io_operations()},'set_do',{'channel':cmd.channel,'value':cmd.value})
                         self.io_rx=0
                     else:
-                        payload={'id':cmd.goal} if cmd.name=='navigate' else {'nick_name':'MOMA Web Control'} if 'control' in cmd.name else {}
+                        payload={'id':cmd.goal,'angle':self.map.nodes[cmd.goal].get('r',self.map.nodes[cmd.goal].get('angle',self.map.nodes[cmd.goal].get('theta'))),'spin':True} if cmd.name=='navigate' else {'nick_name':'MOMA Web Control'} if 'control' in cmd.name else {}
                         result=await self.command_request(cmd.name,payload)
                 if cmd.name=='cancel':self.mission['status']='CANCELED'
                 self.command_state={'name':cmd.name,'status':'ACK','elapsed_ms':round((time.monotonic()-started)*1000)}
@@ -351,9 +357,21 @@ class Control:
             raise ValueError('로봇팔 safe_pose에서 AMR을 이동하세요.')
     async def command_request(self,name,payload,host=None):
         c=SeerClient(host or self.host,self.profile);c.timeout=8
-        try:return await asyncio.to_thread(c.command,name,payload)
+        epoch=self.epoch;cancel_seq=self.navigation_cancel_seq
+        def execute():
+            if name=='navigate':
+                def guard():
+                    if self.epoch!=epoch or self.navigation_cancel_seq!=cancel_seq:
+                        raise ValueError('연결/정지 상태 변경 · 대기 이동 취소')
+                    self.require_live();self.arm_travel_guard()
+                    if self.mode!='control':
+                        raise ValueError('실기 제어 모드가 필요합니다.')
+                guard()
+            return c.command(name,payload)
+        try:return await asyncio.to_thread(execute)
         finally:c.close()
     async def stop(self):
+        self.navigation_cancel_seq+=1
         self.mission['status']='CANCELED'
         if self.mode=='sim':self.sim.stop();self.event('STOP','SIM 주행 정지');return {'stopped':True}
         if self.mode!='control':raise ValueError('실기 제어 모드에서 정지를 요청하세요.')
@@ -404,6 +422,9 @@ class Control:
                 m['status']='FAILED';return
             if self.mode=='sim':done=status=='완료'
             else:done=status=='COMPLETED' and self.rx>m.get('rx_at_send',0) and str(self.state.get('target'))==m['goals'][m['index']]
+            if done and self.mode!='sim':
+                from seer_control.arrival_pose import arrival_pose
+                done=arrival_pose(self.map.nodes.get(m['goals'][m['index']],{}),self.state)['ok']
             if done:
                 m['index']+=1;m['awaiting']=False
                 if m['index']>=len(m['goals']):m['status']='COMPLETED';self.event('MISSION','모든 목적지 완료')

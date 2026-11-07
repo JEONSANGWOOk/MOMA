@@ -1,0 +1,31 @@
+{
+  "wheel": 2,
+  "cpparam": {
+    "accmaxR": 22.5,
+    "accmaxT": 0.25,
+    "decmaxR": 22.5,
+    "decmaxT": 0.25,
+    "velmaxR": 45,
+    "velmaxT": 0.5
+  },
+  "wparam": {
+    "W1": {
+      "length": -0.3,
+      "offset": 0,
+      "radius": 0.1,
+      "velmax": 90,
+      "accmax": 90,
+      "decmax": 90
+    },
+    "W2": {
+      "length": 0.3,
+      "offset": 0,
+      "radius": 0.1,
+      "velmax": 90,
+      "accmax": 90,
+      "decmax": 90
+    }
+  },
+  "maker": "SEER",
+  "model": "SBA-400EU"
+}

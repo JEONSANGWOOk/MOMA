@@ -1,0 +1,112 @@
+{
+  "@brief" : [
+    "velmaxR  : velocity of rotation",
+    "velmaxT  : velocity of translation",
+    "accmaxR  : acceleration of rotation",
+    "accmaxT  : acceleration of translation",
+    "decmaxR  : deceleration of rotation",
+    "decmaxT  : deceleration of translation",
+    "adef     : default angle",
+    "amax     : angle maximam",
+    "amin     : angle minimam",
+    "length   : link length",
+    "offset   : link offset",
+    "otype    : offset type [0:none 1:x 2:y]",
+    "rtype    : rotation axis type [0:x 1:y 2:z]",
+    "sign     : sign of rotation",
+    "velmax   : velocity max",
+    "accmax   : acceleration max",
+    "decmax   : deceleration max"
+  ],
+  "axis": 6,
+  "cpparam": {
+    "velmaxR": 180,
+    "velmaxT": 1500,
+    "accmaxR": 900,
+    "accmaxT": 5000,
+    "decmaxR": 900,
+    "decmaxT": 5000
+  },
+  "jparam": {
+    "J1": {
+      "adef": 0,
+      "amax": 175,
+      "amin": -175,
+      "length": 152,
+      "offset": 0,
+      "otype": 0,
+      "rtype": 2,
+      "sign": 1,
+      "velmax": 180,
+      "accmax": 900,
+      "decmax": 900
+    },
+    "J2": {
+      "adef": -90,
+      "amax": 85,
+      "amin": -265,
+      "length": 0,
+      "offset": 0,
+      "otype": 2,
+      "rtype": 1,
+      "sign": -1,
+      "velmax": 180,
+      "accmax": 900,
+      "decmax": 900
+    },
+    "J3": {
+      "adef": 0,
+      "amax": 160,
+      "amin": -160,
+      "length": 425,
+      "offset": 0,
+      "otype": 0,
+      "rtype": 1,
+      "sign": -1,
+      "velmax": 180,
+      "accmax": 900,
+      "decmax": 900
+    },
+    "J4": {
+      "adef": 0,
+      "amax": 85,
+      "amin": -265,
+      "length": 395,
+      "offset": -102,
+      "otype": 2,
+      "rtype": 1,
+      "sign": -1,
+      "velmax": 180,
+      "accmax": 900,
+      "decmax": 900
+    },
+    "J5": {
+      "adef": 90,
+      "amax": 175,
+      "amin": -175,
+      "length": 0,
+      "offset": -102,
+      "otype": 1,
+      "rtype": 0,
+      "sign": -1,
+      "velmax": 180,
+      "accmax": 900,
+      "decmax": 900
+    },
+    "J6": {
+      "adef": -90,
+      "amax": 175,
+      "amin": -175,
+      "length": 100,
+      "offset": 0,
+      "otype": 0,
+      "rtype": 2,
+      "sign": 1,
+      "velmax": 180,
+      "accmax": 900,
+      "decmax": 900
+    }
+  },
+  "maker": "FAIRINO",
+  "model": "FR5"
+}

@@ -133,6 +133,7 @@ class SurfaceDoorFollower(ContactDoorFollower):
         self.roller_radius=float(roller_radius)
         self._roller_previous=None;self._roller_stamp=None
         self._hook_wait=None
+        self._roller_gate={}
         self._hook_previous=None;self._hook_stamp=None
         self._inside_seen=set();self._exit_ready=set()
         self.angular_velocity=0.;self.penetration=0.;self.contact_point=None
@@ -155,6 +156,8 @@ class SurfaceDoorFollower(ContactDoorFollower):
     def detach(self):
         super().detach()
         self._hook_wait=None
+        self._closing_track=None
+        self._opening_track=None
 
     def handle(self,name):
         if self.contact_mode=='hook' and self.doors[name].get('hook_faces'):
@@ -165,9 +168,11 @@ class SurfaceDoorFollower(ContactDoorFollower):
             self._hook_wait=None;return False
         candidates=[]
         for name,tree in self._hook_trees.items():
+            d=self.doors[name]
+            if d.get('roller_after_hook_release') and self._roller_gate.get(name) in ('clear','ready','roller'):continue
             if tree is None:continue
             if self.doors[name].get('hook_inside_exit') and name not in self._exit_ready:continue
-            near=self._nearest(name,tip,self.angles[name],self.capture,self._hook_trees)
+            near=self._nearest(name,tip,self.angles[name],d.get('hook_capture',self.capture),self._hook_trees)
             if near is not None:candidates.append((near[0],name))
         if not candidates:
             self._hook_wait=None;return False
@@ -185,6 +190,7 @@ class SurfaceDoorFollower(ContactDoorFollower):
         local=self._rotate(name,tip,-self.angles[name]*d['sign'])
         if math.hypot(local[0]-p[0],local[1]-p[1])<.05:return False
         self.active=name;self.contact_mode='hook'
+        if d.get('roller_after_hook_release'):self._roller_gate[name]='hook'
         self.anchor=(local[0]-p[0],local[1]-p[1],tip[2])
         self.previous=tuple(tip);self.stamp=now
         return True
@@ -250,7 +256,7 @@ class SurfaceDoorFollower(ContactDoorFollower):
         target=min(self.max_angle,max(0.,target))
         if target-start>.08+2.*dt:
             self.detach();return
-        near=self._nearest(name,tip,target,self.release,self._hook_trees)
+        near=self._nearest(name,tip,target,d.get('hook_release',self.release),self._hook_trees)
         if near is None:
             self.detach();return
         self.angles[name]=target
@@ -277,6 +283,39 @@ class SurfaceDoorFollower(ContactDoorFollower):
                 q=closest_triangle(local,face);gap=math.dist(local,q)
                 if gap<=distance:distance=gap;best=q
         return (distance,self._rotate(name,best,angle*self.doors[name]['sign'])) if best is not None else None
+    def _follow_opening_angle(self,roller,previous,dt):
+        track=getattr(self,'_opening_track',None)
+        if track is None:return False
+        name=track['name'];door=self.doors[name];pivot=door['pivot']
+        a=_sub(previous,pivot);b=_sub(roller,pivot)
+        if min(math.hypot(a[0],a[1]),math.hypot(b[0],b[1]))<.05 or abs(roller[2]-track['height'])>.20:
+            self.detach();return False
+        delta=math.atan2(a[0]*b[1]-a[1]*b[0],a[0]*b[0]+a[1]*b[1])*door['sign']
+        if delta<-.003 or abs(delta)>.08+2.*dt:
+            self.detach();return True  # Retreat holds the angle; never closes.
+        start=self.angles[name]
+        self.angles[name]=min(self.max_angle,start+max(0.,delta))
+        self.angular_velocity=(self.angles[name]-start)/dt
+        self.active=name;self.contact_mode='open-angle';self.contact_point=tuple(roller)
+        return True
+
+    def _follow_closing_angle(self,roller,previous,dt):
+        track=getattr(self,'_closing_track',None)
+        if track is None:return False
+        name=track['name'];door=self.doors[name];pivot=door['pivot']
+        a=_sub(previous,pivot);b=_sub(roller,pivot)
+        if min(math.hypot(a[0],a[1]),math.hypot(b[0],b[1]))<.05 or abs(roller[2]-track['height'])>.20:
+            self.detach();return False
+        delta=math.atan2(a[0]*b[1]-a[1]*b[0],a[0]*b[0]+a[1]*b[1])*door['sign']
+        if delta>.003 or abs(delta)>.08+2.*dt:
+            self.detach();return False
+        start=self.angles[name]
+        self.angles[name]=max(0.,start+min(0.,delta))
+        self.angular_velocity=(self.angles[name]-start)/dt
+        self.active=name;self.contact_mode='close-angle';self.contact_point=tuple(roller)
+        if self.angles[name]<=1e-6:self.detach()
+        return True
+
     def update_contacts(self,hook,roller,now):
         hook_previous,hook_stamp=self._hook_previous,self._hook_stamp
         hook_valid=hook is not None and len(hook)==3 and all(math.isfinite(v) for v in hook)
@@ -292,8 +331,10 @@ class SurfaceDoorFollower(ContactDoorFollower):
         continuous=(valid and previous is not None and dt is not None and 0<dt<=.5
                     and math.dist(previous,roller)<=.04+dt)
         if not continuous:
-            if self.contact_mode=='push':self.detach()
+            if self.contact_mode in ('push','close-angle','open-angle'):self.detach()
             previous=roller if valid else None
+        if continuous and self._follow_opening_angle(roller,previous,dt):return
+        if continuous and self._follow_closing_angle(roller,previous,dt):return
         if not any(self._triangles.values()):
             return super().update_contacts(hook,roller,now)
         # Update an attached hook first. If it releases, test the roller in this
@@ -303,9 +344,17 @@ class SurfaceDoorFollower(ContactDoorFollower):
             if self.doors[self.active].get('hook_open_only') or self.doors[self.active].get('hook_only'):
                 self._update_frame_push(hook,now)
             else:DoorFollower.update(self,hook,now)
-        if self.active is None and not hook_updated:
-            if self._swept_hook_contact(hook_previous,hook,hook_stamp,now):return
-            if self._capture_frame_hook(hook,now):return
+        for name,door in self.doors.items():
+            if not door.get('roller_after_hook_release'):continue
+            phase=self._roller_gate.get(name)
+            if phase=='hook' and not (self.active==name and self.contact_mode=='hook'):
+                phase='clear';self._roller_gate[name]=phase
+            if phase=='clear' and valid:
+                # Observe separation before allowing a fresh roller approach.
+                near=self._nearest(name,roller,self.angles[name],self.roller_radius+.06)
+                if near is None:self._roller_gate[name]='ready'
+            if self.angles[name]<=1e-6 and phase in ('clear','ready','roller'):
+                self._roller_gate.pop(name,None)
         best=None
         if valid and previous is not None:
             displacement=_sub(roller,previous)
@@ -316,7 +365,9 @@ class SurfaceDoorFollower(ContactDoorFollower):
                 hit=None
                 for i in range(steps+1):
                     sample=_add_scaled(previous,displacement,i/steps)
-                    near=self._nearest(name,sample,angle,self.roller_radius+.006)
+                    gap=self.doors[name].get('roller_capture_gap',.006)
+                    if self.doors[name].get('roller_after_hook_release'):gap=min(gap,.012)
+                    near=self._nearest(name,sample,angle,self.roller_radius+gap)
                     if near is not None:hit=near;break
                 if hit is None:continue
                 distance,contact=hit;r=_sub(contact,pivot)
@@ -324,33 +375,59 @@ class SurfaceDoorFollower(ContactDoorFollower):
                 lever2=_dot(tangent,tangent)
                 if lever2<.0025:continue
                 amount=_dot(displacement,tangent)/lever2 if continuous else 0.
+                if amount>1e-7 and self.doors[name].get('roller_after_hook_release'):
+                    if self._roller_gate.get(name)!='ready':continue
+                    # Only a new inward approach may initiate opening.
+                    old_near=self._nearest(name,previous,angle,.20)
+                    new_near=self._nearest(name,roller,angle,.20)
+                    if old_near is None or new_near is None or new_near[0]>=old_near[0]-.001:continue
                 # The sphere must move into the contacted surface, not away.
                 inward=_dot(displacement,_sub(previous,contact))
-                if amount>1e-7 and inward>1e-8:continue
-                if amount< -1e-7:continue
+                if abs(amount)>1e-7 and inward>1e-8:continue
+                if amount< -1e-7:
+                    if not self.doors[name].get('roller_close',False):continue
+                    # Closing requires a new approach from outside the open
+                    # leaf, not reversal of the opening push while embedded.
+                    outer=_dot(_sub(previous,contact),tangent)/math.sqrt(lever2)
+                    if outer<self.roller_radius*.7:continue
+                    if self.active==name and self.contact_mode=='push' and getattr(self,'_push_direction',0)>0:continue
                 if self.active and self.contact_mode=='hook' and self.active!=name:continue
-                candidate=(amount,-distance,name,contact)
+                candidate=(abs(amount),-distance,name,contact,amount)
                 if best is None or candidate[:2]>best[:2]:best=candidate
         if best is not None:
-            amount,_distance,name,contact=best
+            _magnitude,_distance,name,contact,amount=best
             # A nonmoving nearby roller must not steal an active hook.
-            if self.active is not None and self.contact_mode=='hook' and amount<=1e-7:return
+            if self.active is not None and self.contact_mode=='hook' and abs(amount)<=1e-7:return
             start=self.angles[name]
             maximum=min(self.max_angle,start+(2.*dt if continuous else 0.))
-            target=min(maximum,start+max(0.,amount))
-            # Resolve remaining sphere penetration in the permitted opening
-            # direction; never invent a closing pull or exceed the sample cap.
+            minimum=max(0.,start-(2.*dt if continuous else 0.))
+            target=max(minimum,min(maximum,start+amount))
+            # Push may open or close, but never pull a separated surface.
+            direction=1. if amount>0 else -1.
             near=self._nearest(name,roller,target,self.roller_radius)
-            while continuous and amount>1e-7 and near is not None and near[0]<self.roller_radius-.001 and target<maximum:
-                target=min(maximum,target+.005)
+            while continuous and abs(amount)>1e-7 and near is not None and near[0]<self.roller_radius-.001 and minimum<target<maximum:
+                target=max(minimum,min(maximum,target+direction*.005))
                 near=self._nearest(name,roller,target,self.roller_radius)
             self.angles[name]=target
+            if abs(amount)>1e-7:self._push_direction=1 if amount>0 else -1
             self.active=name;self.contact_mode='push';self.anchor=None
+            if amount>1e-7 and self.doors[name].get('roller_open_angle',False):
+                self._opening_track=dict(name=name,height=roller[2])
+                if self.doors[name].get('roller_after_hook_release'):self._roller_gate[name]='roller'
+                self.contact_mode='open-angle'
+            if amount< -1e-7 and self.doors[name].get('roller_close',False):
+                self._closing_track=dict(name=name,height=roller[2])
+                self.contact_mode='close-angle'
             self.angular_velocity=(target-start)/dt if continuous else 0.
             self.penetration=max(0.,self.roller_radius-near[0]) if near else 0.
             self.contact_point=contact
             return
         if self.contact_mode=='push':self.detach()
+        # Moving roller contact has priority over reacquiring a stationary
+        # nearby hook, so the hook-to-roller handoff loses no motion samples.
+        if self.active is None and not hook_updated:
+            if self._swept_hook_contact(hook_previous,hook,hook_stamp,now):return
+            if self._capture_frame_hook(hook,now):return
         # Hook acquisition remains at the measured handle, with the original
         # radial/height and telemetry discontinuity checks.
         self.contact_mode='hook'

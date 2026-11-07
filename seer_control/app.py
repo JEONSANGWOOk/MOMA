@@ -303,6 +303,7 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
         self.robot_camera_button.pack(side='left',padx=12,pady=5)
         self.button(top,'전시 화면',lambda:self.guarded(self._exhibit_toggle),BLUE).pack(side='left',padx=5,pady=5)
         self.button(top,'웹캠 실시간 보기',self.show_webcam_camera,BLUE).pack(side='left',padx=5,pady=5)
+        self.button(top,'Isaac Sim 연결',self.show_isaac_connection,BLUE).pack(side='left',padx=5,pady=5)
         self.badge = self.label(top, '● SIMULATION', 9, '#54ddb0', True, bg=CHROME)
         self.badge.pack(side='right', padx=16)
         bar = tk.Frame(self, bg=PANEL);self.connection_bar=bar
@@ -619,6 +620,8 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
         self.node_prop_text.pack(fill='x',padx=12,pady=(0,8))
         self.button(right,'선택 항목 속성 편집',self.edit_editor_selection,BLUE).pack(fill='x',padx=12,pady=3)
         self.button(right,'Point 전체 옵션 보기',self.show_selected_station_options).pack(fill='x',padx=12,pady=3)
+        self.button(right,'현재 위치 → 새 노드 등록',self.capture_current_node,BLUE).pack(fill='x',padx=12,pady=3)
+        self.button(right,'선택 노드 ← 현재 X/Y/Theta 등록',lambda:self.capture_current_node(True)).pack(fill='x',padx=12,pady=3)
         self.label(right,'Point 추가 방법',10,INK,True).pack(anchor='w',padx=12,pady=(18,4))
         self.label(right,'Point: 맵 클릭으로 생성 → 방향 핸들 드래그\nPath: 두 Point 선택 → 방향별 A→B / B→A 생성·전진/후진 독립 설정\nAdvanced Area: 맵에서 드래그해 영역 생성 → 속도/장애물 거리 설정',
                    9,MUTED,anchor='nw',justify='left',wraplength=285).pack(fill='x',padx=12)
@@ -986,6 +989,7 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
                 self.log('ERROR',str(e)); messagebox.showerror('실기 연결 불가',str(e)); return
         self.disconnect()
         self.real = real
+        self._auto_map_pending=real;self._auto_map_retry_at=0.;self._telemetry_interrupted=False
         self.control_enabled = real and self.mode.get()=='실기 · 제어'
         self.robot_stations = {}
         self.loading_map = False
@@ -1047,8 +1051,11 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
                         stop.wait(min(2.,.2*2**min(failures-1,4)))
                         continue
                     except Exception as e:
-                        self.events.put(('error',generation,'상태 조회 실패: '+str(e)))
-                        break
+                        failures+=1
+                        state_client.close()
+                        if failures==1:self.events.put(('state_retry',generation,'상태 조회 실패: '+str(e)))
+                        stop.wait(min(5.,.5*2**min(failures-1,4)))
+                        continue
                     stop.wait(max(0.,.2-(time.monotonic()-started)))
             finally:
                 state_client.close()
@@ -1078,6 +1085,14 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
                         elif command=='download_map':
                             result=command_client.download_map(payload['map_name'])
                         else:
+                            if command in ('navigate','navigate_free'):
+                                cancel_seq=getattr(self,'_navigation_cancel_seq',0)
+                                def guard_navigation():
+                                    if (stop.is_set() or generation!=self.generation or not self.connected
+                                            or not self.control_enabled or time.monotonic()-self.last_state>3
+                                            or cancel_seq!=getattr(self,'_navigation_cancel_seq',0)):
+                                        raise ValueError('연결/제어 상태 변경 · 대기 이동 취소')
+                                guard_navigation()
                             result=command_client.command(command,payload)
                         elapsed=(time.monotonic()-started)*1000.0
                         self.events.put(('command_io',generation,('RX',command,port,api,payload,result,elapsed)))
@@ -1226,6 +1241,7 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
         threading.Thread(target=operation_info_work,daemon=True,name='seer-operation-info').start()
 
     def disconnect(self):
+        self._auto_map_pending=False
         if hasattr(self,'pad_enabled'):self.pad_enabled.set(False);self.pad_gate.reset()
         if hasattr(self,'studio_runner') and self.studio_runner.active:self.studio_runner.cancel()
         self.control_enabled=False
@@ -1276,6 +1292,8 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
 
     @audited('REAL.명령 요청')
     def send_command(self,name,payload=None):
+        if name in ('cancel','pause','stop_motion'):
+            self._navigation_cancel_seq=getattr(self,'_navigation_cancel_seq',0)+1
         if name=='navigate' and getattr(self,'studio_config',{}).get('real_navigation_mode')=='free':
             name='navigate_free'
         def send():
@@ -1324,7 +1342,18 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
         self.log('TX','download_map '+map_name+' (4011)')
         self.connection_text.config(text='로봇 지도 다운로드 중…')
 
-    def pull_robot_map(self):
+    def _auto_refresh_recovered_map(self,now):
+        if (self.real and self.connected and getattr(self,'_auto_map_pending',False)
+                and not self.downloading_map and not self.loading_map
+                and now>=getattr(self,'_auto_map_retry_at',0.)):
+            if getattr(self,'map_dirty',False):
+                self._auto_map_pending=False
+                self.log('WARN','로컬 지도 편집 내용이 있어 자동 지도 교체를 보류합니다. 지도 다운받기로 직접 갱신하세요.')
+            else:
+                self._auto_map_retry_at=now+5.
+                self.pull_robot_map(refresh_current=True)
+
+    def pull_robot_map(self,refresh_current=False):
         if not self.real or not self.connected:
             messagebox.showinfo('Pull Map','실기 연결 후 현재 로봇 지도를 다운로드합니다.');return
         if self.downloading_map:
@@ -1333,7 +1362,7 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
         self.connection_text.config(text='Fast Pull · 로봇 지도 다운로드 중…')
         generation=self.generation
         host=self.host.get().strip()
-        known_map=(self.current_robot_map or '').strip()
+        known_map='' if refresh_current else (self.current_robot_map or '').strip()
         # self.profile is a pathlib.Path. SeerClient requires the parsed profile dict.
         # Parse it before starting the worker so Fast Pull cannot accidentally pass a Path
         # into ReadOnlyClient (which expects .get()).
@@ -2082,6 +2111,10 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
                 self.command_status.config(text='JOG STOP · 2000 전송 대기',fg=ORANGE)
             return
         self.sim.v = self.sim.w = self.sim.lease = 0
+
+    def show_isaac_connection(self):
+        from .isaac_connection import show_connection
+        return show_connection(self)
 
     def show_robot_camera(self):
         from .robot_camera import show_camera
@@ -3054,6 +3087,80 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
                 except ValueError: pass
         return f'LM{max(nums,default=0)+1}'
 
+    def current_pose_for_node(self):
+        self.editable()
+        if self.task_running or self.held:raise ValueError('주행/수동 조작을 먼저 종료하세요.')
+        state=self.current_state()
+        pose=tuple(state.get(k) for k in ('x','y','theta'))
+        if any(type(v) not in (int,float) or not math.isfinite(v) for v in pose):
+            raise ValueError('유효한 X/Y/Theta 수신이 필요합니다.')
+        if self.real:
+            if not self.connected or time.monotonic()-self.last_state>1.:
+                raise ValueError('1초 이내 최신 로봇 위치 수신이 필요합니다.')
+            if not hasattr(self.map,'smap_source') or self.map.name!=self.current_robot_map:
+                raise ValueError('현재 로봇 지도를 먼저 다운로드하세요.')
+            speed=state.get('speed')
+            if type(speed) not in (int,float) or not math.isfinite(speed) or abs(speed)>.01:
+                raise ValueError('로봇 정지 후 현재 위치를 불러오세요.')
+            raw=self.raw.get('all',{}) if isinstance(self.raw,dict) else {}
+            turn=raw.get('w',state.get('w'))
+            if type(turn) not in (int,float) or not math.isfinite(turn) or abs(turn)>.01:
+                raise ValueError('회전 정지 상태의 최신 데이터가 필요합니다.')
+        return pose
+
+    def capture_current_node(self,replace_selected=False):
+        """Teach a local map point from a fresh measured base pose, not tool pose."""
+        from tkinter import simpledialog
+        try:
+            self.editable()
+            if self.task_running or self.held:raise ValueError('주행/수동 조작을 먼저 종료하세요.')
+            if self.real:
+                if not self.connected or time.monotonic()-self.last_state>1.:
+                    raise ValueError('1초 이내의 최신 로봇 위치 수신이 필요합니다.')
+                if not hasattr(self.map,'smap_source') or not self.current_robot_map:
+                    raise ValueError('먼저 현재 로봇 지도를 다운로드하세요.')
+                if self.map.name!=self.current_robot_map:
+                    raise ValueError('현재 지도와 로봇 지도가 다릅니다. 지도를 다시 받으세요.')
+            state=self.current_state()
+            pose=[state.get(k) for k in ('x','y','theta')]
+            if any(type(v) not in (int,float) or not math.isfinite(v) for v in pose):
+                raise ValueError('유효한 X/Y/방향 수신이 필요합니다.')
+            if self.real:
+                speed=state.get('speed')
+                turn=self.raw.get('all',{}).get('w') if isinstance(self.raw,dict) else None
+                if type(speed) not in (int,float) or not math.isfinite(speed) or abs(speed)>.01:
+                    raise ValueError('로봇을 정지한 뒤 현재 위치를 등록하세요.')
+                if type(turn) in (int,float) and abs(turn)>.01:
+                    raise ValueError('회전 정지 후 현재 위치를 등록하세요.')
+            if replace_selected:
+                key=self.selected
+                if key not in self.map.nodes:raise ValueError('갱신할 노드를 먼저 선택하세요.')
+                if not messagebox.askyesno('현재 위치로 노드 갱신',f'{key}의 X/Y/방향을 현재 로봇 위치로 바꿀까요?\n연결된 경로 끝점도 함께 변경됩니다.',parent=self):return
+            else:
+                key=simpledialog.askstring('현재 위치로 새 노드','새 노드 이름',initialvalue=self._next_lm_id(),parent=self)
+                if key is None:return
+                key=key.strip()
+                if not key:raise ValueError('노드 이름을 입력하세요.')
+                if key in self.map.nodes:raise ValueError('이미 있는 이름입니다. 선택 노드 갱신 기능을 사용하세요.')
+            # Dialogs can stay open while telemetry changes: reject stale/moving captures.
+            latest=self.current_state()
+            if self.real and (not self.connected or time.monotonic()-self.last_state>1.):
+                raise ValueError('위치 수신이 끊겼습니다. 다시 등록하세요.')
+            if any(abs(latest.get(k,float('inf'))-v)>limit for k,v,limit in zip(('x','y','theta'),pose,(.005,.005,math.radians(.5)))):
+                raise ValueError('등록 중 로봇 위치가 바뀌었습니다. 정지 후 다시 등록하세요.')
+            node=self.map.nodes.get(key,{})
+            oldx,oldy=node.get('x',pose[0]),node.get('y',pose[1])
+            node.update(id=key,x=pose[0],y=pose[1],r=pose[2],angle=pose[2],draft=bool(self.real))
+            node.setdefault('spin',True);node.setdefault('type','LocationMark');node.setdefault('kind','station');node.setdefault('desc','')
+            self.map.nodes[key]=node
+            if replace_selected:self._sync_paths_after_point_edit(key,key,oldx,oldy,pose[0],pose[1])
+            self.selected=key;self.target.set(key);self.map_dirty=True
+            self.refresh_nodes();self.draw_map()
+            self.log('EDIT',f'현재 로봇 위치로 {key} 등록 · X={pose[0]:.4f} Y={pose[1]:.4f} Angle={math.degrees(pose[2]):.2f}° · 로컬 지도만 변경')
+            self.open_point_properties(key,is_new=not replace_selected)
+        except (ValueError,TypeError) as error:
+            messagebox.showwarning('현재 위치로 노드 등록',str(error),parent=self)
+
     def create_point_at(self,x,y):
         try:self.editable()
         except ValueError as e:
@@ -3146,7 +3253,16 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
         self.label(frm,'위치 / 방향',11,INK,True).pack(anchor='w',padx=10,pady=(18,4))
         x_entry=entry_row('X (m)',xv)
         y_entry=entry_row('Y (m)',yv)
-        angle_entry=entry_row('Angle (deg)',anglev)
+        angle_entry=entry_row('Theta / Angle (deg)',anglev)
+        def load_current_robot_pose():
+            try:
+                x,y,theta=self.current_pose_for_node()
+                xv.set(f'{x:.6f}');yv.set(f'{y:.6f}');anglev.set(f'{math.degrees(theta):.6f}')
+                spinv.set(True)
+            except (ValueError,TypeError) as error:
+                messagebox.showwarning('현재 로봇 위치 불러오기',str(error),parent=win)
+        self.button(frm,'현재 로봇 X / Y / Theta 불러오기',load_current_robot_pose,BLUE).pack(fill='x',padx=10,pady=(4,6))
+        self.label(frm,'현재 위치를 입력란에 불러온 뒤 [적용]으로 기존 노드를 갱신합니다. 취소하면 변경하지 않습니다.',9,MUTED,wraplength=590,justify='left').pack(anchor='w',padx=10,pady=4)
 
         r=tk.Frame(frm,bg=PANEL)
         r.pack(fill='x',padx=10,pady=8)
@@ -4006,6 +4122,13 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
             self.log('MISSION',f'중단 · {self.tasks[self.task_index]["goal"]} task={task_name or status}'); self.cancel_tasks(); return
         if not (status==4 or task_name=='COMPLETED'):return
         goal=self.tasks[self.task_index]['goal']; dist=self._mission_station_distance(goal)
+        from .arrival_pose import arrival_pose
+        station=self.robot_stations.get(goal) or self.map.nodes.get(goal) or {}
+        pose_check=arrival_pose(station,self.current_state())
+        if not pose_check['ok']:
+            self.command_status.config(text=f'{goal} 도착 위치/세타 검증 대기 · 다음 단계 보류',fg=ORANGE)
+            return
+
         decide(self,'REAL.기존 순환 도착',snapshot(self),dict(goal=goal,distance_m=dist,max_distance_m=.45,seen_active=self.mission_seen_active,elapsed_s=now-self.mission_goal_sent_at,min_elapsed_s=.8,status=status),'이전 주행 관측 후 완료 상태 수신' if self.mission_seen_active else '주행 관측 없이 완료 상태 수신','단계 완료' if self.mission_seen_active or now-self.mission_goal_sent_at>=.8 and dist is not None and dist<=.45 else '오래된 완료 상태 가능성 · 진행 보류',identity=(self.task_index,self.mission_seen_active,now-self.mission_goal_sent_at>=.8,dist is not None and dist<=.45))
         if not self.mission_seen_active:
             if now-self.mission_goal_sent_at<0.8:return
@@ -4347,7 +4470,13 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
                 self.log('INFO','TCP 진단 완료');continue
             if generation!=self.generation:continue
             if kind=='state':
+                recovered=not self.connected or payload[2]-self.last_state>3 or getattr(self,'_telemetry_interrupted',False)
+                self._telemetry_interrupted=False
                 new_live,new_raw,self.last_state=payload
+                if recovered:
+                    self._auto_map_pending=True
+                    self._auto_map_retry_at=0.
+                    self.log('INFO','TCP 조회 연결 복구 · 현재 지도 자동 다운로드 예약')
                 # Preserve slower per-API RoboShop operation telemetry between 1100 snapshots.
                 old_extra={k:v for k,v in self.raw.items() if isinstance(k,str) and k.startswith('api_')} if isinstance(self.raw,dict) else {}
                 self.live,self.raw=new_live,new_raw
@@ -4386,7 +4515,9 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
                 token,map_name,model,target,elapsed=payload
                 if token!=self._map_prepare_token:continue
                 self.downloading_map=False
-                try:self._install_prepared_robot_map(map_name,model,target,elapsed)
+                try:
+                    self._install_prepared_robot_map(map_name,model,target,elapsed)
+                    self._auto_map_pending=False
                 except Exception as e:
                     self.log('ERROR','지도 화면 적용 실패: '+str(e))
                     self.connection_text.config(text='실기 연결됨 · 지도 표시 실패')
@@ -4471,6 +4602,9 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
                     msg=f'{direction} · api={api} · {response}'
                     self.log('WIRE',msg)
                     self.command_status.config(text=msg,fg=RED)
+            elif kind=='nav_localization':
+                self.command_status.config(text=payload,fg=ORANGE)
+                self.log('RELOC',payload)
             elif kind=='nav_probe':
                 self.log('NAV','3051 직후 1020 Task 상태: '+str(payload))
             elif kind=='jog_io':
@@ -4677,6 +4811,7 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
                 if self.connected:
                     self.connection_text.config(text='실기 연결됨 · 명령 응답 지연/실패 · 상태 모니터링 유지')
             elif kind=='state_retry':
+                self._telemetry_interrupted=True
                 self.connection_text.config(text='TCP 응답 지연 · 자동 재연결 중')
                 self.log('WARN',payload)
             elif kind=='error':
@@ -4689,6 +4824,7 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
             decide(self,'REAL.상태 유효기간',snapshot(self),dict(age_s=now-self.last_state,max_age_s=3),'상태 수신 기한 초과','제어 활성 해제 · 상태 자동 재연결 유지',force=True)
             self.connected=False
             self.control_enabled=False
+            self.task_running=False
             # Keep telemetry workers alive; restore monitoring on a fresh snapshot.
             # Never replay queued commands or resume manual motion after recovery.
             with self._jog_lock:self._jog_desired=None
@@ -4704,6 +4840,7 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
                 total='∞' if self.mission_repeat_target==0 else str(self.mission_repeat_target)
                 goal=self.tasks[self.task_index]['goal'] if self.task_index is not None and self.task_index < len(self.tasks) else '-'
                 self.mission_status.config(text=f'실행 중 · {self.mission_repeat_done+1}/{total}회 · → {goal}',fg=GREEN)
+        self._auto_refresh_recovered_map(now)
         if self.connected and not self.real and self.sim_powered:
             if self.held and self.manual.get():
                 try:self.sim.drive(*self.held[1])
@@ -4768,13 +4905,13 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
             self.telemetry.config(state='normal');self.telemetry.delete('1.0','end')
             self.telemetry.insert('end',json.dumps(data,ensure_ascii=False,indent=2));self.telemetry.config(state='disabled')
         if self.tabs.select() in (str(self.operation_page),str(self.nodes_page)):
-            interval=.03 if self.view_mode.get()=='3D' and self.canvas is self.operation_canvas else (.25 if self.real and self.current_robot_map else .10)
+            interval=.016 if self.view_mode.get()=='3D' and self.canvas is self.operation_canvas else (.25 if self.real and self.current_robot_map else .10)
             if now-self._last_operation_draw>=interval:
                 self.draw_map();self._last_operation_draw=now
         if self.pose_autosave.get() and now-self._last_pose_save_at>=1.0 and (self.real or self.sim_powered):
             self.save_last_pose()
         self._spatial_publish_door_state()
-        period=33 if self.view_mode.get()=='3D' and self.tabs.select()==str(self.operation_page) else 100
+        period=17 if self.view_mode.get()=='3D' and self.tabs.select()==str(self.operation_page) else 100
         self.after(max(10,round(period-(time.monotonic()-now)*1000)),self.tick)
 
     def close(self):
@@ -4792,6 +4929,7 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
         self.disconnect()
         if hasattr(self,'fr5_client') and self.fr5_client.connected:self._fr5_priority_stop()
         if hasattr(self,'studio_bridge'):self.studio_bridge.close()
+        if getattr(self,'_isaac_connection',None):self._isaac_connection.close()
         self.decision_journal.close()
         self.destroy()
 

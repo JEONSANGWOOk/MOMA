@@ -76,3 +76,17 @@ class RuntimeFeedbackTests(unittest.TestCase):
 
 
 if __name__=='__main__':unittest.main()
+
+class VisualJointInterpolationTests(unittest.TestCase):
+    def test_between_samples_and_no_prediction(self):
+        from unittest.mock import patch
+        f=RuntimeArmFeedback('http://localhost:8000')
+        f._sample=(10.1,(1.,)*6);f._history.extend([(10.,(0.,)*6),(10.1,(1.,)*6)])
+        names=[f'J{i}' for i in range(6)]
+        with patch('seer_control.runtime_feedback.time.monotonic',return_value=10.115):
+            self.assertAlmostEqual(f.visual_joints(names)['J1'],.5)
+            self.assertEqual(f.joints(names)['J1'],1.)
+        with patch('seer_control.runtime_feedback.time.monotonic',return_value=10.3):
+            self.assertEqual(f.visual_joints(names)['J1'],1.)
+        f._sample=None
+        self.assertEqual(f.visual_joints(names),{})

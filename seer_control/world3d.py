@@ -11,7 +11,7 @@ from .door_feedback import DoorFollower, ContactDoorFollower, SurfaceDoorFollowe
 
 
 PRESETS={'사선':(-135,38),'위':(-90,89.9),'정면':(-90,8),'측면':(0,8),'뒤':(90,8),'사진형':(135,18)}
-SIM_PANEL_CENTER=(.05,-.695,.059)  # 10 mm inside the SIMPLE_WHOLE tray front edge; bottom rests at z=.053 m.
+SIM_PANEL_CENTER=(-.1384,-.695,.059)  # 10 mm inside the SIMPLE_WHOLE tray front edge; bottom rests at z=.053 m.
 SIM_PANEL_SIZE=(.16,.09,.012)
 
 
@@ -70,7 +70,7 @@ class WorldView3D(tk.Canvas):
         self.scales={'arm':1.,'amr':1.,'cad':1.,'tool':1.}
         self.tool_asset=None
         self.positions={'arm':{},'amr':{},'cad':{},'tool':{}}
-        self.mount=[.34,0.,.626,0.,0.,0.];self.cad_origin=[0.,0.,0.,0.,0.,0.]
+        self.mount=[.34,0.,.626,0.,0.,0.];self.cad_origin=[0.,0.,0.,0.,0.,0.];self.phone_panel_center=list(SIM_PANEL_CENTER);self.phone_panel_yaw=math.pi/2
         self.cad_placement_mode=False;self.cad_placement_callback=None
         self.cad_doors_auto=tk.BooleanVar(value=True);self._cad_door_epoch=time.monotonic();self._door_animation_job=None
         self.cad_door_hold_angle=None;self.cad_door_hold_angles={};self._hook_demo=None;self.panel_pick=None
@@ -154,7 +154,7 @@ class WorldView3D(tk.Canvas):
                 points=[p for face in part['asset'].faces for p in face]
                 lo=[min(p[i] for p in points) for i in range(3)];hi=[max(p[i] for p in points) for i in range(3)]
                 push=((lo[0]-.018)*scale,(lo[1]-.018)*scale,(lo[2]+.30*(hi[2]-lo[2]))*scale)
-                doors.append(dict(name=part['name'],pivot=tuple(v*scale for v in part['pivot']),handle=handle,push=push,sign=part['sign'],surface_faces=[tuple(tuple(v*scale for v in p) for p in face) for face in part['asset'].faces],hook_open_only=True,hook_inside_exit=part['name'].endswith(':2'),hook_dwell=0.,hook_faces=[tuple(tuple(v*scale for v in p) for p in face) for face,mat in zip(part['asset'].faces,part['asset'].face_materials) if mat in (33,36,37)]))
+                doors.append(dict(name=part['name'],pivot=tuple(v*scale for v in part['pivot']),handle=handle,push=push,sign=part['sign'],surface_faces=[tuple(tuple(v*scale for v in p) for p in face) for face in part['asset'].faces],roller_after_hook_release=part['name'].endswith(':1'),roller_open_angle=True,roller_capture_gap=.04,hook_capture=.065,hook_release=.12,roller_close=part['name'].endswith(':1'),hook_open_only=True,hook_inside_exit=part['name'].endswith(':2'),hook_dwell=0.,hook_faces=[tuple(tuple(v*scale for v in p) for p in face) for face,mat in zip(part['asset'].faces,part['asset'].face_materials) if mat in (33,36,37)]))
             self._real_door_follower=SurfaceDoorFollower(doors);self._real_door_key=key
             for name in self._real_door_follower.angles:
                 side='left' if name.endswith(':1') else 'right' if name.endswith(':2') else None
@@ -172,22 +172,20 @@ class WorldView3D(tk.Canvas):
                 tip_world=point(poses['J6'],(0.,-.14714,.148))
                 cad_inverse=inverse(transform(self.cad_origin[:3],self.cad_origin[3:]))
                 tip=point(cad_inverse,tip_world)
-                components=getattr(self.tool_asset,'component_faces',{})
-                visuals=getattr(self.tool_asset,'links',{}).get('base_link',())
-                for (name,_count),(faces,local,_color) in zip(components.items(),visuals):
+                for name,bounds in getattr(self.tool_asset,'component_bounds',{}).items():
                     if 'Polymer_ROECRHA50-10-30-T5' not in name:continue
-                    points=[point(local,p) for face in faces for p in face]
-                    if points:
-                        center=tuple((min(p[i] for p in points)+max(p[i] for p in points))/2 for i in range(3))
-                        follower.roller_radius=max(max(p[i] for p in points)-min(p[i] for p in points) for i in range(3))/2
-                        roller=point(cad_inverse,point(multiply(poses['J6'],transform((0.,0.,.1))),center))
+                    lo,hi=bounds
+                    center=tuple((lo[i]+hi[i])/2 for i in range(3))
+                    scale=self.scales.get('tool',1.)
+                    follower.roller_radius=max(hi[i]-lo[i] for i in range(3))*scale/2
+                    roller=point(cad_inverse,point(multiply(poses['J6'],transform((0.,0.,.1))),tuple(v*scale for v in center)))
                     break
         follower.update_contacts(tip,roller,time.monotonic())
         if not self.real_doors_follow.get():self.real_door_status='문 추정 · 추종 꺼짐'
         elif tip is None:self.real_door_status='문 추정 · 실시간 자세/후크 모델 대기'
         else:
             angles=' / '.join(f'{math.degrees(a):.1f}°' for a in follower.angles.values())
-            self.real_door_status='문 추정 · '+(('후크 문틀/접촉 추종' if follower.contact_mode=='hook' else '문틀 롤러 밀기 추종') if follower.active else '접촉 대기')+' · '+(angles or '문 모델 없음')+' · 기하 추정/힘 미측정'
+            self.real_door_status='문 추정 · '+(('후크 문틀/접촉 추종' if follower.contact_mode=='hook' else '롤러 닫기 각도 추종' if follower.contact_mode=='close-angle' else '롤러 추가 열기 각도 추종' if follower.contact_mode=='open-angle' else '문틀 롤러 밀기 추종') if follower.active else '접촉 대기')+' · '+(angles or '문 모델 없음')+' · 기하 추정/힘 미측정'
     def _refresh_frame(self):
         self._refresh_job=None
         if self.winfo_exists() and self.app.view_mode.get()=='3D':self.app.draw_map()
@@ -315,15 +313,33 @@ class WorldView3D(tk.Canvas):
             self.camera.target=[pose['x'],pose['y'],.7]
             if self.chase:self.camera.yaw=math.degrees(pose['theta'])+180.;self.camera.pitch=28.
         faces=[];lines=[];texts=[];gpu_assets=[];gpu_meshes=[];renderer=renderer_for(self)
-        def add_faces(geometry,world,color,tag):faces.extend((tuple(point(world,p) for p in face),color,tag) for face in geometry)
+        mirror_assets=[];mirror_meshes=[];mirror_primitives=[]
+        import os
+        mirror_enabled=os.environ.get('MOMA_ISAAC_MIRROR')=='1'
+
+        def add_faces(geometry,world,color,tag):
+            faces.extend((tuple(point(world,p) for p in face),color,tag) for face in geometry)
+            if mirror_enabled:mirror_primitives.append((tag,geometry,world,color))
         def add_asset(asset,role,world,color,tag):
+            if mirror_enabled and asset and not renderer:
+                scale=self.scales[role]
+                scaled=tuple(tuple(world[i][j]*scale if i<3 and j<3 else world[i][j] for j in range(4)) for i in range(4))
+                if isinstance(asset,RobotDescription):
+                    mirror_assets.append((asset,dict(self.positions[role]),scaled,None,1.))
+                elif isinstance(asset,MeshAsset):
+                    mirror_meshes.append((asset,scaled,color))
+                    for part in getattr(asset,'door_parts',()):
+                        pivot=part['pivot'];angle=self.cad_door_angle(part)*part['sign']
+                        delta=multiply(multiply(transform(pivot),axis_rotation((0,0,1),angle)),transform(tuple(-v for v in pivot)))
+                        mirror_meshes.append((part['asset'],multiply(scaled,delta),color))
+
             if isinstance(asset,RobotDescription):
                 if renderer:
                     scaled=[list(row) for row in world]
                     for i in range(3):
                         for j in range(3):scaled[i][j]*=self.scales[role]
                     gpu_assets.append((asset,dict(self.positions[role]),scaled,None,1));return
-                for vertices,shade,_ in asset.draw_faces(self.positions[role]):faces.append((tuple(point(world,tuple(v*self.scales[role] for v in p)) for p in vertices),shade,tag))
+                for vertices,shade,_ in asset.draw_faces(self.positions[role],full_resolution=True):faces.append((tuple(point(world,tuple(v*self.scales[role] for v in p)) for p in vertices),shade,tag))
             elif asset:
                 scale=self.scales[role]
                 if renderer and isinstance(asset,MeshAsset):
@@ -456,7 +472,10 @@ class WorldView3D(tk.Canvas):
                         add_faces(cylinder(.12,.065),multiply(world,transform((x,y,.12),(math.pi/2,0,0))),'#344354','world_amr')
                 lines.append((point(world,(0,0,.46)),point(world,(length*.65,0,.46)),'#e76158',3,'world_heading'))
         values=self._arm_positions(arm,measured or {})
-        values=self._joint_display.update(values,display_now,display_context,jump=math.pi)
+        visual=getattr(self,'runtime_visual_joints',{})
+        if self.app.real and self.arm_follow.get() and visual and visual.keys()==values.keys():
+            values=dict(visual)
+        else:values=self._joint_display.update(values,display_now,display_context,jump=math.pi)
         self.scene_joint_values=dict(values)
         arm_world=multiply(world,transform(self.mount[:3],self.mount[3:]))
         self._update_real_doors(multiply(transform((raw_pose['x'],raw_pose['y'],0),(0,0,raw_pose['theta'])),transform(self.mount[:3],self.mount[3:])),values,measured or {})
@@ -479,16 +498,50 @@ class WorldView3D(tk.Canvas):
                 color='#35b8cf' if name in ('finger','cup') else '#354153'
                 add_faces(box(size),multiply(toolworld,matrix),color,'world_tool')
         if self.layers['CAD'].get() and self.cad_asset:add_asset(self.cad_asset,'cad',transform(self.cad_origin[:3],self.cad_origin[3:]),'#c4cbd0','world_cad')
+        if self.layers['CAD'].get() and self.cad_asset:
+            from .door_marker import marker_geometry
+            for part in getattr(self.cad_asset,'door_parts',()):
+                if not part['name'].endswith(':1'):continue
+                key=(id(self.cad_asset),id(part['asset']))
+                if getattr(self,'_door_marker_key',None)!=key:
+                    self._door_marker_geometry=marker_geometry(part);self._door_marker_key=key
+                pivot=part['pivot'];angle=self.cad_door_angle(part)*part['sign']
+                delta=multiply(multiply(transform(pivot),axis_rotation((0,0,1),angle)),transform(tuple(-v for v in pivot)))
+                scale=self.scales.get('cad',1.)
+                cad=transform(self.cad_origin[:3],self.cad_origin[3:])
+                scaled=[[cad[i][j]*scale if i<3 and j<3 else cad[i][j] for j in range(4)] for i in range(4)]
+                door_world=multiply(scaled,delta)
+                for tag,geometry,local,color in self._door_marker_geometry:
+                    add_faces(geometry,multiply(door_world,local),color,'world_left_door_aruco_'+tag)
         panel=getattr(self,'panel_pick',None)
         if panel is None and self.cad_asset and self.cad_asset.name.upper().startswith('SIMPLE_WHOLE'):
             cad_scale=float(self.scales.get('cad',1.))
-            center=tuple(value*cad_scale for value in SIM_PANEL_CENTER)
+            center=tuple(value*cad_scale for value in getattr(self,'phone_panel_center',SIM_PANEL_CENTER))
             size=tuple(value*cad_scale for value in SIM_PANEL_SIZE)
-            panel=dict(name='phone panel · SIM default',matrix=multiply(transform(self.cad_origin[:3],self.cad_origin[3:]),transform(center)),size=size)
+            panel=dict(name='phone panel · SIM default',matrix=multiply(transform(self.cad_origin[:3],self.cad_origin[3:]),transform(center,(0,0,getattr(self,'phone_panel_yaw',math.pi/2)))),size=size)
         if panel:
             panel_matrix=panel['matrix']
             if dev and dev.physics.held and dev.physics.held.get('name')==panel.get('object_name'):
                 panel_matrix=multiply(arm_world,dev.physics.held['matrix'])
+            if self.app.real:
+                from .vacuum_panel_display import VacuumPanelDisplay,arm_vacuum_signal
+                if not hasattr(self,'_vacuum_panel'):self._vacuum_panel=VacuumPanelDisplay()
+                config=getattr(self,'vacuum_display_config',{})
+                runtime=getattr(self.app,'runtime_arm_feedback',None)
+                signal=arm_vacuum_signal(self.app,config,time.monotonic())
+                cup=None
+                if isinstance(self.arm_asset,RobotDescription) and measured and ((runtime and runtime.joints([j['name'] for j in self.arm_asset.movable()])) or time.monotonic()-getattr(self.app,'fr5_rx',0)<=1.):
+                    tool_mount=getattr(self.tool_asset,'vacuum_mount',None)
+                    link_poses=self.arm_asset.link_transforms(values,arm_world)
+                    if tool_mount is not None and 'J6' in link_poses:
+                        scale=self.scales.get('tool',1.)
+                        calibrated=[list(row) for row in tool_mount]
+                        for i in range(3):calibrated[i][3]*=scale
+                        cup=multiply(multiply(link_poses['J6'],transform((0,0,.1))),calibrated)
+                panel_dt=time.monotonic()-getattr(self,'_vacuum_panel_at',time.monotonic())
+                self._vacuum_panel_at=time.monotonic()
+                panel_matrix=self._vacuum_panel.update(signal,cup,panel_matrix,panel['size'],panel_dt)
+                texts.append((point(panel_matrix,(0,0,.03)),self._vacuum_panel.status,'#126b91'))
             panel_width,panel_depth,thickness=panel['size']
             add_faces(box(panel['size']),panel_matrix,'#aab8c5','world_sim_panel_frame')
             screen=transform((0.,0.,thickness/2+.001),(0.,0.,0.))
@@ -522,6 +575,9 @@ class WorldView3D(tk.Canvas):
             coords=[v for p in projected for v in p[:2]]
             if kind=='face':self.create_polygon(*coords,fill=color[0],outline=color[0],stipple='gray25' if color[1]<1 else '',tags=('world_mesh',tag))
             else:self.create_line(*coords,fill=color[0],width=color[1],tags=tag)
+        if mirror_enabled:
+            from .isaac_mirror import publish_view
+            publish_view(self,gpu_assets if renderer else mirror_assets,gpu_meshes if renderer else mirror_meshes,mirror_primitives)
         if renderer:
             from PIL import ImageTk
             frame=renderer.render(self.camera,width,height,assets=gpu_assets,meshes=gpu_meshes,faces=faces,lines=[row[:4] for row in lines])

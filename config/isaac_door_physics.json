@@ -1,0 +1,19 @@
+{
+  "estimated_parameters": true,
+  "description": "Unmeasured starting values. Shared by left/right doors; calibrate against hardware.",
+  "door_mass_kg": 3.0,
+  "static_friction": 0.5,
+  "dynamic_friction": 0.3,
+  "restitution": 0.0,
+  "hinge_friction_coefficient": 0.05,
+  "angular_damping_per_s": 0.2,
+  "opening_limit_deg": 120.0,
+  "contact_offset_m": 0.002,
+  "physics_hz": 120,
+  "contact_assist_enabled": true,
+  "contact_assist_stiffness": 120.0,
+  "contact_assist_damping": 20.0,
+  "contact_assist_max_torque_nm": 40.0,
+  "auto_play": true,
+  "door_motion_mode": "mirror"
+}

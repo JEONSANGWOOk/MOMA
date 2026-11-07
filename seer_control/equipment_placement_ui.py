@@ -5,7 +5,7 @@ import threading
 import time
 import tkinter as tk
 from tkinter import ttk, messagebox
-from .equipment_placement import context, signature, section, placed, quality, refine
+from .equipment_placement import context, signature, section, placed, quality, refine, body_outline, polygon_gap
 
 
 def show_placement(app):
@@ -23,6 +23,27 @@ def show_placement(app):
     variables=[tk.StringVar(value=f'{view.cad_origin[i] if i<2 else math.degrees(view.cad_origin[5]):.3f}') for i in range(3)]
     for label,var in zip(('X (m)','Y (m)','Yaw (°)'),variables):
         ttk.Label(row,text=label).pack(side='left',padx=4);ttk.Entry(row,textvariable=var,width=10).pack(side='left')
+    gap_row=ttk.Frame(win);gap_row.pack(fill='x',padx=10,pady=5)
+    target_gap=tk.StringVar(value=str(getattr(view,'equipment_gap_target_m',.21)*100))
+    ttk.Label(gap_row,text='목표 간격 (cm)').pack(side='left')
+    ttk.Entry(gap_row,textvariable=target_gap,width=8).pack(side='left',padx=6)
+    gap_text=tk.StringVar(value='현재 간격: 계산 대기 · 차체 외곽 ↔ 설비 단면')
+    ttk.Label(gap_row,textvariable=gap_text).pack(side='left',padx=8)
+    robot_outline=body_outline(app,view)
+
+    def update_gap():
+        try:
+            target=float(target_gap.get())/100
+            if not math.isfinite(target) or target<=0:raise ValueError()
+            live=app.current_state();rx,ry,theta=(live.get(k) for k in ('x','y','theta'))
+            if not app.connected or time.monotonic()-app.last_state>2 or not all(type(v) in (int,float) and math.isfinite(v) for v in (rx,ry,theta)):
+                gap_text.set('현재 간격: 최신 로봇 위치 대기');return
+            if not state['outline']:return
+            robot=placed(robot_outline,(rx,ry,theta))
+            gap=polygon_gap(robot,placed(state['outline'],pose()))
+            gap_text.set(f'현재 약 {gap*100:.1f} cm · 목표 {target*100:.1f} cm · 차이 {(gap-target)*100:+.1f} cm (모델 추정)')
+        except (ValueError,TypeError):gap_text.set('목표 간격/배치 좌표를 확인하세요.')
+
     state=dict(cloud=[],outline=[],context=None,signature=None,scan_at=0.,quality=None,busy=False)
     status=tk.StringVar(value='실제 점군을 읽는 중…');ttk.Label(win,textvariable=status).pack(pady=5)
     jobs=queue.Queue()
@@ -35,6 +56,7 @@ def show_placement(app):
     def redraw():
         if not win.winfo_exists():return
         canvas.delete('all')
+        update_gap()
         try:p=pose()
         except ValueError:return
         polygon=placed(state['outline'],p) if state['outline'] else []
@@ -83,8 +105,11 @@ def show_placement(app):
         if state['signature']!=signature(app,view):raise ValueError('지도·CAD·좌표 설정이 바뀌었습니다. 점군을 갱신하세요.')
         if not app.connected or time.monotonic()-app.last_laser_rx>2:raise ValueError('LiDAR 수신이 끊겼습니다.')
         if time.monotonic()-state['scan_at']>30:raise ValueError('점군이 오래되었습니다. 점군 갱신 후 다시 확인하세요.')
+        target=float(target_gap.get())/100
+        if not math.isfinite(target) or target<=0:raise ValueError('목표 간격에 0보다 큰 숫자를 입력하세요.')
         p=pose();q=quality(state['outline'],state['cloud'],p)
         if not q['ok']:raise ValueError('설비 외곽과 일치하는 LiDAR 점이 부족합니다. 위치·방향을 조정하세요.')
+        view.equipment_gap_target_m=target
         view.cad_origin[0],view.cad_origin[1],view.cad_origin[5]=p
         view.cad_placement_confirmation=dict(signature=signature(app,view),time=time.time(),quality=q,source='real_lidar_operator_confirmed')
         view.reset_real_doors();app._spatial_save();view.refresh()
@@ -124,7 +149,8 @@ def show_placement(app):
                 redraw()
             else:state.update(data);redraw()
         except queue.Empty:pass
-        win.after(100,results)
+        update_gap()
+        win.after(500,results)
 
     from .placement_nudge import add_nudge_controls
     add_nudge_controls(win,variables,redraw,safe,enabled=lambda:not state['busy'])

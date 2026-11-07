@@ -75,6 +75,10 @@ class SpatialMixin:
         ttk.Combobox(toolbar,textvariable=self.door_demo_speed,values=('50%','75%','100%','150%','200%','300%'),state='readonly',width=5).pack(side='left',padx=2)
         self.button(toolbar,'3D 모델 / 관절',self._spatial_dialog,BLUE).pack(side='left',padx=3)
         self.button(toolbar,'설비 배치',lambda:self.guarded(self._spatial_equipment_placement),BLUE).pack(side='left',padx=3)
+        from .departure_link import show_departure_link
+        self.button(toolbar,'LM2→LM1 연동',lambda:show_departure_link(self),BLUE).pack(side='left',padx=3)
+        from .runtime_scenario import show_runtime_scenario
+        self.button(toolbar,'전체 동작 main2',lambda:show_runtime_scenario(self),BLUE).pack(side='left',padx=3)
         self.button(toolbar,'팔 홈',lambda:self.guarded(self._spatial_home_arm),BLUE).pack(side='left',padx=3)
         self.button(toolbar,'3D 문 열기 / 닫기',lambda:self.guarded(self._spatial_single_door_dialog),BLUE).pack(side='left',padx=3)
         self.button(toolbar,'SIM: Doors 120° + vacuum panel',lambda:self.guarded(self._spatial_run_hook_demo),BLUE).pack(side='left',padx=3)
@@ -652,8 +656,8 @@ class SpatialMixin:
         # This default phone-sized workpiece is centered over the broad internal
         # shelf plane measured at CAD z=0.05 m. It is only a SIM proxy.
         cad_world=transform(view.cad_origin[:3],view.cad_origin[3:]);cad_scale=float(view.scales.get('cad',1.))
-        panel_size=tuple(v*cad_scale for v in SIM_PANEL_SIZE);panel_local=tuple(v*cad_scale for v in SIM_PANEL_CENTER)
-        panel_world=multiply(cad_world,transform(panel_local));panel_name='SIM phone panel'
+        panel_size=tuple(v*cad_scale for v in SIM_PANEL_SIZE);panel_local=tuple(v*cad_scale for v in getattr(view,'phone_panel_center',SIM_PANEL_CENTER))
+        panel_world=multiply(cad_world,transform(panel_local,(0,0,getattr(view,'phone_panel_yaw',math.pi/2))));panel_name='SIM phone panel'
         state=self.current_state();base=(float(state.get('x',0.)),float(state.get('y',0.)),float(state.get('theta',0.)))
         mount_offset=point(transform((0.,0.,0.),(0.,0.,base[2])),view.mount[:3])
         pick_base=(panel_world[0][3]-mount_offset[0],base[1],base[2])
@@ -1193,6 +1197,7 @@ class SpatialMixin:
         self.view_mode.set('3D');self._spatial_switch()
 
     def _spatial_render(self):
+        self.world3d.runtime_visual_joints={}
         state=dict(self.current_state())
         if self.real and all(type(state.get(k)) in (int,float) and math.isfinite(state[k]) for k in ('x','y','theta')):
             state['x'],state['y']=self._lidar_map_xy(state['x'],state['y']);state['theta']+=self.lidar_map_alignment[2]
@@ -1219,18 +1224,20 @@ class SpatialMixin:
                 runtime=getattr(self,'runtime_arm_feedback',None)
                 if runtime is not None:
                     joints=runtime.joints(names)
+                    if hasattr(runtime,'visual_joints'):self.world3d.runtime_visual_joints=runtime.visual_joints(names)
                     if joints:arm=dict(status='REAL',pose='MEASURED',feedback_source='MoMa Runtime · 실시간 관절값')
         if self.real:
             lidar=self.real_laser_points if 'laser_beams(WORLD)' in self.lidar_source else [self._lidar_map_xy(x,y) for x,y in self.real_laser_points]
             if not self.connected or time.monotonic()-self.last_laser_rx>2:lidar=[]
         else:lidar=self.scan_points if self.connected and self.sim_powered else []
+        self.world3d._isaac_lidar=list(lidar)
         self.world3d.draw_scene(self.map,state,arm,route,joints,lidar if self.layers['LiDAR'].get() else [])
 
     def _spatial_save(self):
         if not hasattr(self,'studio_config'):return
         view=self.world3d
         self.studio_config['viewer3d']=dict(view=self.view_mode.get(),camera=self.camera_view.get(),projection=self.projection_view.get(),
-            runtime_url=self.studio_config.get('viewer3d',{}).get('runtime_url','http://192.168.30.13:8000/runtime.html'),assembly_version='lm6-wall-parallel-dd-mirrored-hook-20261102',mount=view.mount,cad_origin=view.cad_origin,wall_height=view.wall_height,cad_doors_auto=view.cad_doors_auto.get(),real_doors_follow=view.real_doors_follow.get(),cad_placement_confirmation=view.cad_placement_confirmation,webcam_doors_enabled=view.webcam_doors_enabled.get(),door_initial_angles=getattr(view,'door_initial_angles',{}),layers={k:v.get() for k,v in view.layers.items()},assets=self.spatial_assets)
+            runtime_url=self.studio_config.get('viewer3d',{}).get('runtime_url','http://192.168.30.13:8000/runtime.html'),assembly_version='lm6-wall-parallel-dd-mirrored-hook-20261102',mount=view.mount,cad_origin=view.cad_origin,phone_panel_center=list(getattr(view,'phone_panel_center',SIM_PANEL_CENTER)),equipment_gap_target_m=getattr(view,'equipment_gap_target_m',.21),phone_panel_yaw=getattr(view,'phone_panel_yaw',math.pi/2),phone_panel_pose_version=2,vacuum_display=getattr(view,'vacuum_display_config',self.studio_config.get('viewer3d',{}).get('vacuum_display',{})),wall_height=view.wall_height,cad_doors_auto=view.cad_doors_auto.get(),real_doors_follow=view.real_doors_follow.get(),cad_placement_confirmation=view.cad_placement_confirmation,webcam_doors_enabled=view.webcam_doors_enabled.get(),door_initial_angles=getattr(view,'door_initial_angles',{}),layers={k:v.get() for k,v in view.layers.items()},assets=self.spatial_assets)
         self._studio_save_settings()
         self._spatial_sync_cad_lidar()
 
@@ -1312,6 +1319,16 @@ class SpatialMixin:
         if not isinstance(config,dict):config={}
         view=self.world3d
         view.cad_placement_confirmation=config.get('cad_placement_confirmation')
+        gap=config.get('equipment_gap_target_m',.21)
+        view.equipment_gap_target_m=gap if type(gap) in (int,float) and math.isfinite(gap) and gap>0 else .21
+        view.phone_panel_yaw=float(config.get('phone_panel_yaw',math.pi/2))
+        if config.get('phone_panel_pose_version')!=2:
+            config=dict(config,phone_panel_center=list(SIM_PANEL_CENTER))
+        view.vacuum_display_config=dict(config.get('vacuum_display',{}))
+        panel_center=config.get('phone_panel_center')
+        if isinstance(panel_center,list) and len(panel_center)==3 and all(type(v) in (int,float) and math.isfinite(v) for v in panel_center):
+            view.phone_panel_center=list(panel_center)
+
         if type(config.get('cad_doors_auto')) is bool:view.cad_doors_auto.set(config['cad_doors_auto'])
         view.real_doors_follow.set(bool(config.get('real_doors_follow',True)))
         view.webcam_doors_enabled.set(bool(config.get('webcam_doors_enabled',False)))
@@ -1538,6 +1555,89 @@ class SpatialMixin:
             apply_cad()
         from .placement_nudge import add_nudge_controls
         add_nudge_controls(body,[cad_values[0],cad_values[1],cad_values[5]],nudge_cad,self.guarded)
+        self.label(body,'설비 내부 휴대폰 패널 위치 · 설비 기준 X/Y (m)',10,INK,True).pack(anchor='w',padx=12,pady=(10,4))
+        panel_position=getattr(view,'phone_panel_center',SIM_PANEL_CENTER)
+        panel_vars=[tk.StringVar(value=f'{panel_position[i]:.4f}') for i in range(2)]
+        panel_row=tk.Frame(body,bg=PANEL);panel_row.pack(fill='x',padx=12,pady=4)
+        step=tk.StringVar(value='0.001')
+        panel_yaw=tk.StringVar(value=f'{math.degrees(getattr(view,"phone_panel_yaw",math.pi/2)):.1f}')
+        def apply_panel():
+            xy=[float(var.get()) for var in panel_vars];yaw=math.radians(float(panel_yaw.get()))
+            if not math.isfinite(yaw) or not all(math.isfinite(v) for v in xy):raise ValueError('패널 X/Y에 유한한 숫자를 입력하세요.')
+            simulator=getattr(self,'arm_dev_sim',None)
+            if (getattr(view,'_hook_demo',None) or (simulator and getattr(simulator,'state',None) in ('RUNNING','PAUSED')) or (simulator and getattr(simulator,'physics',None) and simulator.physics.held)):
+                raise ValueError('패널 작업을 종료하고 물체를 놓은 뒤 위치를 변경하세요.')
+            old=getattr(view,'phone_panel_center',SIM_PANEL_CENTER)
+            view.phone_panel_center=[xy[0],xy[1],old[2]]
+            view.phone_panel_yaw=yaw
+            if simulator and getattr(simulator,'physics',None):
+                simulator.physics.objects=[obj for obj in simulator.physics.objects if obj.get('name')!='SIM phone panel']
+            view.panel_pick=None
+            if hasattr(view,'_vacuum_panel'):delattr(view,'_vacuum_panel')
+            view.refresh();self._spatial_save()
+        def nudge_panel(index,direction):
+            amount=float(step.get())
+            if not math.isfinite(amount) or amount<=0:raise ValueError('증분은 0보다 큰 유한한 숫자여야 합니다.')
+            previous=panel_vars[index].get()
+            panel_vars[index].set(f'{float(previous)+amount*direction:.6f}')
+            try:apply_panel()
+            except Exception:
+                panel_vars[index].set(previous);raise
+        for index,name in enumerate(('X','Y')):
+            self.label(panel_row,name,9,INK).pack(side='left')
+            ttk.Entry(panel_row,textvariable=panel_vars[index],width=10).pack(side='left',padx=4)
+            for direction,label in ((-1,'−'),(1,'＋')):
+                ttk.Button(panel_row,text=label,width=3,command=lambda i=index,d=direction:self.guarded(lambda:nudge_panel(i,d))).pack(side='left',padx=2)
+        self.label(panel_row,'방향 °',9,INK).pack(side='left',padx=4)
+        ttk.Entry(panel_row,textvariable=panel_yaw,width=6).pack(side='left')
+        self.button(panel_row,'적용 / 저장',lambda:self.guarded(apply_panel),BLUE).pack(side='left',padx=6)
+        step_row=tk.Frame(body,bg=PANEL);step_row.pack(fill='x',padx=12,pady=3)
+        self.label(step_row,'이동 증분 (m)',9,MUTED).pack(side='left')
+        ttk.Combobox(step_row,textvariable=step,values=('0.001','0.005','0.01'),width=9).pack(side='left',padx=6)
+        def reset_panel():
+            for i,var in enumerate(panel_vars):var.set(str(SIM_PANEL_CENTER[i]))
+            panel_yaw.set('90')
+            self.guarded(apply_panel)
+        self.button(step_row,'기본 위치 복원',reset_panel).pack(side='left',padx=4)
+        self.label(body,'설비와 함께 이동하는 패널 위치입니다. Z 높이는 유지됩니다. ± 버튼은 즉시 적용·저장합니다.',9,MUTED,wraplength=650).pack(anchor='w',padx=12,pady=3)
+        io_cfg=getattr(view,'vacuum_display_config',{})
+        io_box=ttk.LabelFrame(body,text='패널 베큠 IO 표시 · 실제 출력 제어 없음');io_box.pack(fill='x',padx=12,pady=8)
+        io_source=tk.StringVar(value=io_cfg.get('source','Runtime'))
+        io_bank=tk.StringVar(value=io_cfg.get('bank','DO'));io_channel=tk.StringVar(value=str(io_cfg.get('channel','')))
+        io_path=tk.StringVar(value=io_cfg.get('runtime_io_path',''));io_high=tk.BooleanVar(value=io_cfg.get('active_high',True))
+        io_row=ttk.Frame(io_box);io_row.pack(fill='x',padx=6,pady=4)
+        ttk.Combobox(io_row,textvariable=io_source,values=('FR5 SDK','Runtime'),state='readonly',width=10).pack(side='left',padx=3)
+        ttk.Combobox(io_row,textvariable=io_bank,values=('DO','ToolDO'),state='readonly',width=8).pack(side='left',padx=3)
+        ttk.Label(io_row,text='채널').pack(side='left');ttk.Entry(io_row,textvariable=io_channel,width=4).pack(side='left',padx=4)
+        ttk.Checkbutton(io_row,text='ON=1',variable=io_high).pack(side='left',padx=4)
+        io_mode=tk.StringVar(value=io_cfg.get('mode','paired'))
+        pair_row=ttk.Frame(io_box);pair_row.pack(fill='x',padx=6,pady=4)
+        ttk.Combobox(pair_row,textvariable=io_mode,values=('paired','single'),state='readonly',width=8).pack(side='left')
+        on_channels=tk.StringVar(value=','.join(map(str,io_cfg.get('on_channels',[2,4]))))
+        off_channels=tk.StringVar(value=','.join(map(str,io_cfg.get('off_channels',[3,5]))))
+        ttk.Label(pair_row,text='ON 채널').pack(side='left');ttk.Entry(pair_row,textvariable=on_channels,width=8).pack(side='left')
+        ttk.Label(pair_row,text='OFF 채널').pack(side='left');ttk.Entry(pair_row,textvariable=off_channels,width=8).pack(side='left')
+        ttk.Label(pair_row,text='paired: 2·4 흡착 / 3·5 블로우 · 레벨 판정').pack(side='left',padx=5)
+        io_row2=ttk.Frame(io_box);io_row2.pack(fill='x',padx=6,pady=4)
+        ttk.Label(io_row2,text='Runtime IO 경로 (제공될 때)').pack(side='left')
+        ttk.Entry(io_row2,textvariable=io_path,width=30).pack(side='left',padx=4)
+        def save_vacuum_display():
+            channel=None;ons=[];offs=[]
+            if io_source.get()=='FR5 SDK':
+                limit=2 if io_bank.get()=='ToolDO' else 16
+                if io_mode.get()=='paired':
+                    ons=[int(v.strip()) for v in on_channels.get().split(',')];offs=[int(v.strip()) for v in off_channels.get().split(',')]
+                    if set(ons)&set(offs):raise ValueError('ON/OFF 채널은 서로 달라야 합니다.')
+                    if any(not 0<=v<limit for v in ons+offs):raise ValueError('DO는 0~15, ToolDO는 0~1입니다.')
+                else:
+                    channel=int(io_channel.get())
+                    if not 0<=channel<limit:raise ValueError('DO는 0~15, ToolDO는 0~1입니다.')
+            # Empty Runtime path uses the verified viewer vacuum_io feedback.
+            view.vacuum_display_config=dict(source=io_source.get(),bank=io_bank.get(),channel=channel,
+                active_high=io_high.get(),runtime_io_path=io_path.get().strip(),mode=io_mode.get(),on_channels=ons,off_channels=offs)
+            self._spatial_save()
+        ttk.Button(io_row2,text='IO 설정 저장',command=lambda:self.guarded(save_vacuum_display)).pack(side='left',padx=4)
+        ttk.Label(io_box,text='Runtime 기본: Viewer의 실제 베큠 출력 조회. 미수신/수신 지연은 OFF로 처리하지 않습니다.').pack(anchor='w',padx=6,pady=4)
         place_status=tk.StringVar(value='')
         def placement_changed(active):
             place_status.set('Click the 3D map to place CAD.' if active else 'CAD position saved.')

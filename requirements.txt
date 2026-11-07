@@ -3,3 +3,6 @@ Pillow>=11
 
 # Desktop PC webcam live viewer
 opencv-python>=4.10,<5
+
+# Batched full-resolution geometry/normal packing
+numpy>=1.26,<3

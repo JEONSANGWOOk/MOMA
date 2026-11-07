@@ -3,8 +3,14 @@
 import argparse
 import asyncio
 import logging
+import ipaddress
 import signal
 import socket
+
+
+def client_allowed(address,allowed):
+    try:return ipaddress.ip_address(address) in ipaddress.ip_network(allowed,strict=False)
+    except ValueError:return False
 
 
 def configure(sock):
@@ -32,7 +38,7 @@ async def relay(reader, writer, target, port, allowed):
     upstream = None
     tasks = []
     try:
-        if not peer or peer[0] != allowed:
+        if not peer or not client_allowed(peer[0],allowed):
             logging.warning('Rejected peer %s', peer)
             return
         configure(writer.get_extra_info('socket'))
@@ -83,9 +89,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--listen', default='192.168.30.13')
     parser.add_argument('--target', default='192.168.58.102')
-    parser.add_argument('--allow-client', default='192.168.30.12')
+    parser.add_argument('--allow-client', default='192.168.30.0/24',help='Allowed client IP or CIDR subnet')
     parser.add_argument('--ports', nargs='+', type=int, default=[19204,19205,19206,19207,19210])
     args = parser.parse_args()
+    try:ipaddress.ip_network(args.allow_client,strict=False)
+    except ValueError:parser.error('--allow-client must be an IP address or CIDR subnet')
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
     asyncio.run(serve(args))
 

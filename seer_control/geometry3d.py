@@ -263,7 +263,7 @@ def load_glb(path,max_faces=3000,rotation=(0.,0.,0.)):
     for node_index in range(len(nodes)):
         if node_index not in visited:visit(node_index,identity_matrix)
     if total_faces==0:raise ValueError('GLB 안에 유효한 triangle mesh가 없습니다.')
-    budget=max(1,int(max_faces));reserve=min(120,max(1,budget//max(1,len(plans))))
+    budget=total_faces if max_faces is None else max(1,int(max_faces));reserve=min(120,max(1,budget//max(1,len(plans))))
     allocations=[min(count,reserve) for _,_,_,count,_,_,_ in plans]
     remaining=max(0,budget-sum(allocations))
     while remaining:
@@ -312,7 +312,7 @@ def load_glb(path,max_faces=3000,rotation=(0.,0.,0.)):
 
 def load_glb_static_robot(path,max_faces=12000,rotation=(0.,0.,0.),color='#8292a1',offset=(0.,0.,0.)):
     """Load a static GLB assembly as a renderer-friendly single-link robot."""
-    mesh=load_glb(path,max_faces=max_faces,rotation=rotation)
+    mesh=load_glb(path,max_faces=None,rotation=rotation)
     if not mesh.faces:raise ValueError('GLB 메시가 비어 있습니다.')
     if any(offset):mesh.faces=[tuple(tuple(p[i]+offset[i] for i in range(3)) for p in face) for face in mesh.faces]
     groups={}
@@ -321,10 +321,26 @@ def load_glb_static_robot(path,max_faces=12000,rotation=(0.,0.,0.),color='#8292a
     for face,material in zip(mesh.faces,mesh.face_materials):
         shade=mesh.material_colors.get(material,color)
         by_color.setdefault(shade,[]).append(face)
+    # Keep every source triangle. The display uses full geometry, so computing
+    # an unused simplified copy here only delays the initial viewport.
     links={'base_link':[(faces,identity(),shade) for shade,faces in by_color.items()]}
     asset=RobotDescription(Path(path).stem,links,[],['base_link'])
-    asset.full_visuals={('base_link',i):faces for i,(faces,_,_) in enumerate(links['base_link'])}
+    asset.full_visuals={('base_link',i):faces for i,faces in enumerate(by_color.values())}
     asset.component_faces={name:len(faces) for name,faces in groups.items()}
+    asset.component_bounds={name:(tuple(min(p[i] for face in faces for p in face) for i in range(3)),
+                                 tuple(max(p[i] for face in faces for p in face) for i in range(3)))
+                            for name,faces in groups.items() if faces and 'Polymer_ROECRHA50-10-30-T5' in name}
+    asset.source_static_glb=dict(path=str(Path(path).resolve()),rotation=tuple(rotation),offset=tuple(offset),color=color)
+    asset.source_triangle_count=mesh.total
+    pads=[p for name,faces in groups.items() if name.startswith('ZP10UN_T') for face in faces for p in face]
+    if pads:
+        lo=[min(p[i] for p in pads) for i in range(3)];hi=[max(p[i] for p in pads) for i in range(3)]
+        normal=min(range(3),key=lambda i:hi[i]-lo[i]);longest=max(range(3),key=lambda i:hi[i]-lo[i])
+        center=[(a+b)/2 for a,b in zip(lo,hi)];center[normal]=hi[normal]
+        z=[float(i==normal) for i in range(3)];x=[float(i==longest) for i in range(3)]
+        y=[z[1]*x[2]-z[2]*x[1],z[2]*x[0]-z[0]*x[2],z[0]*x[1]-z[1]*x[0]]
+        asset.vacuum_mount=[[x[i],y[i],z[i],center[i]] for i in range(3)]+[[0.,0.,0.,1.]]
+
     return asset
 
 
@@ -534,10 +550,11 @@ class RobotDescription:
             if not changed:break
         return poses
 
-    def draw_faces(self,positions,world=identity()):
+    def draw_faces(self,positions,world=identity(),full_resolution=False):
         result=[]
         for name,pose in self.link_transforms(positions,world).items():
-            for faces,local,color in self.links[name]:
+            for index,(faces,local,color) in enumerate(self.links[name]):
+                if full_resolution:faces=self.full_visuals.get((name,index),faces)
                 matrix=multiply(pose,local)
                 result.extend((tuple(point(matrix,p) for p in face),color,name) for face in faces)
         return result

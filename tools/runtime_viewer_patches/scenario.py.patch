@@ -1,0 +1,15 @@
+--- a/scenario.py
++++ b/scenario.py
+@@ -130,9 +130,9 @@
+     global local_right_door_handle, local_right_door_hinge
+ 
+     # tracking OFF
+-    moma.EndTracking()
+-    # tracking ON
+-    moma.BeginTracking()
++    moma.EndTracking(moma.CNTMOD.CNTROB)
++    # tracking ON
++    moma.BeginTracking(moma.CNTMOD.CNTROB)
+ 
+     # initialize
+     init(moma)

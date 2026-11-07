@@ -67,6 +67,8 @@ class FragmentedSocket:
         out=bytes(self.data[:min(n,3)]);del self.data[:len(out)];return out
     def sendall(self,data):self.sent+=data
     def settimeout(self,n):pass
+    def setsockopt(self,*args):pass
+    def close(self):pass
     def __enter__(self):return self
     def __exit__(self,*args):pass
 

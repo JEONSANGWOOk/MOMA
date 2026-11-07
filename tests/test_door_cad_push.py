@@ -130,3 +130,124 @@ class StopThenOpenTests(CADRollerTests):
             self.assertEqual(f.angles['right'],0)
 
 if __name__=='__main__':unittest.main()
+
+class RollerCloseTests(unittest.TestCase):
+    def test_outer_push_closes_and_retreat_does_not_pull(self):
+        faces=[((.1,0,0),(1,0,0),(1,0,1)),((.1,0,0),(1,0,1),(.1,0,1))]
+        f=SurfaceDoorFollower([dict(name='left',pivot=(0,0,0),sign=1,handle=(9,9,9),surface_faces=faces,roller_close=True)],roller_radius=.025)
+        angle=math.radians(45);f.angles['left']=angle
+        start=f._rotate('left',(.7,.025,.5),angle)
+        end=f._rotate('left',(.7,.013,.5),angle)
+        f.update_contacts(None,start,0)
+        f.update_contacts(None,end,.1)
+        self.assertLess(f.angles['left'],angle)
+        self.assertGreaterEqual(f.angles['left'],0)
+        closed=f.angles['left']
+        f.update_contacts(None,start,.2)
+        self.assertAlmostEqual(f.angles['left'],closed)
+
+    def test_opening_push_reverse_does_not_close(self):
+        faces=[((.1,0,0),(1,0,0),(1,0,1)),((.1,0,0),(1,0,1),(.1,0,1))]
+        f=SurfaceDoorFollower([dict(name='left',pivot=(0,0,0),sign=1,handle=(9,9,9),surface_faces=faces,roller_close=True)],roller_radius=.025)
+        angle=math.radians(45);f.angles['left']=angle
+        start=f._rotate('left',(.7,-.025,.5),angle)
+        end=f._rotate('left',(.7,-.013,.5),angle)
+        f.update_contacts(None,start,0);f.update_contacts(None,end,.1)
+        opened=f.angles['left'];self.assertGreater(opened,angle)
+        f.update_contacts(None,start,.2)
+        self.assertAlmostEqual(f.angles['left'],opened)
+
+    def test_roller_reaches_120_and_holds_when_retracted(self):
+        faces=[((.1,0,0),(1,0,0),(1,0,1)),((.1,0,0),(1,0,1),(.1,0,1))]
+        f=SurfaceDoorFollower([dict(name='left',pivot=(0,0,0),sign=1,handle=(9,9,9),surface_faces=faces,roller_close=True)],roller_radius=.025)
+        f.angles['left']=math.radians(35)
+        for i in range(86):
+            p=f._rotate('left',(.7,-.025,.5),math.radians(35+i))
+            f.update_contacts(None,p,i*.05)
+        self.assertAlmostEqual(math.degrees(f.angles['left']),120.,places=5)
+        for i in range(1,6):
+            p=f._rotate('left',(.7,-.025-i*.01,.5),math.radians(120))
+            f.update_contacts(None,p,4.25+i*.05)
+        self.assertAlmostEqual(math.degrees(f.angles['left']),120.,places=5)
+
+    def test_moving_roller_wins_over_nearby_hook_reacquisition(self):
+        faces=[((.1,0,0),(1,0,0),(1,0,1)),((.1,0,0),(1,0,1),(.1,0,1))]
+        f=SurfaceDoorFollower([dict(name='left',pivot=(0,0,0),sign=1,handle=(.2,0,.5),surface_faces=faces,hook_faces=faces,hook_open_only=True)],roller_radius=.025)
+        f._roller_previous=(.7,-.025,.5);f._roller_stamp=0.
+        f.update_contacts((.2,0,.5),(.7,-.013,.5),.1)
+        self.assertGreater(f.angles['left'],0.)
+        self.assertEqual(f.contact_mode,'push')
+
+    def test_closing_follows_angle_after_surface_contact_is_lost(self):
+        faces=[((.1,0,0),(1,0,0),(1,0,1)),((.1,0,0),(1,0,1),(.1,0,1))]
+        f=SurfaceDoorFollower([dict(name='left',pivot=(0,0,0),sign=1,handle=(9,9,9),surface_faces=faces,roller_close=True)],roller_radius=.025)
+        angle=math.radians(80);f.angles['left']=angle
+        start=f._rotate('left',(.7,.025,.5),angle)
+        end=f._rotate('left',(.7,.013,.5),angle)
+        f.update_contacts(None,start,0);f.update_contacts(None,end,.1)
+        self.assertEqual(f.contact_mode,'close-angle')
+        # Deliberately move away radially; angular closing must still continue.
+        for i in range(1,43):
+            p=f._rotate('left',(.7+i*.002,.013,.5),angle-math.radians(2*i))
+            f.update_contacts(None,p,.1+i*.05)
+        self.assertAlmostEqual(f.angles['left'],0.,places=6)
+
+    def test_closing_angle_stops_on_missing_sample(self):
+        faces=[((.1,0,0),(1,0,0),(1,0,1))]
+        f=SurfaceDoorFollower([dict(name='left',pivot=(0,0,0),sign=1,handle=(9,9,9),surface_faces=faces,roller_close=True)])
+        f.angles['left']=1.;f.active='left';f.contact_mode='close-angle';f._closing_track={'name':'left','height':.5}
+        f.update_contacts(None,None,1.)
+        self.assertIsNone(f._closing_track)
+        self.assertEqual(f.angles['left'],1.)
+
+    def test_hook_alignment_tolerance_tracks_both_hinge_directions(self):
+        faces=[((.1,0,0),(1,0,0),(1,0,1)),((.1,0,0),(1,0,1),(.1,0,1))]
+        for sign in (-1,1):
+            f=SurfaceDoorFollower([dict(name='door',pivot=(0,0,0),sign=sign,handle=(9,9,9),surface_faces=faces,hook_faces=faces,hook_open_only=True,hook_capture=.065,hook_release=.12)])
+            f.update_contacts((.7,.055,.5),None,0.)
+            self.assertEqual(f.active,'door')
+            for i in range(1,16):
+                tip=f._rotate('door',(.7,.055,.5),math.radians(i*2)*sign)
+                f.update_contacts(tip,None,i*.05)
+            self.assertAlmostEqual(math.degrees(f.angles['door']),30.)
+            f.detach();f.angles['door']=0.
+            f.update_contacts((.7,.25,.5),None,2.)
+            self.assertIsNone(f.active)
+
+    def test_hook_regrip_then_roller_opening_follows_with_gap(self):
+        faces=[((.1,0,0),(1,0,0),(1,0,1)),((.1,0,0),(1,0,1),(.1,0,1))]
+        f=SurfaceDoorFollower([dict(name='left',pivot=(0,0,0),sign=1,handle=(9,9,9),surface_faces=faces,hook_faces=faces,hook_open_only=True,roller_open_angle=True,roller_capture_gap=.04)],roller_radius=.025)
+        # Hook opens to 35 degrees, then releases while the arm changes posture.
+        f.update_contacts((.7,0,.5),None,0.)
+        for i in range(1,8):f.update_contacts(f._rotate('left',(.7,0,.5),math.radians(5*i)),None,i*.1)
+        held=f.angles['left'];f.update_contacts(None,None,.8)
+        self.assertAlmostEqual(math.degrees(held),35.)
+        f.update_contacts(None,f._rotate('left',(.7,-.055,.5),held),.9)
+        f.update_contacts(None,f._rotate('left',(.7,-.045,.5),held),1.)
+        self.assertEqual(f.contact_mode,'open-angle')
+        for i in range(1,45):
+            p=f._rotate('left',(.7+i*.002,-.045,.5),held+math.radians(2*i))
+            f.update_contacts(None,p,1.+i*.05)
+        self.assertAlmostEqual(math.degrees(f.angles['left']),120.)
+        f.update_contacts(None,f._rotate('left',(.788,-.045,.5),math.radians(115)),3.25)
+        self.assertAlmostEqual(math.degrees(f.angles['left']),120.)
+
+    def test_reposition_cannot_open_until_roller_separates_and_reapproaches(self):
+        faces=[((.1,0,0),(1,0,0),(1,0,1)),((.1,0,0),(1,0,1),(.1,0,1))]
+        f=SurfaceDoorFollower([dict(name='left',pivot=(0,0,0),sign=1,handle=(9,9,9),surface_faces=faces,hook_faces=faces,hook_open_only=True,roller_open_angle=True,roller_capture_gap=.04,roller_after_hook_release=True)],roller_radius=.025)
+        f.update_contacts((.7,0,.5),None,0.)
+        for i in range(1,8):f.update_contacts(f._rotate('left',(.7,0,.5),math.radians(5*i)),None,i*.1)
+        opened=f.angles['left']
+        position=lambda y:f._rotate('left',(.7,y,.5),opened)
+        # Roller moving near the leaf during regrip must not drag it.
+        f.update_contacts(None,position(-.035),.8)
+        f.update_contacts(None,position(-.026),.9)
+        self.assertAlmostEqual(f.angles['left'],opened)
+        self.assertEqual(f._roller_gate['left'],'clear')
+        # Only a separate approach after visible clearance starts roller opening.
+        f.update_contacts(None,position(-.12),1.)
+        self.assertEqual(f._roller_gate['left'],'ready')
+        self.assertAlmostEqual(f.angles['left'],opened)
+        f.update_contacts(None,position(-.026),1.1)
+        self.assertGreater(f.angles['left'],opened)
+        self.assertEqual(f.contact_mode,'open-angle')

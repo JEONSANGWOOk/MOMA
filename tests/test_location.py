@@ -5,10 +5,10 @@ from seer_control.location import LocationTracker
 class LocationTests(unittest.TestCase):
     def setUp(self):
         self.tracker=LocationTracker()
-        self.nodes={'A':dict(x=0,y=0),'B':dict(x=1,y=0),'C':dict(x=2,y=0)}
+        self.nodes={'A':dict(x=0,y=0,theta=0),'B':dict(x=1,y=0,theta=0),'C':dict(x=2,y=0,theta=0)}
 
     def update(self, state, now=0, **kwargs):
-        return self.tracker.update(self.nodes,state,context='map1',now=now,**kwargs)
+        return self.tracker.update(self.nodes,dict(theta=0,**state),context='map1',now=now,**kwargs)
 
     def test_sim_holds_passed_node_until_arrival(self):
         state=dict(x=.8,y=0,last_node='A',target='C')

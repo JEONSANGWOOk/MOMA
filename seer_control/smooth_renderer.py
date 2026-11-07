@@ -33,6 +33,27 @@ def smooth_normals(faces,crease=math.cos(math.radians(48))):
     return result
 
 
+def packed_triangles(faces):
+    """Build all triangles in native arrays, avoiding millions of ctypes calls."""
+    import numpy as np
+    if all(len(face)==3 for face in faces):tri=np.asarray(faces,dtype=np.float32)
+    else:tri=np.asarray([(face[0],face[i],face[i+1]) for face in faces for i in range(1,len(face)-1)],dtype=np.float32)
+    if not len(tri):return np.empty((0,6),dtype=np.float32)
+    raw=np.cross(tri[:,1]-tri[:,0],tri[:,2]-tri[:,0])
+    face_normal=raw/np.maximum(np.linalg.norm(raw,axis=1,keepdims=True),1e-12)
+    vertices=tri.reshape(-1,3)
+    _,inverse=np.unique(np.round(vertices,6),axis=0,return_inverse=True)
+    summed=np.zeros((int(inverse.max())+1,3),dtype=np.float32)
+    np.add.at(summed,inverse,np.repeat(raw,3,axis=0))
+    summed/=np.maximum(np.linalg.norm(summed,axis=1,keepdims=True),1e-12)
+    normals=summed[inverse];flat=np.repeat(face_normal,3,axis=0)
+    sharp=np.einsum('ij,ij->i',normals,flat)<math.cos(math.radians(48))
+    normals[sharp]=flat[sharp]
+    packed=np.empty((len(vertices),6),dtype=np.float32)
+    packed[:,:3]=normals;packed[:,3:]=vertices
+    return packed
+
+
 class SmoothRenderer:
     def __init__(self):
         if sys.platform!='win32':raise RuntimeError('Windows OpenGL renderer')
@@ -59,7 +80,7 @@ class SmoothRenderer:
         specs={'glClearColor':([F,F,F,F],None),'glClear':([U],None),'glEnable':([U],None),'glDisable':([U],None),
          'glViewport':([I,I,I,I],None),'glMatrixMode':([U],None),'glLoadIdentity':([],None),'glFrustum':([D]*6,None),'glOrtho':([D]*6,None),
          'glLoadMatrixf':([C.POINTER(F)],None),'glMultMatrixf':([C.POINTER(F)],None),'glPushMatrix':([],None),'glPopMatrix':([],None),
-         'glBegin':([U],None),'glEnd':([],None),'glVertex3f':([F,F,F],None),'glNormal3f':([F,F,F],None),'glColor4f':([F]*4,None),
+         'glInterleavedArrays':([U,I,H],None),'glDrawArrays':([U,I,I],None),'glDisableClientState':([U],None),'glBegin':([U],None),'glEnd':([],None),'glVertex3f':([F,F,F],None),'glNormal3f':([F,F,F],None),'glColor4f':([F]*4,None),
          'glLightfv':([U,U,C.POINTER(F)],None),'glLightModeli':([U,I],None),'glMaterialfv':([U,U,C.POINTER(F)],None),'glMaterialf':([U,U,F],None),'glColorMaterial':([U,U],None),
          'glShadeModel':([U],None),'glGenLists':([I],U),'glNewList':([U,U],None),'glEndList':([],None),'glCallList':([U],None),'glDeleteLists':([U,I],None),
          'glReadPixels':([I,I,I,I,U,U,H],None),'glReadBuffer':([U],None),'glPixelStorei':([U,I],None),'glFinish':([],None),
@@ -80,11 +101,15 @@ class SmoothRenderer:
             for index,(faces,local,color) in enumerate(visuals):
                 # Full source geometry is retained separately from the Tk fallback LOD.
                 full=getattr(asset,'full_visuals',{}).get((name,index),faces)
-                normals=smooth_normals(full);display=self.glGenLists(1);self.glNewList(display,0x1300);self.glBegin(0x0004)
-                for face,values in zip(full,normals):
-                    for j in range(1,len(face)-1):
-                        for i in (0,j,j+1):self.glNormal3f(*values[i]);self.glVertex3f(*face[i])
-                self.glEnd();self.glEndList();rows.append((name,local,color,display))
+                packed=packed_triangles(full)
+                display=self.glGenLists(1)
+                # Array contents are copied into the display list at compile time.
+                self.glInterleavedArrays(0x2A25,0,packed.ctypes.data)
+                self.glNewList(display,0x1300)
+                self.glDrawArrays(0x0004,0,len(packed))
+                self.glEndList()
+                self.glDisableClientState(0x8074);self.glDisableClientState(0x8075)
+                rows.append((name,local,color,display))
         self.cache[key]=(asset,rows);return rows
     def mesh(self,asset,tint):
         key=(id(asset),tint,tuple(sorted(getattr(asset,'material_overrides',{}).items())))

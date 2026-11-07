@@ -58,6 +58,24 @@ def checked(result, method, data=False):
     return result
 
 
+def read_output_io(robot):
+    """Read each bank independently; unsupported/read failures stay unknown."""
+    io={};errors=[]
+    for bank,method in (('DO','GetDO'),('ToolDO','GetToolDO')):
+        try:
+            raw=checked(getattr(robot,method)(),method,True)
+            masks=list(raw) if bank=='DO' else [raw]
+            if len(masks)!=(2 if bank=='DO' else 1) or any(type(v) is not int or not 0<=v<=255 for v in masks):
+                raise ValueError('invalid output bit mask')
+            if bank=='DO':
+                high,low=masks
+                io[bank]={str(i):bool((low if i<8 else high)&(1<<(i%8))) for i in range(16)}
+            else:
+                io[bank]={str(i):bool(masks[0]&(1<<(i+1))) for i in range(2)}
+        except Exception as error:errors.append(method+': '+str(error))
+    return io,'; '.join(errors)
+
+
 def load_sdk(folder):
     if folder:
         path=Path(folder).expanduser().resolve()
@@ -107,7 +125,8 @@ class SDKEngine:
                 state='COMPLETED' if io_value==spec['status'] else 'RUNNING'
             else:state='COMPLETED'
         if self.paused and state not in ('ERROR','CANCELED'):state='PAUSED'
-        return dict(driver='fairino',status=state,io_value=io_value,operation=self.operation,joints_deg=joints,
+        io,io_error=read_output_io(r)
+        return dict(driver='fairino',status=state,io_value=io_value,io=io,io_error=io_error,operation=self.operation,joints_deg=joints,
                     joints_rad=[math.radians(v) for v in joints],tcp_mm_deg=tcp,
                     motion_done=done,emergency=bool(emergency),safety_stop=list(safety),errors=list(errors))
 
