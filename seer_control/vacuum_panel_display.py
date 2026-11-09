@@ -45,6 +45,12 @@ def vacuum_output_state(bank,on_channels=(2,4),off_channels=(3,5)):
 
 def arm_vacuum_signal(app,config,now):
     source=config.get('source','Runtime')
+    if source in ('Runtime','Auto','SDK direct') and not config.get('runtime_io_path'):
+        from .fr5_readonly_feedback import read
+        direct=read(app,now)
+        if direct is not None:
+            return vacuum_output_state(direct.get('io',{}).get('DO',{}),config.get('on_channels',[2,4]),config.get('off_channels',[3,5]))
+        if source=='SDK direct':return None
     if source=='Runtime':
         runtime=getattr(app,'runtime_arm_feedback',None)
         if not runtime:return None

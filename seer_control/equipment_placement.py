@@ -4,7 +4,7 @@ from .geometry3d import transform, point
 
 
 def context(app):
-    return dict(host=app.host.get().strip(),map=str(app.current_robot_map or app.map.name),
+    return dict(mode='REAL' if getattr(app,'real',True) else 'SIM',host=app.host.get().strip() if getattr(app,'real',True) else 'SIM',map=str((app.current_robot_map if getattr(app,'real',True) else None) or app.map.name),
                 alignment=list(app.lidar_map_alignment),mounts=[list(m) if m is not None else None for m in getattr(app,'lidar_mount_overrides',[])])
 
 
@@ -17,7 +17,7 @@ def signature(app, view):
 
 def confirmed(app, view):
     record=getattr(view,'cad_placement_confirmation',None)
-    return (isinstance(record,dict) and record.get('source')=='real_lidar_operator_confirmed'
+    return (isinstance(record,dict) and record.get('source') in (('real_lidar_operator_confirmed','real_marker_registered') if getattr(app,'real',True) else ('sim_operator_confirmed',))
             and record.get('signature')==signature(app,view))
 
 

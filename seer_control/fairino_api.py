@@ -126,7 +126,12 @@ class SDKEngine:
             else:state='COMPLETED'
         if self.paused and state not in ('ERROR','CANCELED'):state='PAUSED'
         io,io_error=read_output_io(r)
-        return dict(driver='fairino',status=state,io_value=io_value,io=io,io_error=io_error,operation=self.operation,joints_deg=joints,
+        tool_index=None
+        try:
+            value=checked(r.GetActualTCPNum(),'GetActualTCPNum',True)
+            if type(value) is int and 0<=value<=14:tool_index=value
+        except Exception:pass
+        return dict(tool_index=tool_index,driver='fairino',status=state,io_value=io_value,io=io,io_error=io_error,operation=self.operation,joints_deg=joints,
                     joints_rad=[math.radians(v) for v in joints],tcp_mm_deg=tcp,
                     motion_done=done,emergency=bool(emergency),safety_stop=list(safety),errors=list(errors))
 

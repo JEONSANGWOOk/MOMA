@@ -12,12 +12,12 @@ class DoorMarkerTests(unittest.TestCase):
         detector=cv2.aruco.ArucoDetector(cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50))
         _,ids,_=detector.detectMarkers(image)
         self.assertEqual(ids.tolist(),[[0]])
-    def test_left_of_handle_same_height_with_white_margin(self):
-        face=((-0.04,-.84,.37),(-.01,-.84,.46),(-.04,-.84,.46))
+    def test_measured_left_edge_offset_and_105mm_handle_midheight(self):
+        face=((-0.04,-.84,.37),(-.01,-.84,.475),(-.04,-.84,.475))
         asset=NS(faces=[face],face_materials=[36],transparent_faces=[])
         rows=marker_geometry({'asset':asset})
         paper=rows[0]
-        self.assertAlmostEqual(paper[2][0][3],-.025-.055)
-        self.assertAlmostEqual(paper[2][2][3],(.37+.46)/2)
+        self.assertAlmostEqual(paper[2][0][3],-.04-.030)
+        self.assertAlmostEqual(paper[2][2][3],.37+.0525)
         self.assertEqual(paper[3],'#ffffff')
         self.assertTrue(all(row[3]=='#080808' for row in rows[1:]))

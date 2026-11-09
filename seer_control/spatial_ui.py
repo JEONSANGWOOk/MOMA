@@ -78,7 +78,7 @@ class SpatialMixin:
         from .departure_link import show_departure_link
         self.button(toolbar,'LM2→LM1 연동',lambda:show_departure_link(self),BLUE).pack(side='left',padx=3)
         from .runtime_scenario import show_runtime_scenario
-        self.button(toolbar,'전체 동작 main2',lambda:show_runtime_scenario(self),BLUE).pack(side='left',padx=3)
+        self.button(toolbar,'main1/2/3 · 오프라인',lambda:show_runtime_scenario(self),BLUE).pack(side='left',padx=3)
         self.button(toolbar,'팔 홈',lambda:self.guarded(self._spatial_home_arm),BLUE).pack(side='left',padx=3)
         self.button(toolbar,'3D 문 열기 / 닫기',lambda:self.guarded(self._spatial_single_door_dialog),BLUE).pack(side='left',padx=3)
         self.button(toolbar,'SIM: Doors 120° + vacuum panel',lambda:self.guarded(self._spatial_run_hook_demo),BLUE).pack(side='left',padx=3)
@@ -1199,8 +1199,6 @@ class SpatialMixin:
     def _spatial_render(self):
         self.world3d.runtime_visual_joints={}
         state=dict(self.current_state())
-        if self.real and all(type(state.get(k)) in (int,float) and math.isfinite(state[k]) for k in ('x','y','theta')):
-            state['x'],state['y']=self._lidar_map_xy(state['x'],state['y']);state['theta']+=self.lidar_map_alignment[2]
         joints=state.get('joint_positions',state.get('joint_states',{}))
         if isinstance(joints,dict) and isinstance(joints.get('name'),list) and isinstance(joints.get('position'),list):
             joints=dict(zip(joints['name'],joints['position']))
@@ -1227,7 +1225,7 @@ class SpatialMixin:
                     if hasattr(runtime,'visual_joints'):self.world3d.runtime_visual_joints=runtime.visual_joints(names)
                     if joints:arm=dict(status='REAL',pose='MEASURED',feedback_source='MoMa Runtime · 실시간 관절값')
         if self.real:
-            lidar=self.real_laser_points if 'laser_beams(WORLD)' in self.lidar_source else [self._lidar_map_xy(x,y) for x,y in self.real_laser_points]
+            lidar=list(self.real_laser_points)  # extract_laser_scans already returns MAP points
             if not self.connected or time.monotonic()-self.last_laser_rx>2:lidar=[]
         else:lidar=self.scan_points if self.connected and self.sim_powered else []
         self.world3d._isaac_lidar=list(lidar)
@@ -1237,7 +1235,7 @@ class SpatialMixin:
         if not hasattr(self,'studio_config'):return
         view=self.world3d
         self.studio_config['viewer3d']=dict(view=self.view_mode.get(),camera=self.camera_view.get(),projection=self.projection_view.get(),
-            runtime_url=self.studio_config.get('viewer3d',{}).get('runtime_url','http://192.168.30.13:8000/runtime.html'),assembly_version='lm6-wall-parallel-dd-mirrored-hook-20261102',mount=view.mount,cad_origin=view.cad_origin,phone_panel_center=list(getattr(view,'phone_panel_center',SIM_PANEL_CENTER)),equipment_gap_target_m=getattr(view,'equipment_gap_target_m',.21),phone_panel_yaw=getattr(view,'phone_panel_yaw',math.pi/2),phone_panel_pose_version=2,vacuum_display=getattr(view,'vacuum_display_config',self.studio_config.get('viewer3d',{}).get('vacuum_display',{})),wall_height=view.wall_height,cad_doors_auto=view.cad_doors_auto.get(),real_doors_follow=view.real_doors_follow.get(),cad_placement_confirmation=view.cad_placement_confirmation,webcam_doors_enabled=view.webcam_doors_enabled.get(),door_initial_angles=getattr(view,'door_initial_angles',{}),layers={k:v.get() for k,v in view.layers.items()},assets=self.spatial_assets)
+            door_io7_enabled=getattr(view,'door_io7_enabled',True),trajectory_placement=getattr(view,'trajectory_placement',{}),marker_placement=getattr(view,'marker_placement',{}),runtime_url=self.studio_config.get('viewer3d',{}).get('runtime_url','http://192.168.30.13:8000/runtime.html'),assembly_version='lm6-wall-parallel-dd-mirrored-hook-20261102',mount=view.mount,cad_origin=view.cad_origin,phone_panel_center=list(getattr(view,'phone_panel_center',SIM_PANEL_CENTER)),equipment_gap_target_m=getattr(view,'equipment_gap_target_m',.21),phone_panel_yaw=getattr(view,'phone_panel_yaw',math.pi/2),phone_panel_pose_version=2,vacuum_display=getattr(view,'vacuum_display_config',self.studio_config.get('viewer3d',{}).get('vacuum_display',{})),wall_height=view.wall_height,cad_doors_auto=view.cad_doors_auto.get(),real_doors_follow=view.real_doors_follow.get(),cad_placement_confirmation=view.cad_placement_confirmation,webcam_doors_enabled=view.webcam_doors_enabled.get(),door_initial_angles=getattr(view,'door_initial_angles',{}),layers={k:v.get() for k,v in view.layers.items()},assets=self.spatial_assets)
         self._studio_save_settings()
         self._spatial_sync_cad_lidar()
 
@@ -1317,6 +1315,11 @@ class SpatialMixin:
     def _spatial_restore(self):
         config=self.studio_config.get('viewer3d',{})
         if not isinstance(config,dict):config={}
+        from .door_teaching import apply_pending_profile
+        try:
+            config=apply_pending_profile(config)
+            self.studio_config['viewer3d']=config
+        except (ValueError,KeyError,OSError,TypeError) as error:self.log('3D','후크 배치 적용 보류: '+str(error))
         view=self.world3d
         view.cad_placement_confirmation=config.get('cad_placement_confirmation')
         gap=config.get('equipment_gap_target_m',.21)
@@ -1335,6 +1338,9 @@ class SpatialMixin:
         initial=config.get('door_initial_angles',{})
         view.door_initial_angles={side:float(initial[side]) for side in ('left','right') if isinstance(initial,dict) and type(initial.get(side)) in (int,float) and math.isfinite(initial[side]) and 0<=initial[side]<=120}
         if view.door_initial_angles:view.cad_doors_auto.set(False)
+        view.door_io7_enabled=bool(config.get('door_io7_enabled',True))
+        view.trajectory_placement=config.get('trajectory_placement',{}) if isinstance(config.get('trajectory_placement'),dict) else {}
+        view.marker_placement=config.get('marker_placement',{}) if isinstance(config.get('marker_placement'),dict) else {}
         for key in ('mount','cad_origin'):
             values=config.get(key)
             if isinstance(values,list) and len(values)==6 and all(type(v) in (int,float) and math.isfinite(v) for v in values):setattr(view,key,values)

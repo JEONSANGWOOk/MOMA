@@ -133,7 +133,7 @@ def sample_points(points,limit=4000):
 def publish_view(view,assets,meshes,primitives):
     if os.environ.get('MOMA_ISAAC_MIRROR')!='1':return
     now=time.monotonic()
-    if now-getattr(view,'_isaac_at',0)<.05:return
+    if now-getattr(view,'_isaac_at',0)<1/30:return
     if not hasattr(view,'_isaac_publisher'):
         view._isaac_publisher=MirrorPublisher()
         view.bind('<Destroy>',lambda event:view._isaac_publisher.close() if event.widget is view else None,add='+')

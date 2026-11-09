@@ -1,0 +1,157 @@
+{
+  "format": "moma-door-teaching-v1",
+  "units": "metres-radians",
+  "hook_tool": [
+    [
+      1.0,
+      0.0,
+      0.0,
+      -0.0126
+    ],
+    [
+      0.0,
+      0.0,
+      -1.0,
+      -0.14126499999999997
+    ],
+    [
+      0.0,
+      1.0,
+      0.0,
+      0.048
+    ],
+    [
+      0,
+      0,
+      0,
+      1
+    ]
+  ],
+  "marker_handle": [
+    [
+      1.0,
+      0.0,
+      0.0,
+      0.064817
+    ],
+    [
+      0.0,
+      1.0,
+      0.0,
+      0.008045
+    ],
+    [
+      0.0,
+      0.0,
+      1.0,
+      0.0023650000000000003
+    ],
+    [
+      0,
+      0,
+      0,
+      1
+    ]
+  ],
+  "marker_hinge": [
+    [
+      1.0,
+      0.0,
+      0.0,
+      -0.235007
+    ],
+    [
+      0.0,
+      1.0,
+      0.0,
+      0.008043
+    ],
+    [
+      0.0,
+      0.0,
+      1.0,
+      -0.034409
+    ],
+    [
+      0,
+      0,
+      0,
+      1
+    ]
+  ],
+  "marker_grasp_tcp": [
+    [
+      -1.0,
+      0.0,
+      0.0,
+      0.064817
+    ],
+    [
+      0.0,
+      -1.0,
+      0.0,
+      0.008045
+    ],
+    [
+      0.0,
+      0.0,
+      1.0,
+      0.0023650000000000003
+    ],
+    [
+      0,
+      0,
+      0,
+      1
+    ]
+  ],
+  "grasp": [
+    [
+      -1.0,
+      -1.2246467991473532e-16,
+      0.0,
+      0.0
+    ],
+    [
+      1.2246467991473532e-16,
+      -1.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      1.0,
+      0.0
+    ],
+    [
+      0,
+      0,
+      0,
+      1
+    ]
+  ],
+  "grasp_offset_mm": [
+    0.0,
+    0,
+    0
+  ],
+  "source_sha256": {
+    "scenario.py": "78703178df284fb17750360a0f20515ffbe4ac7dd7c1f7feaa8f631416005a3a",
+    "scenario_data.py": "a26c6ee96d0c3b726a7f9cce3a3befcc152b8eb045de1b455eb0fcf87a76e653",
+    "camera.py": "48695f3367e7b328035da4d15d4a612e7d9157f3608f6a000c3730b28bf3b637"
+  },
+  "main5_returns_before_open": true,
+  "cad_left_hinge_from_handle": [
+    -0.29982437287167973,
+    -0.03676880085811396,
+    0.0
+  ],
+  "hinge_basis": "SDK marker_hinge relative to marker_grasp_tcp; latest recorded marker orientation",
+  "cad_handle_contact": {
+    "hook_normal_extent_m": 0.005955389183358362,
+    "clearance_m": 0.002,
+    "source": "Hook_V2_Hook:1 source triangles projected at recorded taught grasp; handle material 36 front surface",
+    "version": 1
+  }
+}

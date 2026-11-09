@@ -302,7 +302,7 @@ class ArmWorkspaceMixin(ArmSceneMixin):
  def _aw_tick(self):
   if not self.winfo_exists():return
   now=time.monotonic()
-  if getattr(self,'arm_sim_owner','workspace')!='mission':self.arm_dev_sim.tick(min(.15,now-self.arm_dev_time))
+  if getattr(self,'arm_sim_owner','workspace') not in ('mission','offline-replay'):self.arm_dev_sim.tick(min(.15,now-self.arm_dev_time))
   # The main tick renders the world once. This tick only publishes arm state.
   self.arm_dev_time=now;self._aw_sync_main(render=False)
   if self.tabs.select()==str(self.arm_workspace_page):

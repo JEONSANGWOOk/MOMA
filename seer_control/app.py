@@ -395,7 +395,7 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
         toolbar = tk.Frame(left,bg=PANEL);self.operation_toolbar=toolbar
         toolbar.pack(fill='x',padx=6,pady=2)
         self.label(toolbar,'MAP',9,bold=True).pack(side='left',padx=(0,6))
-        for title, command in [('맞춤',self.fit_map),('LiDAR 정합',self.align_lidar_to_map),
+        for title, command in [('맞춤',self.fit_map),('LiDAR 정합 진단',self.align_lidar_to_map),('표시 보정 초기화',self.reset_lidar_alignment),
                               ('＋',lambda:self.change_zoom(1.2)),('−',lambda:self.change_zoom(1/1.2))]:
             self.button(toolbar,title,command).pack(side='left',padx=2)
         layers=tk.Frame(left,bg=PANEL);self.operation_layers=layers;layers.pack(fill='x',padx=6,pady=(0,3))
@@ -1433,9 +1433,10 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
         if getattr(model,'curve_diagnostics',None):
             self.log('MAP','Path 형상 분석: '+model.curve_diagnostics)
         self.log('INFO','원본 SMAP 캐시: '+str(target))
+        (USER_DIR/'last_real_map.json').write_text(json.dumps(dict(path=str(target),map_name=map_name),ensure_ascii=False),encoding='utf-8')
         self.connection_text.config(text='실기 연결됨 · 지도 표시 완료')
         self._load_lidar_alignment()
-        self.after(1800,lambda:self.align_lidar_to_map(auto=True))
+        # Display alignment is manual only; it must not hide localization errors.
         # 지도는 먼저 즉시 표시하고, 실제 로봇 노드(1301)는 뒤에서 별도 조회한다.
         try:
             self.commands.put_nowait(('stations',None))
@@ -1644,18 +1645,17 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
         return USER_DIR/'lidar_map_alignment.json'
 
     def _load_lidar_alignment(self):
-        self.lidar_map_alignment=(0.0,0.0,0.0); self.lidar_alignment_score=0.0
-        key=(self.current_robot_map or getattr(self.map,'name','')).strip()
-        if not key:return
-        try:
-            data=json.loads(self._lidar_alignment_file().read_text(encoding='utf-8'))
-            rec=data.get(self.host.get().strip(),{}).get(key,{})
-            tr=rec.get('transform')
-            if isinstance(tr,list) and len(tr)>=3:
-                self.lidar_map_alignment=tuple(float(v) for v in tr[:3])
-                self.lidar_alignment_score=float(rec.get('score',0.0))
-                self.log('LASER',f'저장된 LiDAR↔Map 정합값 로드 · dx={tr[0]:.3f} dy={tr[1]:.3f} yaw={math.degrees(tr[2]):.2f}° score={self.lidar_alignment_score:.3f}')
-        except Exception: pass
+        # Robot telemetry and extracted scans are already in the robot map frame.
+        # Legacy visual fitting must never move the robot, stations or scan layer.
+        self.lidar_map_alignment=(0.,0.,0.);self.lidar_alignment_score=0.
+
+    def reset_lidar_alignment(self):
+        # Invalidate a pending result as well as the stored correction.
+        self._lidar_alignment_map=''
+        self._lidar_alignment_epoch=getattr(self,'_lidar_alignment_epoch',0)+1
+        self.lidar_map_alignment=(0.,0.,0.);self.lidar_alignment_score=0.
+        self._save_lidar_alignment();self.draw_map()
+        self.log('LASER','LiDAR 화면 표시 보정 초기화'+' · 실제 로봇 위치는 변경하지 않음')
 
     def _save_lidar_alignment(self):
         key=(self.current_robot_map or getattr(self.map,'name','')).strip()
@@ -1668,11 +1668,9 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
         path.write_text(json.dumps(data,ensure_ascii=False,indent=2),encoding='utf-8')
 
     def _lidar_map_xy(self,x,y):
-        dx,dy,da=self.lidar_map_alignment
-        state=self.current_state(); rx=self._finite_value(state.get('x')); ry=self._finite_value(state.get('y'))
-        if rx is None or ry is None:return x+dx,y+dy
-        c,s=math.cos(da),math.sin(da); ux=x-rx; uy=y-ry
-        return rx+c*ux-s*uy+dx, ry+s*ux+c*uy+dy
+        # Compatibility for older callers: all operational displays use MAP.
+        # Calibration diagnostics must not mutate the coordinate reference.
+        return x,y
 
     @staticmethod
     def _alignment_score(cells, pts, rx, ry, tr, cell=.10):
@@ -1688,7 +1686,12 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
         return hits/max(1,len(pts))
 
     def align_lidar_to_map(self, auto=False):
+        if auto:return
         if self._lidar_alignment_running:return
+        confidence=self._confidence_value()
+        if confidence is None or not math.isfinite(confidence) or confidence<.6:
+            messagebox.showinfo('LiDAR 정합','실제 로봇 위치 신뢰도가 낮습니다. RoboShop에서 지도와 위치를 먼저 확인하세요. 화면 보정으로 실제 위치 오류를 숨기지 않습니다.',parent=self)
+            return
         cloud=list(getattr(self.map,'cloud',[]) or []); pts=list(self.real_laser_points or [])
         st=self.current_state(); rx=self._finite_value(st.get('x')); ry=self._finite_value(st.get('y'))
         if not self.real or not self.connected or len(cloud)<300 or len(pts)<80 or rx is None or ry is None:
@@ -1697,6 +1700,7 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
         self._lidar_alignment_running=True; map_name=self.current_robot_map or self.map.name
         cloud_sample=cloud[::max(1,len(cloud)//16000)]; scan=pts[::max(1,len(pts)//320)]
         self.log('LASER',f'LiDAR↔Map 정합 시작 · map={map_name} mapPts={len(cloud_sample)} scanPts={len(scan)}')
+        alignment_epoch=getattr(self,'_lidar_alignment_epoch',0)
         def work():
             try:
                 cell=.10; cells={(int(round(x/cell)),int(round(y/cell))) for x,y in cloud_sample}
@@ -1716,7 +1720,7 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
                         for ia in range(-4,5):
                             da=bda+math.radians(ia*.5); sc=self._alignment_score(cells,scan,rx,ry,(dx,dy,da),cell)
                             if sc>fine[0]:fine=(sc,(dx,dy,da))
-                self.events.put(('lidar_map_alignment_done',self.generation,(map_name,fine[1],fine[0],auto)))
+                self.events.put(('lidar_map_alignment_done',self.generation,(map_name,fine[1],fine[0],auto,alignment_epoch)))
             except Exception as e:self.events.put(('lidar_map_alignment_error',self.generation,str(e)))
         threading.Thread(target=work,daemon=True,name='seer-lidar-map-align').start()
 
@@ -2871,7 +2875,6 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
             sx,sy=float(state['x']),float(state['y']); a=float(state['theta'])
             if self.real:
                 sx,sy=self._lidar_map_xy(sx,sy)
-                a += self.lidar_map_alignment[2]
             x,y = self.xy(sx,sy)
             vertices = [(x+18*math.cos(a),y-18*math.sin(a)),
                         (x+13*math.cos(a+2.45),y-13*math.sin(a+2.45)),
@@ -4743,13 +4746,16 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
             elif kind=='laser_error':
                 self.log('LASER','1009 조회 실패: '+str(payload))
             elif kind=='lidar_map_alignment_done':
-                map_name,tr,score,auto=payload
+                map_name,tr,score,auto,*epoch=payload
                 self._lidar_alignment_running=False
+                if epoch and epoch[0]!=getattr(self,'_lidar_alignment_epoch',0):continue
+                if score<.65:
+                    self.log('LASER',f'LiDAR 표시 정합 적용 안 함 · 점수 {score:.3f} < 0.65 · 실제 위치와 지도를 확인하세요.')
+                    if not auto:messagebox.showwarning('LiDAR 정합',f'정합 점수 부족({score:.3f})으로 표시 보정을 적용하지 않았습니다.',parent=self)
+                    continue
                 if map_name==(self.current_robot_map or self.map.name):
-                    self.lidar_map_alignment=tuple(tr); self.lidar_alignment_score=float(score); self._lidar_alignment_map=map_name
-                    self._save_lidar_alignment(); self.draw_map()
-                    self.log('LASER',f'LiDAR↔Map 정합 완료 · dx={tr[0]:.3f} dy={tr[1]:.3f} yaw={math.degrees(tr[2]):.2f}° score={score:.3f}')
-                    if not auto:messagebox.showinfo('LiDAR 정합',f'정합 완료\nscore={score:.3f}\ndx={tr[0]:.3f} m, dy={tr[1]:.3f} m, yaw={math.degrees(tr[2]):.2f}°',parent=self)
+                    self.log('LASER',f'LiDAR↔Map 진단 · 후보 dx={tr[0]:.3f} dy={tr[1]:.3f} yaw={math.degrees(tr[2]):.2f}° score={score:.3f} · 좌표 변경 없음')
+                    if not auto:messagebox.showinfo('LiDAR 정합 진단',f'진단 후보 (적용하지 않음)\nscore={score:.3f}\ndx={tr[0]:.3f} m, dy={tr[1]:.3f} m, yaw={math.degrees(tr[2]):.2f}°\n지도·로봇·라이다는 원본 MAP 좌표를 유지합니다.',parent=self)
             elif kind=='lidar_map_alignment_error':
                 self._lidar_alignment_running=False; self.log('LASER','LiDAR↔Map 정합 실패: '+str(payload))
             elif kind=='command':

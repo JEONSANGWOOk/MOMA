@@ -35,7 +35,7 @@ class DepartureState:
 class DepartureLink:
     def __init__(self,host,url,scenario):
         self.host=host;p=urlsplit(url);self.base=p.scheme+'://'+p.netloc;self.scenario=scenario
-        self.events=queue.Queue();self.stop=threading.Event();self.nav_sent=threading.Event();self.thread=None
+        self.events=queue.Queue();self.stop=threading.Event();self.nav_sent=threading.Event();self.thread=None;self.success=False
         self.opener=urllib.request.build_opener(urllib.request.ProxyHandler({}))
     def start(self):
         self.thread=threading.Thread(target=self.run,daemon=True,name='LM2-LM1-scenarios');self.thread.start()
@@ -59,6 +59,7 @@ class DepartureLink:
                 if scenario_future and scenario_future.done() and scenario_future.exception():
                     raise ValueError(str(scenario_name)+' 실행 실패 또는 결과 미확정 · 후속 실행 차단')
                 if scenario_name=='main3' and scenario_future.done():
+                    self.success=True
                     self.events.put(('status','main3 정상 종료 응답 · 연동 완료'));return
                 if arrival_pending:
                     if task.get('target_id')!='LM1':raise ValueError('목적지 변경 · main3 대기 폐기')
@@ -89,14 +90,33 @@ def show_departure_link(app):
     import tkinter as tk
     from tkinter import ttk
     from .runtime_scenario import RuntimeScenario
-    if not hasattr(app,'_runtime_scenario'):app._runtime_scenario=RuntimeScenario()
-    win=tk.Toplevel(app);win.title('LM2 → LM1 · main2 → main3 연동');win.geometry('700x240')
-    status=tk.StringVar(value='LM2 정지 상태에서 실행하세요. 기존 이동 전 재추정·팔 인터록을 유지합니다.')
+    mode_real=bool(app.real)
+    if mode_real:
+        if not hasattr(app,'_runtime_scenario'):app._runtime_scenario=RuntimeScenario()
+        from .offline_scene import archive_for
+        app._runtime_scenario.observer=archive_for(app)
+    win=tk.Toplevel(app);win.title('LM2 → LM1 · main2 → main3 연동');win.geometry('760x420')
+    status=tk.StringVar(value='LM2 정지 상태에서 실행하세요. 현재 모드의 이동·팔 인터록을 유지합니다.')
     ttk.Label(win,text='속도 상승 → main2 / LM1 도착·정지 또는 이동 완료 → 2초 대기 → main3').pack(pady=12)
     ttk.Label(win,textvariable=status,wraplength=660).pack(pady=10)
-    def start():
+    record_enabled=tk.BooleanVar(value=True)
+    if mode_real:ttk.Checkbutton(win,text='LM2 출발 전부터 main3 종료까지 AMR·팔 전체 자세 녹화 (기본 켜짐)',variable=record_enabled).pack(pady=4)
+    def start(first_fit=False):
+        if bool(app.real)!=mode_real:raise ValueError('모드가 바뀌었습니다. 연동 창을 다시 여세요.')
         old=getattr(app,'_departure_link',None)
         if old and old.thread.is_alive():raise ValueError('연동이 이미 실행 중입니다.')
+        if not app.real:
+            from .sim_runtime import SimScenario,SimDepartureLink
+            if not hasattr(app,'_sim_scenario'):app._sim_scenario=SimScenario(app)
+            link=SimDepartureLink(app,app._sim_scenario);app._departure_link=link
+            link.start()
+            def sim_poll():
+                while not link.events.empty():
+                    kind,message=link.events.get_nowait();app.log('SIM LINK',message)
+                    if win.winfo_exists():status.set(message)
+                if link.active:app.after(100,sim_poll)
+            app.after(100,sim_poll)
+            return
         if not app.real or not app.connected or not app.control_enabled:raise ValueError('REAL 연결 및 제어 허용이 필요합니다.')
         if time.monotonic()-app.last_state>2:raise ValueError('실시간 상태 수신을 확인하세요.')
         if not app.studio_arm_safe:raise ValueError('팔 안전 자세 확인이 필요합니다.')
@@ -105,12 +125,23 @@ def show_departure_link(app):
         manager=app._runtime_scenario
         if manager.uncertain or (manager.future and not manager.future.done()):raise ValueError('Runtime main2 실행 상태를 먼저 확인하세요.')
         url=app.studio_config.get('viewer3d',{}).get('runtime_url','http://192.168.30.13:8000/runtime.html')
-        link=DepartureLink(app.host.get().strip(),url,manager);app._departure_link=link;link.start()
+        from .trajectory_placement import recorder_for,apply_saved,show_fit
+        if not first_fit:apply_saved(app)
+        recording=recorder_for(app)
+        if record_enabled.get() or first_fit:
+            recording.begin()
+            if not recording.active:raise ValueError('전체 녹화 초기화 실패: 로그를 확인하세요. 연동을 시작하지 않았습니다.')
+        link=DepartureLink(app.host.get().strip(),url,manager);app._departure_link=link
+        try:link.start()
+        except Exception:
+            recording.finish(False);raise
+
         def poll():
             while True:
                 try:kind,message=link.events.get_nowait()
                 except queue.Empty:break
                 app.log('LINK',message)
+                recording.event(kind,message)
                 if win.winfo_exists() and kind!='finished':status.set(message)
                 if kind=='navigate':
                     if not app.real or not app.connected or not app.control_enabled or not app.studio_arm_safe:
@@ -118,10 +149,19 @@ def show_departure_link(app):
                     else:
                         app.target.set('LM1');app.navigate();link.nav_sent.set()
             if link.thread.is_alive():app.after(100,poll)
+            else:
+                path=recording.finish(link.success)
+                if first_fit and link.success and path:show_fit(app,auto_start=True,record_path=path)
         app.after(100,poll)
     ttk.Button(win,text='LM2 → LM1 연동 실행',command=lambda:app.guarded(start)).pack(pady=5)
+    if mode_real:
+        ttk.Button(win,text='최초 전체 녹화 + 설비 배치 탐색 · 연동 실행',command=lambda:app.guarded(lambda:start(True))).pack(pady=5)
+        from .trajectory_placement import show_fit
+        ttk.Button(win,text='이전 전체 녹화로 설비 위치 탐색 (로봇 실행 없음)',command=lambda:app.guarded(lambda:show_fit(app))).pack(pady=5)
     def release():
         link=getattr(app,'_departure_link',None)
         if link:link.stop.set()
     ttk.Button(win,text='연동 해제 · 후속 실행 차단 (실행 중인 동작 정지 아님)',command=release).pack()
+    if not mode_real:
+        ttk.Label(win,text='SIM main2/main3: 기본은 저장된 실기 기록 재생. 기록이 없으면 실행 차단 · 원격 호출 없음.').pack()
     ttk.Label(win,text='DO7은 사용하지 않습니다. main2 실행 중 도착하면 종료 후 2초 뒤 main3 실행. 실제 정지는 EStop 사용.').pack(pady=8)

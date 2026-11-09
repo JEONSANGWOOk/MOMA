@@ -49,3 +49,14 @@ class PlacementTests(unittest.TestCase):
 
 
 if __name__=='__main__':unittest.main()
+
+class SimulationPlacementTests(unittest.TestCase):
+    def test_sim_manual_confirmation_is_separate_from_real(self):
+        app=NS(real=False,host=NS(get=lambda:'robot-address'),current_robot_map=None,map=NS(name='sim-map'),lidar_map_alignment=(0,0,0),lidar_mount_overrides=[],spatial_assets={})
+        view=NS(cad_origin=[0]*6,scales={'cad':1.},cad_asset=NS(name='machine',faces=[1]),cad_placement_confirmation=None)
+        view.cad_placement_confirmation=dict(signature=signature(app,view),source='sim_operator_confirmed')
+        self.assertTrue(confirmed(app,view))
+        app.real=True
+        self.assertFalse(confirmed(app,view))
+        app.real=False;view.cad_origin[0]=.01
+        self.assertFalse(confirmed(app,view))

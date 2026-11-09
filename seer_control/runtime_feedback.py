@@ -95,6 +95,15 @@ class RuntimeArmFeedback:
         if type(data) is int and data in (0,1):return bool(data)
         return None
 
+    def marker_observation(self,max_age=2.):
+        with self._lock:
+            sample=self._sample
+            data=(self._payload or {}).get('robot',{}).get('equipment_marker')
+        if sample is None or time.monotonic()-sample[0]>max_age:return None
+        if not isinstance(data,dict) or data.get('valid') is not True:return None
+        if type(data.get('age_s')) not in (int,float) or not 0<=data['age_s']<=max_age:return None
+        return dict(data)
+
     def vacuum_state(self,max_age=1.):
         from .vacuum_panel_display import vacuum_output_state
         with self._lock:
@@ -105,6 +114,27 @@ class RuntimeArmFeedback:
         io=(data or {}).get('robot',{}).get('vacuum_io',{})
         if io.get('valid') is not True:return None
         return vacuum_output_state(io.get('outputs',{}))
+
+    def opening_feedback(self,max_age=.8):
+        with self._lock:
+            sample=self._sample;data=self._payload or {};changed=getattr(self,'_io_changed',0.)
+        now=time.monotonic()
+        if sample is None or now-sample[0]>max_age or now-changed>max_age:return None,None
+        robot=data.get('robot',{});io=robot.get('vacuum_io',{});value=io.get('outputs',{}).get('7')
+        if io.get('valid') is not True or type(value) is not bool:return None,None
+        return value,self.tool_kind(max_age)
+
+    def tool_kind(self,max_age=.8):
+        with self._lock:
+            sample=self._sample;robot=(self._payload or {}).get('robot',{});changed=getattr(self,'_io_changed',0.)
+        now=time.monotonic()
+        if sample is None or now-sample[0]>max_age or now-changed>max_age:return None
+        tool=robot.get('tool',{})
+        xyz=[tool.get(k) for k in ('x','y','z')]
+        if any(type(v) not in (int,float) or not math.isfinite(v) for v in xyz):return None
+        for name,target in (('hook',(-12.6,-141.265,48.)),('roller',(75.5,0.,25.))):
+            if math.dist(xyz,target)<1.:return name
+        return None
 
     def visual_joints(self,names,delay=.065,max_age=1.):
         """Short delayed interpolation for display only; no prediction or control."""

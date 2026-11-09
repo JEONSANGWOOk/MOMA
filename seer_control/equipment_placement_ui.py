@@ -10,14 +10,17 @@ from .equipment_placement import context, signature, section, placed, quality, r
 
 def show_placement(app):
     view=app.world3d
-    if not app.real or not app.connected:raise ValueError('실기 AMR 조회 연결 후 설비 배치를 시작하세요.')
+    if app.real and not app.connected:raise ValueError('실기 AMR 조회 연결 후 설비 배치를 시작하세요.')
+    mode_real=bool(app.real)
+    def guard_mode():
+        if bool(app.real)!=mode_real:raise ValueError('운전 모드가 바뀌었습니다. 배치 창을 다시 여세요.')
     if view.cad_asset is None:raise ValueError('설비 CAD를 먼저 불러오세요.')
     existing=getattr(app,'_equipment_placement_window',None)
     if existing is not None and existing.winfo_exists():existing.lift();return
     win=tk.Toplevel(app);app._equipment_placement_window=win
-    win.title('LiDAR 설비 배치 · 미리보기 → 확정');win.geometry('960x720');win.transient(app)
+    win.title(('실기 LiDAR' if mode_real else 'SIM 수동/가상 LiDAR')+' 설비 배치 · 미리보기 → 확정');win.geometry('960x720');win.transient(app)
     ttk.Label(win,text='1. 점군 갱신 → 2. 설비 위치를 클릭하고 방향 조절 → 3. 근처 점군에 맞춤 → 4. 배치 확정').pack(pady=8)
-    ttk.Label(win,text='초록: 실제 LiDAR / 주황: 설비 단면. 휠 확대 · 우드래그 이동. Z·Roll·Pitch는 유지됩니다.').pack()
+    ttk.Label(win,text='초록: '+('실제' if mode_real else '시뮬레이션')+' LiDAR / 주황: 설비 단면. SIM은 점군 없이 수동 확정 가능. Z·Roll·Pitch 유지.').pack()
     canvas=tk.Canvas(win,bg='#17222d',highlightthickness=0);canvas.pack(fill='both',expand=True,padx=10,pady=8)
     row=ttk.Frame(win);row.pack(fill='x',padx=10)
     variables=[tk.StringVar(value=f'{view.cad_origin[i] if i<2 else math.degrees(view.cad_origin[5]):.3f}') for i in range(3)]
@@ -36,7 +39,7 @@ def show_placement(app):
             target=float(target_gap.get())/100
             if not math.isfinite(target) or target<=0:raise ValueError()
             live=app.current_state();rx,ry,theta=(live.get(k) for k in ('x','y','theta'))
-            if not app.connected or time.monotonic()-app.last_state>2 or not all(type(v) in (int,float) and math.isfinite(v) for v in (rx,ry,theta)):
+            if (mode_real and (not app.connected or time.monotonic()-app.last_state>2)) or not all(type(v) in (int,float) and math.isfinite(v) for v in (rx,ry,theta)):
                 gap_text.set('현재 간격: 최신 로봇 위치 대기');return
             if not state['outline']:return
             robot=placed(robot_outline,(rx,ry,theta))
@@ -74,7 +77,9 @@ def show_placement(app):
             x,y=xy(p[:2]);canvas.create_text(x,y,text='설비 CAD',fill='#ffcf87',anchor='s')
         if polygon:
             q=quality(state['outline'],state['cloud'],p);state['quality']=q
-            status.set(f"{'확정 가능' if q['ok'] else '위치·방향 조정 필요'} · 일치 {q['matches']}점 / 근접점 {q['coverage']:.0%} · 오차 {q['error']*1000:.0f} mm · 점군은 스냅샷입니다")
+            if not mode_real and not state['cloud']:
+                status.set('SIM 수동 배치 · 점군 없이 좌표/방향을 조절하고 확정할 수 있습니다.');return
+            status.set(f"{'SIM 수동 확정 가능' if not mode_real else '확정 가능' if q['ok'] else '위치·방향 조정 필요'} · 일치 {q['matches']}점 / 근접점 {q['coverage']:.0%} · 오차 {q['error']*1000:.0f} mm · 점군은 스냅샷입니다")
 
     def launch(work):
         if state['busy']:return
@@ -85,34 +90,40 @@ def show_placement(app):
         threading.Thread(target=run,daemon=True,name='equipment-placement').start()
 
     def refresh():
-        if not app.connected or time.monotonic()-app.last_laser_rx>2:raise ValueError('최신 실제 LiDAR 수신이 필요합니다.')
-        raw=list(app.real_laser_points)
-        cloud=raw if 'laser_beams(WORLD)' in app.lidar_source else [app._lidar_map_xy(x,y) for x,y in raw]
+        guard_mode()
+        if mode_real:
+            if not app.connected or time.monotonic()-app.last_laser_rx>2:raise ValueError('최신 실제 LiDAR 수신이 필요합니다.')
+            raw=list(app.real_laser_points)
+            cloud=list(raw)  # same MAP frame as robot pose and CAD placement
+        else:cloud=list(getattr(app,'scan_points',[]))
         cloud=[(float(x),float(y)) for x,y in cloud if math.isfinite(x) and math.isfinite(y)]
-        if len(cloud)<12:raise ValueError('실제 LiDAR 점이 부족합니다.')
+        if mode_real and len(cloud)<12:raise ValueError('실제 LiDAR 점이 부족합니다.')
         origin=list(view.cad_origin);asset=view.cad_asset;scale=view.scales['cad']
-        ctx=context(app);sig=signature(app,view);stamp=app.last_laser_rx
+        ctx=context(app);sig=signature(app,view);stamp=app.last_laser_rx if mode_real else time.monotonic()
         launch(lambda:dict(outline=section(asset,origin,scale),cloud=cloud[::max(1,len(cloud)//1500)],context=ctx,signature=sig,scan_at=stamp))
 
     def fit():
         if not state['outline']:raise ValueError('점군 갱신을 먼저 실행하세요.')
+        if len(state['cloud'])<12:raise ValueError('맞춤에는 점군이 필요합니다. SIM은 좌표 조정 후 수동 확정할 수 있습니다.')
         p=pose();outline=list(state['outline']);cloud=list(state['cloud'])
         launch(lambda:dict(pose=refine(outline,cloud,p)))
 
     def confirm():
         if state['busy']:raise ValueError('계산 완료 후 확정하세요.')
-        if not app.real:raise ValueError('실기 모드에서만 확정할 수 있습니다.')
+        guard_mode()
         if state['signature']!=signature(app,view):raise ValueError('지도·CAD·좌표 설정이 바뀌었습니다. 점군을 갱신하세요.')
-        if not app.connected or time.monotonic()-app.last_laser_rx>2:raise ValueError('LiDAR 수신이 끊겼습니다.')
-        if time.monotonic()-state['scan_at']>30:raise ValueError('점군이 오래되었습니다. 점군 갱신 후 다시 확인하세요.')
+        if mode_real and (not app.connected or time.monotonic()-app.last_laser_rx>2):raise ValueError('LiDAR 수신이 끊겼습니다.')
+        if mode_real and time.monotonic()-state['scan_at']>30:raise ValueError('점군이 오래되었습니다. 점군 갱신 후 다시 확인하세요.')
         target=float(target_gap.get())/100
         if not math.isfinite(target) or target<=0:raise ValueError('목표 간격에 0보다 큰 숫자를 입력하세요.')
         p=pose();q=quality(state['outline'],state['cloud'],p)
-        if not q['ok']:raise ValueError('설비 외곽과 일치하는 LiDAR 점이 부족합니다. 위치·방향을 조정하세요.')
+        if mode_real and not q['ok']:raise ValueError('설비 외곽과 일치하는 LiDAR 점이 부족합니다. 위치·방향을 조정하세요.')
         view.equipment_gap_target_m=target
         view.cad_origin[0],view.cad_origin[1],view.cad_origin[5]=p
-        view.cad_placement_confirmation=dict(signature=signature(app,view),time=time.time(),quality=q,source='real_lidar_operator_confirmed')
-        view.reset_real_doors();app._spatial_save();view.refresh()
+        view.cad_placement_confirmation=dict(signature=signature(app,view),time=time.time(),quality=q,source='real_lidar_operator_confirmed' if mode_real else 'sim_operator_confirmed')
+        view.reset_real_doors();app._spatial_save();
+        if not mode_real:app._spatial_sync_cad_lidar()
+        view.refresh()
         app.log('3D',f'LiDAR 설비 배치 확정 · x={p[0]:.3f} y={p[1]:.3f} yaw={math.degrees(p[2]):.2f}°')
         win.destroy()
 
@@ -154,6 +165,8 @@ def show_placement(app):
 
     from .placement_nudge import add_nudge_controls
     add_nudge_controls(win,variables,redraw,safe,enabled=lambda:not state['busy'])
+    from .marker_placement import show as show_marker_placement
+    ttk.Button(win,text='마커 자동 배치 설정',command=lambda:show_marker_placement(app)).pack(pady=4)
     buttons=ttk.Frame(win);buttons.pack(pady=8)
     for text,fn in [('점군 갱신',refresh),('미리보기 적용',redraw),('근처 점군에 맞춤',fit),('배치 확정',confirm),('취소',win.destroy)]:
         ttk.Button(buttons,text=text,command=lambda fn=fn:safe(fn)).pack(side='left',padx=4)

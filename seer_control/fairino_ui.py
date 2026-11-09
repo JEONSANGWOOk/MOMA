@@ -101,10 +101,35 @@ class FairinoUIMixin(FairinoProgramMixin,ArmWorkspaceMixin):
     def _fr5_controls(self,page):
         row=self._studio_row(page)
         self.button(row,'FR5 작업 개발',lambda:self.guarded(self._fr5_development)).pack(side='left',padx=3)
+        self.button(row,'FR5 SDK IO 수신 확인',lambda:self.guarded(self._fr5_readonly_dialog)).pack(side='left',padx=3)
         self.button(row,'FR5 연결 설정',lambda:self.guarded(self._fr5_dialog)).pack(side='left',padx=3)
         self.button(row,'FR5 연결 시험 / 관절 수신',lambda:self.guarded(self._fr5_connect)).pack(side='left',padx=3)
         self.button(row,'FR5 작업 실행',lambda:self.guarded(self._fr5_run)).pack(side='left',padx=3)
         self.button(row,'FR5 정지',lambda:self.guarded(self._fr5_stop),RED).pack(side='left',padx=3)
+
+    def _fr5_readonly_dialog(self):
+        from .fr5_readonly_feedback import read
+        win=tk.Toplevel(self);win.title('FR5 공식 SDK · 읽기 전용 IO 수신');win.geometry('650x340')
+        text=tk.StringVar();ttk.Label(win,textvariable=text,justify='left',wraplength=610).pack(padx=16,pady=20)
+        ttk.Label(win,text='Viewer 재시작 불필요 · 이동/서보/DO 출력 명령 없음').pack(pady=8)
+        def update():
+            if not win.winfo_exists():return
+            data=read(self,time.monotonic())
+            if data:
+                bank=data.get('io',{}).get('DO',{})
+                ios=' / '.join(f'DO{i}: '+('ON' if bank.get(str(i)) else 'OFF') for i in (2,3,4,5,7))
+                q=' / '.join(f'{v:.2f}' for v in data.get('joints_deg',[]))
+                age=time.monotonic()-data['sample_monotonic']
+                text.set('공식 SDK 직접 수신 중\n제어기: '+data['controller_ip']+'\n버전: '+str(data.get('controller_version'))+'\n'+ios+'\nJ1~J6 [deg]: '+q+f'\n수신 지연: {age*1000:.0f}ms')
+            else:
+                message='REAL 모드에서 SDK 수신 연결을 확인하세요.'
+                try:
+                    from .app import USER_DIR
+                    state=json.loads((USER_DIR/'fr5_direct_feedback.json').read_text(encoding='utf-8'));message=state.get('error',message)
+                except (OSError,ValueError):pass
+                text.set('읽기 전용 SDK 수신 대기\n'+message)
+            win.after(200,update)
+        update()
 
     def _fr5_dialog(self):
         if self.studio_runner.active:raise ValueError('미션 종료 후 설정하세요.')

@@ -327,6 +327,13 @@ def load_glb_static_robot(path,max_faces=12000,rotation=(0.,0.,0.),color='#8292a
     asset=RobotDescription(Path(path).stem,links,[],['base_link'])
     asset.full_visuals={('base_link',i):faces for i,faces in enumerate(by_color.values())}
     asset.component_faces={name:len(faces) for name,faces in groups.items()}
+    # Component OBBs for passive door/robot clearance checks (vectorized).
+    import numpy as np
+    asset.collision_component_bounds={}
+    for name,faces in groups.items():
+        if not faces:continue
+        vertices=np.asarray(faces,dtype=float).reshape(-1,3)
+        asset.collision_component_bounds[name]=(tuple(vertices.min(axis=0)),tuple(vertices.max(axis=0)))
     asset.component_bounds={name:(tuple(min(p[i] for face in faces for p in face) for i in range(3)),
                                  tuple(max(p[i] for face in faces for p in face) for i in range(3)))
                             for name,faces in groups.items() if faces and 'Polymer_ROECRHA50-10-30-T5' in name}

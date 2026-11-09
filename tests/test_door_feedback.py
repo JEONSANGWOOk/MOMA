@@ -60,7 +60,9 @@ class DoorFeedbackTests(unittest.TestCase):
         tip=[1,0,1]
         def fk(values,world):
             target=point(cadworld,tip)
-            return {'J6':transform((target[0],target[1]+.14714,target[2]-.148))}
+            from seer_control.door_teaching import hook_contact_offset
+            offset=hook_contact_offset()
+            return {'J6':transform(tuple(target[i]-offset[i] for i in range(3)))}
         arm.link_transforms=fk
         mesh=NS(faces=[((.99,0,.99),(1.01,0,.99),(1,0,1.01))],face_materials=[36])
         cad=NS(door_parts=[dict(name='left',pivot=(0,0,0),sign=1,asset=mesh)])

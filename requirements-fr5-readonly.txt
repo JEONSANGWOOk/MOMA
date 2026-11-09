@@ -1,0 +1,2 @@
+# Optional SSH forwarding for the official FR5 read-only SDK receiver.
+paramiko>=3,<5

@@ -16,6 +16,13 @@ from pxr import Gf,UsdGeom,UsdShade,Sdf
 class IsaacMirror:
     ROOT='/World/MOMA_Mirror'
     def __init__(self,url):
+        import importlib.util
+        from pathlib import Path
+        client=Path(os.environ.get('MOMA_MIRROR_CLIENT',globals().get('__file__','tools/isaac_mirror/isaac_live_view.py')))
+        spec=importlib.util.spec_from_file_location('moma_pose_timeline',client.with_name('pose_timeline.py'))
+        module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+        self.pose_timeline=module.PoseTimeline(.08);self.render_configured=False
+        self.configure_rendering()
         self.url=url.rstrip('/');self.stop_event=threading.Event();self.pending=queue.Queue(maxsize=1)
         self.stage=None;self.session=None;self.transforms={};self.targets={};self.last_sequence=None
         self.last_frame_at=0.;self.last_tick=time.monotonic();self.last_warning=0.;self.todo=[];self.geometry={}
@@ -33,6 +40,29 @@ class IsaacMirror:
             print('[MOMA mirror] Doors follow desktop hook/roller estimates directly; no simulated door forces.')
         self.thread=threading.Thread(target=self.receive,daemon=True,name='moma-mirror-reader');self.thread.start()
         self.subscription=omni.kit.app.get_app().get_update_event_stream().create_subscription_to_pop(self.update,name='MOMA read-only mirror')
+    def configure_rendering(self):
+        import carb.settings
+        settings=carb.settings.get_settings()
+        # Values verified in installed Isaac Sim 6.2 RTX settings extension.
+        settings.set('/rtx/post/aa/op',3)
+        settings.set('/rtx/post/dlss/execMode',2)
+        settings.set('/rtx/post/motionblur/enabled',False)
+        settings.set('/rtx/post/dof/enabled',False)
+        settings.set('/app/renderer/resolution/multiplier',1.)
+    def configure_viewport(self):
+        if self.render_configured:return
+        try:
+            from omni.kit.viewport.utility import get_active_viewport
+            viewport=get_active_viewport()
+            if viewport is None:return
+            viewport.fill_frame=False
+            viewport.resolution_scale=1.
+            viewport.resolution=(1920,1080)
+            self.render_configured=True
+            print('[MOMA mirror] 1080p / DLSS Quality / motion blur off; shared 80ms pose interpolation.')
+        except Exception as error:
+            self.render_configured=True
+            print('[MOMA mirror] Viewport resolution setup unavailable:',error)
     def close(self):
         self.stop_event.set();self.subscription=None
     def fetch(self,opener,path,timeout=4):
@@ -63,7 +93,7 @@ class IsaacMirror:
                 if time.monotonic()-self.last_warning>10:
                     print('[MOMA mirror] Waiting for desktop:',error);self.last_warning=time.monotonic()
                 self.stop_event.wait(.5)
-            self.stop_event.wait(.05)
+            self.stop_event.wait(1/60)
     @staticmethod
     def matrix(rows):
         # Desktop uses column vectors; USD/Gf uses row vectors.
@@ -93,6 +123,7 @@ class IsaacMirror:
     def reset(self,stage,session):
         # Only the mirror subtree is owned by this script; leave other user assets intact.
         if stage.GetPrimAtPath(self.ROOT):stage.RemovePrim(self.ROOT)
+        self.pose_timeline.clear()
         self.stage=stage;self.session=session;self.transforms={};self.targets={};self.todo=[];self.geometry={}
         self.last_sequence=None;self.map_revision=None;self.framed=False;self.lidar=[]
         self.physics=None;self.physics_fault=False;self.instances={}
@@ -191,6 +222,7 @@ class IsaacMirror:
             if time.monotonic()-self.last_warning>10:
                 print('[MOMA mirror] Use a Z-up stage with metersPerUnit=1 (File > New).');self.last_warning=time.monotonic()
             return
+        self.configure_viewport()
         now=time.monotonic();dt=min(.1,now-self.last_tick);self.last_tick=now
         try:manifest,frame=self.pending.get_nowait()
         except queue.Empty:manifest=frame=None
@@ -199,11 +231,12 @@ class IsaacMirror:
             meta=frame.get('metadata',{})
             key=(frame['session'],frame['sequence'])
             fresh=(meta.get('connected') is True and (meta.get('mode')!='REAL' or meta.get('telemetry_age_s',999)<=2))
-            if not fresh:self.last_frame_at=0.
+            if not fresh:self.last_frame_at=0.;self.pose_timeline.clear()
             if key!=self.last_sequence and fresh:
                 self.last_sequence=key;self.last_frame_at=now
                 self.instances={entry['id']:entry for entry in frame['instances']}
                 self.targets={entry['id']:self.matrix(entry['matrix']) for entry in frame['instances']}
+                self.pose_timeline.push(now,self.targets)
                 self.geometry=manifest['geometry']
                 self.draw_map(manifest.get('map',{}))
                 self.lidar=frame.get('lidar',[])
@@ -246,16 +279,14 @@ class IsaacMirror:
                 omni.timeline.get_timeline_interface().pause()
                 print('[MOMA physics] Setup/update failed, simulation PAUSED:',error)
         if self.transforms and not self.todo and not self.physics_fault:self.ready.set()
-        alpha=1-math.exp(-dt/.05)
+        before_poses,after_poses,alpha=self.pose_timeline.sample(now)
         for name,op in self.transforms.items():
             if self.physics is not None and name in self.physics.door_ids:
                 UsdGeom.Imageable(op.GetAttr().GetPrim()).MakeInvisible();continue
             UsdGeom.Imageable(op.GetAttr().GetPrim()).MakeVisible() if name in self.targets else UsdGeom.Imageable(op.GetAttr().GetPrim()).MakeInvisible()
             if name not in self.targets:continue
-            target=self.targets[name]
-            if self.instances.get(name,{}).get('physics_role')=='door' and self.physics is None:
-                op.Set(target);continue
-            current=op.Get()
+            target=after_poses.get(name,self.targets[name])
+            current=before_poses.get(name,target)
             a,b=Gf.Transform(current),Gf.Transform(target)
             if (a.GetTranslation()-b.GetTranslation()).GetLength()>1.:
                 op.Set(target);continue

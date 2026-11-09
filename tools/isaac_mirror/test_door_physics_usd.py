@@ -38,8 +38,8 @@ for side in ('left','right'):
     joint=UsdPhysics.RevoluteJoint.Get(stage,path+'/Hinge')
     assert joint.GetBody1Rel().GetTargets()[0].pathString==path
     assert abs(PhysxSchema.PhysxJointAPI(joint.GetPrim()).GetJointFrictionAttr().Get()-.05)<1e-6
-    assert joint.GetLowerLimitAttr().Get()==(-120 if side=='left' else 0)
-    assert joint.GetUpperLimitAttr().Get()==(0 if side=='left' else 120)
+    assert joint.GetLowerLimitAttr().Get()==(-160 if side=='left' else 0)
+    assert joint.GetUpperLimitAttr().Get()==(0 if side=='left' else 160)
     assert UsdPhysics.MeshCollisionAPI(stage.GetPrimAtPath(path+'/'+side+'/Geometry')).GetApproximationAttr().Get()=='convexDecomposition'
 assert UsdPhysics.RigidBodyAPI(stage.GetPrimAtPath(root+'/tool')).GetKinematicEnabledAttr().Get()
 assert UsdPhysics.MeshCollisionAPI(stage.GetPrimAtPath(root+'/tool/Geometry')).GetApproximationAttr().Get()=='none'
@@ -63,7 +63,7 @@ for side,angle in (('left',-35.),('right',50.)):
     assert drive.GetMaxForceAttr().Get()==40.
 rows['left']['door']['target_angle_deg']=-200.
 rig.update_contact_assist(rows)
-assert rig.drives['left'].GetTargetPositionAttr().Get()==-120.
+assert rig.drives['left'].GetTargetPositionAttr().Get()==-160.
 rows['left']['door']['contact_assist']=False
 rig.update_contact_assist(rows)
 assert rig.drives['left'].GetMaxForceAttr().Get()==0.

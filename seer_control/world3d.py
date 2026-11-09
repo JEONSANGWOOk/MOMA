@@ -70,6 +70,7 @@ class WorldView3D(tk.Canvas):
         self.scales={'arm':1.,'amr':1.,'cad':1.,'tool':1.}
         self.tool_asset=None
         self.positions={'arm':{},'amr':{},'cad':{},'tool':{}}
+        self.door_io7_enabled=True
         self.mount=[.34,0.,.626,0.,0.,0.];self.cad_origin=[0.,0.,0.,0.,0.,0.];self.phone_panel_center=list(SIM_PANEL_CENTER);self.phone_panel_yaw=math.pi/2
         self.cad_placement_mode=False;self.cad_placement_callback=None
         self.cad_doors_auto=tk.BooleanVar(value=True);self._cad_door_epoch=time.monotonic();self._door_animation_job=None
@@ -114,8 +115,8 @@ class WorldView3D(tk.Canvas):
         return 0.
     def cad_door_angle(self,part):
         name=part.get('name','')
-        if self.app.real:
-            manual=getattr(self,'manual_real_door_display',None)
+        if self.app.real or getattr(self,'sim_contact_follow',False):
+            manual=getattr(self,'manual_real_door_display',None) if self.app.real else None
             if manual and manual[0] is self.cad_asset:
                 return manual[1].get(name,0.)
             follower=self._real_door_follower
@@ -136,40 +137,39 @@ class WorldView3D(tk.Canvas):
     def placement_confirmed(self):
         from .equipment_placement import confirmed
         return confirmed(self.app,self)
-    def _update_real_doors(self,world,values,measured):
-        if not self.app.real:
+    def _update_real_doors(self,world,values,measured,display_world=None):
+        if not self.app.real and not getattr(self,'sim_contact_follow',False):
             if self._real_door_follower:self._real_door_follower.detach()
             return
         if not self.placement_confirmed():
             if self._real_door_follower:self._real_door_follower.detach()
             self.real_door_status='문 추정 대기 · LiDAR 설비 배치를 먼저 확정하세요'
             return
-        key=(id(self.cad_asset),tuple(self.cad_origin),self.scales['cad'],id(self.arm_asset),id(self.tool_asset),tuple(self.mount))
+        if getattr(self,'marker_placement',{}).get('mode')=='hook_teaching':
+            from .door_teaching import apply_taught_hinge
+            if apply_taught_hinge(self):self._real_door_key=None
+        key=(bool(self.app.real),id(self.cad_asset),tuple(self.cad_origin),self.scales['cad'],id(self.arm_asset),id(self.tool_asset),tuple(self.mount))
         if self._real_door_key!=key:
-            scale=self.scales['cad'];doors=[]
-            for part in getattr(self.cad_asset,'door_parts',()):
-                vertices=[p for face,material in zip(part['asset'].faces,part['asset'].face_materials) if material==36 for p in face]
-                if not vertices:continue
-                handle=tuple((min(p[i] for p in vertices)+max(p[i] for p in vertices))/2*scale for i in range(3))
-                points=[p for face in part['asset'].faces for p in face]
-                lo=[min(p[i] for p in points) for i in range(3)];hi=[max(p[i] for p in points) for i in range(3)]
-                push=((lo[0]-.018)*scale,(lo[1]-.018)*scale,(lo[2]+.30*(hi[2]-lo[2]))*scale)
-                doors.append(dict(name=part['name'],pivot=tuple(v*scale for v in part['pivot']),handle=handle,push=push,sign=part['sign'],surface_faces=[tuple(tuple(v*scale for v in p) for p in face) for face in part['asset'].faces],roller_after_hook_release=part['name'].endswith(':1'),roller_open_angle=True,roller_capture_gap=.04,hook_capture=.065,hook_release=.12,roller_close=part['name'].endswith(':1'),hook_open_only=True,hook_inside_exit=part['name'].endswith(':2'),hook_dwell=0.,hook_faces=[tuple(tuple(v*scale for v in p) for p in face) for face,mat in zip(part['asset'].faces,part['asset'].face_materials) if mat in (33,36,37)]))
+            from .door_geometry import door_definitions
+            doors=door_definitions(self)
             self._real_door_follower=SurfaceDoorFollower(doors);self._real_door_key=key
+            self._door_io7=None
             for name in self._real_door_follower.angles:
                 side='left' if name.endswith(':1') else 'right' if name.endswith(':2') else None
                 self._real_door_follower.angles[name]=math.radians(getattr(self,'door_initial_angles',{}).get(side,0.))
         follower=self._real_door_follower
         fresh=(self.real_doors_follow.get() and self.arm_follow.get() and getattr(self.app,'connected',False)
-               and time.monotonic()-getattr(self.app,'last_state',0)<=3.)
+               and (not self.app.real or time.monotonic()-getattr(self.app,'last_state',0)<=3.))
         names=[j['name'] for j in self.arm_asset.movable()] if isinstance(self.arm_asset,RobotDescription) else []
         fresh=fresh and len(names)==6 and all(type(measured.get(n)) in (int,float) and math.isfinite(measured[n]) for n in names)
-        tip=None;roller=None
+        tip=None;roller=None;door_rotation=None
         if fresh and getattr(self.tool_asset,'name','').startswith('EndEffector V3_EndOnly_Change1-org'):
             poses=self.arm_asset.link_transforms(measured,world)
             if 'J6' in poses:
+                door_rotation=poses['J6']
                 from .arm_physics import inverse
-                tip_world=point(poses['J6'],(0.,-.14714,.148))
+                from .door_teaching import hook_contact_offset
+                tip_world=point(poses['J6'],hook_contact_offset())
                 cad_inverse=inverse(transform(self.cad_origin[:3],self.cad_origin[3:]))
                 tip=point(cad_inverse,tip_world)
                 for name,bounds in getattr(self.tool_asset,'component_bounds',{}).items():
@@ -180,12 +180,54 @@ class WorldView3D(tk.Canvas):
                     follower.roller_radius=max(hi[i]-lo[i] for i in range(3))*scale/2
                     roller=point(cad_inverse,point(multiply(poses['J6'],transform((0.,0.,.1))),tuple(v*scale for v in center)))
                     break
-        follower.update_contacts(tip,roller,time.monotonic())
+        io7_mode=(self.app.real and getattr(self,'door_io7_enabled',False)) or (not self.app.real and getattr(self,'sim_io7_feedback',False))
+        if io7_mode:
+            from .door_io7 import configured_controller
+            if getattr(self,'_door_io7',None) is None:self._door_io7=configured_controller(self)
+            if self.app.real:
+                from .door_io7 import read_opening_feedback
+                signal,tool=read_opening_feedback(self.app,time.monotonic())
+            else:
+                signal=getattr(self,'sim_door_signal',None);tool=getattr(self,'sim_door_tool',None)
+            if not self.real_doors_follow.get():signal=None
+            io_roller=roller;io_tip=tip;io_rotation=door_rotation
+            # Surface contact must use the same interpolated pose as the visible
+            # roller. Raw telemetry is retained for hook teaching and recording.
+            if self._door_io7.measured_rotation and roller is not None and display_world is not None:
+                display_poses=self.arm_asset.link_transforms(values,display_world)
+                if 'J6' in display_poses:
+                    io_rotation=display_poses['J6']
+                    io_tip=point(cad_inverse,point(display_poses['J6'],hook_contact_offset()))
+                    io_roller=point(cad_inverse,point(multiply(display_poses['J6'],transform((0.,0.,.1))),tuple(v*scale for v in center)))
+            self._door_io7.update(follower,io_tip,io_roller,io_rotation,time.monotonic(),signal,tool)
+            # Resolve display interference only after the roller has contacted
+            # the door. OFF and approach phases must never drag the door open.
+            self._door_clearance_status=''
+            if fresh and tip is not None:
+                from .door_clearance import DoorClearance,robot_boxes
+                clearance_key=(id(self.cad_asset),self.scales['cad'],tuple(tuple(p['pivot']) for p in self.cad_asset.door_parts))
+                if getattr(self,'_door_clearance_key',None)!=clearance_key:
+                    self._door_clearance_checks={p['name']:DoorClearance(p,self.scales['cad']) for p in self.cad_asset.door_parts if p['name'].endswith(':1')}
+                    self._door_clearance_key=clearance_key
+                display_poses=self.arm_asset.link_transforms(values,display_world) if display_world is not None else poses
+                boxes=robot_boxes(self,display_poses,cad_inverse)
+                for name,check in self._door_clearance_checks.items():
+                    before=follower.angles.get(name,0.)
+                    if not self._door_io7.measured_rotation and self._door_io7.phase=='roller' and self._door_io7.engaged and signal is True:
+                        angle,hits=check.resolve(before,boxes)
+                    else:angle,hits=before,check.collisions(before,boxes,first_only=True)
+                    follower.max_angle=max(follower.max_angle,math.radians(160))
+                    follower.angles[name]=angle
+                    if hits:self._door_clearance_status=' · 모델 충돌: '+', '.join(hits)+' (설비 정렬 확인)'
+                    elif angle>before+1e-6:self._door_clearance_status=' · 팔/툴 겹침 방지 추가 개방'
+
+        else:follower.update_contacts(tip,roller,time.monotonic())
         if not self.real_doors_follow.get():self.real_door_status='문 추정 · 추종 꺼짐'
         elif tip is None:self.real_door_status='문 추정 · 실시간 자세/후크 모델 대기'
         else:
             angles=' / '.join(f'{math.degrees(a):.1f}°' for a in follower.angles.values())
             self.real_door_status='문 추정 · '+(('후크 문틀/접촉 추종' if follower.contact_mode=='hook' else '롤러 닫기 각도 추종' if follower.contact_mode=='close-angle' else '롤러 추가 열기 각도 추종' if follower.contact_mode=='open-angle' else '문틀 롤러 밀기 추종') if follower.active else '접촉 대기')+' · '+(angles or '문 모델 없음')+' · 기하 추정/힘 미측정'
+        if io7_mode:self.real_door_status=self._door_io7.status+' · '+ ' / '.join(f'{math.degrees(a):.1f}°' for a in follower.angles.values())+' · '+getattr(self.app,'door_io7_source','SIM 기록')+getattr(self,'_door_clearance_status','')
     def _refresh_frame(self):
         self._refresh_job=None
         if self.winfo_exists() and self.app.view_mode.get()=='3D':self.app.draw_map()
@@ -301,6 +343,8 @@ class WorldView3D(tk.Canvas):
         if width<10 or height<10:return
         pose={key:state.get(key,0.) for key in ('x','y','theta')}
         if not all(type(v) in (int,float) and math.isfinite(v) for v in pose.values()):pose=dict(x=0.,y=0.,theta=0.)
+        from .marker_placement import update as update_marker_placement
+        update_marker_placement(self.app,self,state)
         raw_pose=dict(pose)
         from .motion_display import MotionDisplay
         if not hasattr(self,'_pose_display'):
@@ -478,7 +522,7 @@ class WorldView3D(tk.Canvas):
         else:values=self._joint_display.update(values,display_now,display_context,jump=math.pi)
         self.scene_joint_values=dict(values)
         arm_world=multiply(world,transform(self.mount[:3],self.mount[3:]))
-        self._update_real_doors(multiply(transform((raw_pose['x'],raw_pose['y'],0),(0,0,raw_pose['theta'])),transform(self.mount[:3],self.mount[3:])),values,measured or {})
+        self._update_real_doors(multiply(transform((raw_pose['x'],raw_pose['y'],0),(0,0,raw_pose['theta'])),transform(self.mount[:3],self.mount[3:])),values,measured or {},display_world=arm_world)
         if self.layers[chr(0xB85C)+chr(0xBD07)+chr(0xD314)].get():add_asset(self.arm_asset,'arm',arm_world,'#e9ac42','world_arm')
         if self.layers[chr(0xB85C)+chr(0xBD07)+chr(0xD314)].get() and self.tool_asset and isinstance(self.arm_asset,RobotDescription):
             poses=self.arm_asset.link_transforms(values,arm_world)
@@ -523,14 +567,18 @@ class WorldView3D(tk.Canvas):
             panel_matrix=panel['matrix']
             if dev and dev.physics.held and dev.physics.held.get('name')==panel.get('object_name'):
                 panel_matrix=multiply(arm_world,dev.physics.held['matrix'])
-            if self.app.real:
+            if self.app.real or getattr(self,'sim_contact_follow',False):
                 from .vacuum_panel_display import VacuumPanelDisplay,arm_vacuum_signal
                 if not hasattr(self,'_vacuum_panel'):self._vacuum_panel=VacuumPanelDisplay()
                 config=getattr(self,'vacuum_display_config',{})
                 runtime=getattr(self.app,'runtime_arm_feedback',None)
-                signal=arm_vacuum_signal(self.app,config,time.monotonic())
+                if self.app.real:signal=arm_vacuum_signal(self.app,config,time.monotonic())
+                else:
+                    from .vacuum_panel_display import vacuum_output_state
+                    bank=getattr(dev,'io',{}).get('DO',{})
+                    signal=vacuum_output_state({str(i):bool(bank[i]) for i in (2,3,4,5) if type(bank.get(i)) is int and bank[i] in (0,1)})
                 cup=None
-                if isinstance(self.arm_asset,RobotDescription) and measured and ((runtime and runtime.joints([j['name'] for j in self.arm_asset.movable()])) or time.monotonic()-getattr(self.app,'fr5_rx',0)<=1.):
+                if isinstance(self.arm_asset,RobotDescription) and measured and ((not self.app.real) or (runtime and runtime.joints([j['name'] for j in self.arm_asset.movable()])) or time.monotonic()-getattr(self.app,'fr5_rx',0)<=1.):
                     tool_mount=getattr(self.tool_asset,'vacuum_mount',None)
                     link_poses=self.arm_asset.link_transforms(values,arm_world)
                     if tool_mount is not None and 'J6' in link_poses:
@@ -597,4 +645,6 @@ class WorldView3D(tk.Canvas):
         rect=self.bbox(item)
         if rect:
             bg=self.create_rectangle(rect[0]-5,rect[1]-4,rect[2]+5,rect[3]+4,fill='#f5f8fc',outline='');self.tag_lower(bg,item)
+        if self.app.real and getattr(self.app,'_scenario_archive',None):
+            self.app._scenario_archive.capture(self,raw_pose,measured or values)
         self.render_count+=1
