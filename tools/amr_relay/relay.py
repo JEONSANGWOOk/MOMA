@@ -47,7 +47,16 @@ async def relay(reader, writer, target, port, allowed):
         tasks = [asyncio.create_task(copy_stream(reader, upstream)),
                  asyncio.create_task(copy_stream(remote, writer))]
         # Preserve half-close: a complete request may still have a pending reply.
-        await asyncio.gather(*tasks)
+        # Bound the half-close grace period so disconnected clients cannot
+        # retain upstream sockets indefinitely. Live connections have no timeout.
+        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        for task in done:
+            task.result()
+        if pending:
+            try:
+                await asyncio.wait_for(asyncio.gather(*pending), timeout=5.)
+            except asyncio.TimeoutError:
+                pass
     except (OSError, asyncio.TimeoutError) as error:
         logging.warning('Connection %s -> %s:%s ended: %s', peer, target, port, error)
     finally:

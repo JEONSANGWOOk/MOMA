@@ -14,6 +14,8 @@ from .theme import PANEL,MUTED,INK,BLUE
 
 class GamepadMixin:
     def _pad_build(self,body):
+        from .gamepad_missions import MissionButtons
+        self.pad_mission_buttons=MissionButtons()
         self.pad_backend=WindowsPad();self.pad_gate=PadGate();self.pad_device=None;self.pad_after=None
         self.pad_enabled=tk.BooleanVar(value=False)
         self.pad_config=dict(forward='Y',turn='X',deadman=4,stop=2,zone=.15,invert_forward=True,invert_turn=True)
@@ -26,7 +28,7 @@ class GamepadMixin:
         self.pad_status.pack(fill='x',pady=3)
         row=tk.Frame(body,bg=PANEL);row.pack(fill='x')
         self.button(row,'컨트롤러 검색 / 설정',self._pad_dialog,BLUE).pack(side='left',fill='x',expand=True)
-        self.label(body,'AMR L1: 활성/해제 · 팔 L1: 누른 동안 조종 · ○: 정지\nAMR: 전후진/회전 · 팔: 선택한 두 축 조절\n팔 R1/R2: 모드 ± · ↑/↓: 속도 ±\n△: 그리퍼 ON/OFF (L1 함께 누름)',8,MUTED,justify='left',wraplength=285).pack(fill='x',pady=4)
+        self.label(body,'AMR L1: 활성/해제 · 팔 L1: 누른 동안 조종 · ○: 정지\nAMR ×: LM2→LM1 연동 / □: LM1→LM2 복귀 · 중앙에서 누름\nAMR: 전후진/회전 · 팔: 선택한 두 축 조절\n팔 R1/R2: 모드 ± · ↑/↓: 속도 ±\n△: 그리퍼 ON/OFF (L1 함께 누름)',8,MUTED,justify='left',wraplength=285).pack(fill='x',pady=4)
 
     def _pad_mode_controls(self,body):
         row=tk.Frame(body,bg=PANEL);row.pack(fill='x',pady=3)
@@ -88,9 +90,12 @@ class GamepadMixin:
         if changed:self._pad_arm_stop();self.pad_gate.reset()
         try:v,w,stop,status=self.pad_gate.evaluate(sample,now,allowed,**{k:self.pad_config[k] for k in ('forward','turn','deadman','stop','zone','invert_forward','invert_turn')})
         except (ValueError,TypeError):self.pad_gate.reset();v=w=0.;stop=False;status='팔 조이스틱 입력 오류'
-        if self.pad_enabled.get() and sample and 0<=now-sample.timestamp<=.25 and focus is not None and focus.winfo_toplevel()==self:
+        if (self.pad_enabled.get() or getattr(self,'_pad_mission_stop',False)) and sample and 0<=now-sample.timestamp<=.25 and (getattr(self,'_pad_mission_stop',False) or focus is not None and focus.winfo_toplevel()==self):
             stop=stop or bool(sample.buttons&(1<<self.pad_config['stop']))
         if stop:
+            self._pad_mission_stop=False;self._pad_mission_authorized=False
+            link=getattr(self,'_departure_link',None)
+            if link:link.stop.set()
             self.pad_enabled.set(False);self._pad_stop();self.action('stop')
             if self.real:self._fr5_priority_stop()
             else:self.arm_dev_sim.stop();self._aw_sync_main()
@@ -165,6 +170,7 @@ class GamepadMixin:
         self.pad_after=self.after(50,self._pad_poll)
 
     def _pad_toggle(self):
+        self._pad_mission_authorized=False;self._pad_mission_stop=False
         self.pad_arm_edges=ButtonEdges()
         self._pad_stop();self.release_drive();self.pad_gate.reset()
 
@@ -179,7 +185,7 @@ class GamepadMixin:
             if self.pad_device:
                 try:sample=self.pad_backend.read(*self.pad_device)
                 except (OSError,ValueError):
-                    self.pad_device=None;self.pad_enabled.set(False);self._pad_stop()
+                    self.pad_device=None;self.pad_enabled.set(False);self._pad_mission_authorized=False;self._pad_mission_stop=False;self._pad_stop()
             self.pad_sample=sample;self._pad_process(sample,time.monotonic())
         finally:
             if self.winfo_exists():self.pad_after=self.after(50,self._pad_poll)
@@ -188,17 +194,29 @@ class GamepadMixin:
         if self.pad_target.get()=='로봇팔':return self._pad_arm_process(sample,now)
         from .ui_feedback import focus_widget
         focus=focus_widget(self)
-        allowed=(self.pad_enabled.get() and self.manual.get() and self.connected and
+        input_ready=(self.manual.get() and self.connected and
                  self.tabs.select()==str(self.operation_page) and focus is not None and focus.winfo_toplevel()==self and
                  not self.reloc_mode and not self.task_running and not self.studio_runner.active and self.studio_arm_safe)
-        allowed=allowed and (not self.real and self.sim_powered or self.real and self.control_enabled and now-self.last_state<=3 and not controller_manual_reason(self.live,self.last_state,now))
+        controller_ready=(not self.real and self.sim_powered or self.real and self.control_enabled and now-self.last_state<=3 and not controller_manual_reason(self.live,self.last_state,now))
+        allowed=input_ready and controller_ready and self.pad_enabled.get()
+        mission_allowed=input_ready and controller_ready and (self.pad_enabled.get() or getattr(self,'_pad_mission_authorized',False))
         try:v,w,stop,status=self.pad_gate.evaluate(sample,now,allowed,toggle=True,**{k:self.pad_config[k] for k in ('forward','turn','deadman','stop','zone','invert_forward','invert_turn')})
         except (ValueError,TypeError):
             self.pad_gate.reset();v,w,stop,status=0.,0.,False,'컨트롤러 입력 오류'
-        if self.pad_enabled.get() and sample and 0<=now-sample.timestamp<=.25 and focus is not None and focus.winfo_toplevel()==self:
+        if (self.pad_enabled.get() or getattr(self,'_pad_mission_stop',False)) and sample and 0<=now-sample.timestamp<=.25 and (getattr(self,'_pad_mission_stop',False) or focus is not None and focus.winfo_toplevel()==self):
             stop=stop or bool(sample.buttons&(1<<self.pad_config['stop']))
         if stop:
+            self._pad_mission_stop=False;self._pad_mission_authorized=False
+            link=getattr(self,'_departure_link',None)
+            if link:link.stop.set()
             self.pad_enabled.set(False);self._pad_stop();self.action('stop')
+        if not stop:
+            from .gamepad_missions import execute
+            action,reason=self.pad_mission_buttons.update(sample,now,mission_allowed,self.pad_gate.enabled or getattr(self,'_pad_mission_authorized',False),self.pad_config['zone'],self.pad_config['forward'],self.pad_config['turn'])
+            if action:
+                self.guarded(lambda:execute(self,action));return
+            if reason:
+                self._pad_stop();self.pad_status.configure(text=reason);return
         if not v and not w:self._pad_stop()
         else:
             try:
@@ -216,7 +234,8 @@ class GamepadMixin:
                     self.sim.drive(*motion);self.held=('gamepad',motion)
             except (ValueError,TypeError) as e:self._pad_stop();self.pad_gate.reset();status=str(e)
         if not allowed and sample and not stop:
-            if not self.pad_enabled.get():status='조이스틱 사용을 켜세요.'
+            if not self.pad_enabled.get() and getattr(self,'_pad_mission_authorized',False):status='리모컨 자동동작 · '+getattr(self,'_departure_link_message','× 연동 / □ 복귀 / ○ AMR 정지')
+            elif not self.pad_enabled.get():status='조이스틱 사용을 켜세요.'
             elif not self.manual.get():status='수동 조작 활성화를 켜세요.'
             elif not self.connected:status='SIM 또는 실기에 먼저 연결하세요.'
             elif self.real and not self.control_enabled:status='조회 전용 연결: 연결 해제 후 실기 · 제어 모드로 다시 연결하세요.'
@@ -243,13 +262,23 @@ class GamepadMixin:
         win=tk.Toplevel(self);win.title('DualSense CFI-ZCT1G · 입력 / 설정');self._fit_dialog(win,760,740,620,460);win.configure(bg=PANEL)
         holder,inner,_=self._scrollable_frame(win,bg=PANEL);holder.pack(fill='both',expand=True)
         devices=self.pad_backend.devices()
-        names=[f'{index}: {caps.name} · VID {caps.manufacturer:04X} / PID {caps.product:04X}' for index,caps in devices]
-        selected=tk.StringVar(value=names[0] if names else '')
+        device_names=[f'{index}: {caps.name} · VID {caps.manufacturer:04X} / PID {caps.product:04X}' for index,caps in devices]
+        selected=tk.StringVar(value=device_names[0] if device_names else '')
         self.label(inner,'USB 또는 Bluetooth로 연결한 뒤 장치를 선택하세요.',11,INK,True).pack(anchor='w',padx=12,pady=10)
-        ttk.Combobox(inner,textvariable=selected,values=names,state='readonly',width=70).pack(fill='x',padx=12)
+        device_combo=ttk.Combobox(inner,textvariable=selected,values=device_names,state='readonly',width=70)
+        device_combo.pack(fill='x',padx=12)
         def choose():
             self._pad_stop();self.pad_gate.reset();self.pad_enabled.set(False)
-            self.pad_device=devices[names.index(selected.get())] if selected.get() in names else None
+            self.pad_device=devices[device_names.index(selected.get())] if selected.get() in device_names else None
+            self.pad_input_label.configure(text='컨트롤러 선택됨 · 스틱/버튼을 눌러 입력을 확인하세요.' if self.pad_device else '검색된 컨트롤러가 없습니다. USB 데이터 케이블 연결 후 다시 검색하세요.')
+        def refresh_devices():
+            self._pad_stop();self.pad_gate.reset();self.pad_enabled.set(False);self.pad_device=None
+            devices[:]=self.pad_backend.devices()
+            device_names[:]=[f'{index}: {caps.name} · VID {caps.manufacturer:04X} / PID {caps.product:04X}' for index,caps in devices]
+            device_combo.configure(values=device_names)
+            if selected.get() not in device_names:selected.set(device_names[0] if device_names else '')
+            self.pad_input_label.configure(text=f'컨트롤러 {len(devices)}개 검색됨 · 장치를 선택하고 연결하세요.' if devices else '검색된 컨트롤러가 없습니다. USB 데이터 케이블과 Windows joy.cpl을 확인하세요.')
+        self.button(inner,'컨트롤러 다시 검색',refresh_devices,BLUE).pack(anchor='w',padx=12,pady=5)
         self.button(inner,'선택한 컨트롤러 연결',choose,BLUE).pack(anchor='w',padx=12,pady=5)
         self.pad_input_label=self.label(inner,'장치 선택 후 스틱/버튼의 입력 번호를 확인하세요.',9,MUTED,justify='left');self.pad_input_label.pack(fill='x',padx=12,pady=5)
         variables={}
@@ -266,8 +295,8 @@ class GamepadMixin:
         for key,status in [('gripper_on',1),('gripper_off',0)]:
             row=tk.Frame(inner,bg=PANEL);row.pack(fill='x',padx=12,pady=2);self.label(row,'REAL '+key,9,INK,width=25,anchor='w').pack(side='left')
             tool_vars[key]=tk.StringVar(value=self.studio_config.get('gamepad',{}).get(key,''))
-            names=['']+[n for n,spec in operations.items() if spec.get('method') in ('SetDO','SetToolDO') and spec.get('status')==status]
-            ttk.Combobox(row,textvariable=tool_vars[key],values=names,state='readonly',width=25).pack(side='left')
+            operation_names=['']+[n for n,spec in operations.items() if spec.get('method') in ('SetDO','SetToolDO') and spec.get('status')==status]
+            ttk.Combobox(row,textvariable=tool_vars[key],values=operation_names,state='readonly',width=25).pack(side='left')
         for key,title,values in (('forward','전후진 축',AXES),('turn','회전 축',AXES),('deadman','주행 허용 L1 버튼 번호',tuple(range(1,33))),('stop','정지 ○ 버튼 번호',tuple(range(1,33)))):
             row=tk.Frame(inner,bg=PANEL);row.pack(fill='x',padx=12,pady=3)
             value=self.pad_config[key]+1 if key in ('deadman','stop') else self.pad_config[key]

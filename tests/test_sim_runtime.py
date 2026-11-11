@@ -60,6 +60,8 @@ class SimRuntimeTests(unittest.TestCase):
             clock[0]=2.9;link.tick();self.assertEqual(len(calls),1)
             clock[0]=3.;link.tick();self.assertEqual([c[0] for c in calls],['main2','main3'])
             link.tick();self.assertFalse(link.active)
+            self.assertEqual(app.target.set.call_args_list[-1].args,('LM2',))
+            self.assertEqual(app.target.set.call_count,2)
 
     def test_actual_local_arm_simulator_completes_both_programs(self):
         import math
@@ -82,3 +84,16 @@ class SimRuntimeTests(unittest.TestCase):
                     arm.tick(.05)
                     if arm.state!='RUNNING':break
                 self.assertEqual(arm.state,'COMPLETED',arm.error)
+
+class SimReturnGuardTests(unittest.TestCase):
+    def test_failed_or_cancelled_main3_never_returns(self):
+        from concurrent.futures import Future
+        for cancelled in (False,True):
+            app=NS(real=False,sim=NS(state=NS(stopped=False)),navigate=Mock(),after=Mock())
+            link=SimDepartureLink(app,Mock());link.active=True;link.started=__import__('time').monotonic()
+            link.name='main3';link.arm_future=Future()
+            if cancelled:link.arm_future.set_result({});link.stop.set()
+            else:link.arm_future.set_exception(RuntimeError('main3 failed'))
+            link.tick()
+            app.navigate.assert_not_called()
+            self.assertFalse(link.active)

@@ -36,7 +36,7 @@ class DepartureLinkTests(unittest.TestCase):
         def run_scenario(url,name):calls.append((name,clock[0]));return ready()
         scenario.start.side_effect=run_scenario
         link=DepartureLink('localhost','http://localhost:8000',scenario)
-        link.nav_sent.set();link.opener=Mock();link.opener.open.return_value=io.BytesIO(b'{"connected":true}')
+        link.nav_sent.set();link.opener=Mock();link.opener.open.side_effect=lambda url,timeout:io.BytesIO(b'{"connected":true}' if url.endswith('/api/connection_status') else b'{"servo":{"error":[0,0]}}')
         link.stop.wait=Mock(return_value=False)
         states=iter([('LM2',0),('LM2',0),('',.1)]+[('LM1',0)]*30)
         tasks=iter([6,2,2]+[4]*30)
@@ -51,6 +51,18 @@ class DepartureLinkTests(unittest.TestCase):
         with patch('seer_control.departure_link.PersistentSeerSession',return_value=session), patch('seer_control.departure_link.time.monotonic',side_effect=monotonic):link.run()
         self.assertEqual([c.args[1] for c in scenario.start.call_args_list],['main2','main3'])
         self.assertGreaterEqual(calls[1][1]-arrival[0],2.)
-        self.assertEqual(link.opener.open.call_count,1)
+        self.assertEqual(link.opener.open.call_count,2)
         events=list(link.events.queue)
         self.assertFalse([e for e in events if e[0]=='error'],events)
+        self.assertEqual(sum(k=='return_lm2' for k,v in events),1)
+        self.assertTrue(link.success)
+
+    def test_runtime_fault_prevents_navigation_and_scenario_requests(self):
+        import io
+        scenario=Mock();link=DepartureLink('localhost','http://localhost:8000',scenario)
+        link.opener=Mock();link.opener.open.side_effect=lambda url,timeout:io.BytesIO(b'{"connected":true}' if url.endswith('/api/connection_status') else b'{"servo":{"error":[4,3101]}}')
+        session=Mock();session.request.side_effect=[{'current_station':'LM2','vx':0,'vy':0},{'task_status':4}]
+        with patch('seer_control.departure_link.PersistentSeerSession',return_value=session):link.run()
+        events=list(link.events.queue)
+        self.assertTrue(any(k=='error' for k,v in events))
+        self.assertFalse(any(k in ('navigate','return_lm2') for k,v in events));scenario.start.assert_not_called()

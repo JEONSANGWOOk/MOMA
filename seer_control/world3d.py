@@ -636,15 +636,16 @@ class WorldView3D(tk.Canvas):
         for p,label,color in texts:
             projected=self.camera.project(p,width,height)
             if projected and 0<projected[0]<width and 0<projected[1]<height:self.create_text(*projected[:2],text=label,fill=color,font=(self.app.font,8,'bold'),tags='world_label')
-        interaction='재배치: 클릭 위치 · 드래그 방향' if self.app.reloc_mode else '클릭 노드 선택 · 더블클릭 이동 · 좌드래그 회전'
-        text=f"3D WORLD · {'REAL' if self.app.real else 'SIM'} · {self.arm_source}\n{interaction} · 우드래그 이동 · 휠 확대"
-        if self.app.real:
-            manual=getattr(self,'manual_real_door_display',None)
-            text+='\n'+('문 표시 · 수동 설정 (실측 아님)' if manual and manual[0] is self.cad_asset else self.real_door_status)
-        item=self.create_text(12,12,anchor='nw',text=text,fill='#28405d',font=(self.app.font,9),tags='world_status')
-        rect=self.bbox(item)
-        if rect:
-            bg=self.create_rectangle(rect[0]-5,rect[1]-4,rect[2]+5,rect[3]+4,fill='#f5f8fc',outline='');self.tag_lower(bg,item)
+        if not getattr(self.app,'exhibit_active',False):
+            interaction='재배치: 클릭 위치 · 드래그 방향' if self.app.reloc_mode else '클릭 노드 선택 · 더블클릭 이동 · 좌드래그 회전'
+            text=f"3D WORLD · {'REAL' if self.app.real else 'SIM'} · {self.arm_source}\n{interaction} · 우드래그 이동 · 휠 확대"
+            if self.app.real:
+                manual=getattr(self,'manual_real_door_display',None)
+                text+='\n'+('문 표시 · 수동 설정 (실측 아님)' if manual and manual[0] is self.cad_asset else self.real_door_status)
+            item=self.create_text(12,12,anchor='nw',text=text,fill='#28405d',font=(self.app.font,9),tags='world_status')
+            rect=self.bbox(item)
+            if rect:
+                bg=self.create_rectangle(rect[0]-5,rect[1]-4,rect[2]+5,rect[3]+4,fill='#f5f8fc',outline='');self.tag_lower(bg,item)
         if self.app.real and getattr(self.app,'_scenario_archive',None):
             self.app._scenario_archive.capture(self,raw_pose,measured or values)
         self.render_count+=1

@@ -301,6 +301,8 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
         self.label(top, 'ROBOT WORKSPACE', 9, '#98acc5', bg=CHROME).pack(side='left', padx=8)
         self.robot_camera_button=self.button(top,'RealSense 실시간 보기',self.show_robot_camera,BLUE)
         self.robot_camera_button.pack(side='left',padx=12,pady=5)
+        self.camera_recovery_button=self.button(top,'RealSense 카메라 복구',self.recover_robot_camera,ORANGE)
+        self.camera_recovery_button.pack(side='left',padx=5,pady=5)
         self.button(top,'전시 화면',lambda:self.guarded(self._exhibit_toggle),BLUE).pack(side='left',padx=5,pady=5)
         self.button(top,'웹캠 실시간 보기',self.show_webcam_camera,BLUE).pack(side='left',padx=5,pady=5)
         self.button(top,'Isaac Sim 연결',self.show_isaac_connection,BLUE).pack(side='left',padx=5,pady=5)
@@ -316,6 +318,7 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
         self.button(bar, '연결 해제', self.disconnect).pack(side='left')
         self.connection_diagnostics_button=self.button(bar, '연결 설정 / 진단', lambda:self.tabs.select(self.settings_page));self.connection_diagnostics_button.pack(side='right', padx=10)
         self.robot_pull_button=self.button(bar,'로봇 지도 받기',self.pull_robot_map,BLUE);self.robot_pull_button.pack(side='left',padx=5)
+        self.manual_reloc_button=self.button(bar,'수동 재배치',self.show_manual_relocation,ORANGE);self.manual_reloc_button.pack(side='left',padx=5)
         self.connection_text = self.label(bar, 'DEMO 연결됨 · TCP 전송 없음', 9, MUTED)
         self.connection_text.pack(side='left', padx=10)
         self.cards = {}
@@ -1242,7 +1245,7 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
 
     def disconnect(self):
         self._auto_map_pending=False
-        if hasattr(self,'pad_enabled'):self.pad_enabled.set(False);self.pad_gate.reset()
+        if hasattr(self,'pad_enabled'):self.pad_enabled.set(False);self.pad_gate.reset();self._pad_mission_authorized=False;self._pad_mission_stop=False
         if hasattr(self,'studio_runner') and self.studio_runner.active:self.studio_runner.cancel()
         self.control_enabled=False
         self.downloading_map=False
@@ -1560,6 +1563,10 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
         self.guarded(run)
 
 
+    def show_manual_relocation(self):
+        from .manual_relocation_ui import show
+        show(self)
+
     def _reloc_ready(self):
         if not (self.real and self.connected and self.control_enabled):
             messagebox.showerror('재배치','실기 · 제어 모드로 먼저 연결하세요.',parent=self); return False
@@ -1584,6 +1591,9 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
         self.log('RELOC','자동 재배치 모드 · 클릭한 x,y로 2002 전송, angle 생략하여 2π 탐색')
 
     def _send_reloc(self,x,y,angle=None):
+        if not self._reloc_ready():return
+        if not all(math.isfinite(float(v)) for v in ((x,y) if angle is None else (x,y,angle))):
+            messagebox.showerror('재배치','위치와 방향은 유효한 숫자여야 합니다.',parent=self);return
         payload={'x':float(x),'y':float(y)}
         if angle is not None:
             payload['angle']=float(angle)
@@ -2119,6 +2129,10 @@ class Console(UIScaleMixin, OperatorMixin, VoiceMixin, GamepadMixin, SpatialMixi
     def show_isaac_connection(self):
         from .isaac_connection import show_connection
         return show_connection(self)
+
+    def recover_robot_camera(self):
+        from .camera_recovery import start
+        start(self)
 
     def show_robot_camera(self):
         from .robot_camera import show_camera

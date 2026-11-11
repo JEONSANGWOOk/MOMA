@@ -92,7 +92,11 @@ class SimDepartureLink:
             if self.stop.is_set() or app.real or app.sim is not self.sim:raise ValueError('SIM 연동 해제/모드 변경 · 후속 실행 취소')
             if time.monotonic()-self.started>300:raise TimeoutError('SIM 연동 시간 초과')
             if self.arm_future and self.arm_future.done() and self.arm_future.exception():raise ValueError(str(self.arm_future.exception()))
-            if self.name=='main3' and self.arm_future.done():self.finish('SIM main3 완료');return
+            if self.name=='main3' and self.arm_future.done():
+                if self.sim.state.stopped:raise ValueError('SIM 비상정지 · LM2 복귀 차단')
+                app.target.set('LM2');app.navigate()
+                if not self.sim.route:raise ValueError('SIM LM2 복귀 요청이 시작되지 않았습니다.')
+                self.finish('SIM main3 완료 · LM2 복귀 이동 시작');return
             s=self.sim.state
             if s.stopped:raise ValueError('SIM 비상정지 · 후속 실행 차단')
             status=2 if self.sim.route else 4 if s.last_node=='LM1' else 6

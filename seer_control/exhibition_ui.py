@@ -70,6 +70,13 @@ def toggle(app):
     app.button(bar,'일반 화면',lambda:toggle(app)).pack(side='right',padx=(4,12))
     app.button(bar,'전체 화면',lambda:fullscreen(app)).pack(side='right',padx=4)
     app.button(bar,'■ 정지',lambda:app.action('stop'),RED).pack(side='right',padx=4)
+    def run_link():
+        from .departure_link import show_departure_link
+        app.guarded(lambda:show_departure_link(app,autostart=True))
+    app.exhibit_link_button=app.button(bar,'LM2→LM1 · main2→main3 실행',run_link,BLUE)
+    app.exhibit_link_button.pack(side='right',padx=4)
+    from .link_start_popup import show_start_popup
+    app.button(bar,'Start 팝업',lambda:show_start_popup(app),BLUE).pack(side='right',padx=4)
     app.exhibit_controls_button=app.button(bar,'운영 패널',lambda:controls(app),BLUE)
     app.exhibit_controls_button.pack(side='right',padx=4)
     for widget,manager,info,order in app._exhibit_widgets:
